@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% load bootstrap4 %}
+
+{% block content %}
+    
+    {% if not user.is_authenticated %}
+        
+    <h2 id="login_signup">Sign Up</h2>
+
+    <form method="POST">
+        {% csrf_token %}
+        {% bootstrap_form form %}
+        <input type="submit" class="btn btn-success" value="Sign Up">
+    
+    </form>
+
+    {% else %}
+        <h2 id="login_signup">You are already logged in, click here to go to the home page: </h2>
+        <form action="{% url 'home' %}">
+            <input type="submit" class="btn btn-success" value="Home">
+        </form>
+    {% endif %}
+
+{% endblock content %}
