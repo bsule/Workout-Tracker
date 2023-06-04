@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+    
+    {% for workout in workoutsplit %}
+        {{ workout.name }}
+    {% endfor %}
+        
+
+
+{% endblock %}
