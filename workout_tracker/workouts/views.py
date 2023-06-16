@@ -21,3 +21,7 @@ def workout_chooser(request):
 def workoutsplitshowerview(request):
     workoutsplit = Workout_Split.objects.filter(user=request.user)
     return render(request, 'workoutsplitshower.html',{'workoutsplit':workoutsplit})
+
+def reps_view(request, pk):
+    workoutsplit = Workout_Split.objects.get(id=pk)
+    return render(request, 'replist.html', {'workoutsplit':workoutsplit})
