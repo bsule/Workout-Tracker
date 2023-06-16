@@ -6,18 +6,22 @@ from django.contrib.auth.models import User
 class Workout_Split(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     name = models.CharField(max_length=200, verbose_name="Routine Name:")
+    id = models.AutoField(primary_key=True)
     
     def __str__(self):
         return self.name
     
+class Exercise(models.Model):
+    name = models.CharField(max_length=100)
 
-class Workouts(models.Model):
+    def __str__(self):
+        return self.name
+
+class Workout(models.Model):
     split = models.ForeignKey(Workout_Split, on_delete=models.CASCADE)
-    name = models.CharField(max_length=100)
-    description = models.CharField(max_length=256)
+    name = models.ForeignKey(Exercise, on_delete=models.CASCADE)
     
     def __str__(self):
         return self.name
     
-class Exercises(models.Model):
-    name = models.CharField(max_length=100)
+    
