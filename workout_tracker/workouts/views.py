@@ -1,4 +1,4 @@
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 from .forms import Workout_SplitForm
 from .models import Workout_Split
 
@@ -12,6 +12,7 @@ def workout_chooser(request):
         workout = form.save(commit=False)
         workout.user = request.user
         workout.save()
+        return redirect('workoutsplitshowerview')
 
     context = {}
     context['form'] = form
