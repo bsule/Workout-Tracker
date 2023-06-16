@@ -4,9 +4,9 @@
 
     
     {% for workout in workoutsplit %}
-        {{ workout.name }}
+        <li><a href="{% url 'reps_view' workout.id %}">{{ workout.name }}</a></li>
     {% endfor %}
-        
+
 
 
 {% endblock %}
