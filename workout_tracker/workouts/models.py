@@ -18,10 +18,12 @@ class Exercise(models.Model):
         return self.name
 
 class Workout(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True)
     split = models.ForeignKey(Workout_Split, on_delete=models.CASCADE)
-    name = models.ForeignKey(Exercise, on_delete=models.CASCADE)
+    name = models.OneToOneField(Exercise, on_delete=models.CASCADE, null=True)
+    reps = models.TextField()
     
     def __str__(self):
-        return self.name
+        return self.name.name
     
-    
+
