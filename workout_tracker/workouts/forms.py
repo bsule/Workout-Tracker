@@ -7,7 +7,6 @@ from django.shortcuts import redirect
 
 class Workout_SplitForm(ModelForm):
     
-    
     class Meta:
         model = Workout_Split
         fields = ['name']
