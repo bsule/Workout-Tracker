@@ -6,6 +6,6 @@ from .views import *
 
 urlpatterns = [
     path('', views.workout_chooser, name='workout_choose'),
-    path('list', views.workoutsplitshowerview, name='workoutsplitshowerview'),
+    path('list/', views.workoutsplitshowerview, name='workoutsplitshowerview'),
     path('list/<int:pk>/', views.reps_view, name='reps_view'),
 ]
