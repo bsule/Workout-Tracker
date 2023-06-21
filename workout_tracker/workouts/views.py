@@ -1,6 +1,6 @@
 from django.shortcuts import render, redirect, get_object_or_404
-from .forms import Workout_SplitForm
-from .models import Workout_Split, Workout
+from .forms import *
+from .models import Workout_Split
 from django.http import HttpResponseForbidden
 
 # Create your views here.
@@ -25,9 +25,16 @@ def workoutsplitshowerview(request):
 
 def reps_view(request, pk):
     my_model = get_object_or_404(Workout_Split, pk=pk)
-    
     if my_model.user != request.user:
         return HttpResponseForbidden("You are not allowed to access this page.")
     
+    form = Workout_SplitReps(request.POST or None, instance=my_model)
+
+    if form.is_valid():
+        my_model.save()
+    
     workoutsplit = Workout_Split.objects.get(id=pk)
-    return render(request, 'replist.html', {'workoutsplit':workoutsplit})
+    context = {}
+    context['form'] = form
+    context['workoutsplit'] = workoutsplit
+    return render(request, 'replist.html', context)
