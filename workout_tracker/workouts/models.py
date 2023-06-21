@@ -7,6 +7,7 @@ class Workout_Split(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     name = models.CharField(max_length=200, verbose_name="Routine Name:")
     id = models.AutoField(primary_key=True)
+    reps = models.TextField(null=True, blank=True)
     
     def __str__(self):
         return self.name
@@ -16,14 +17,5 @@ class Exercise(models.Model):
 
     def __str__(self):
         return self.name
-
-class Workout(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True)
-    split = models.ForeignKey(Workout_Split, on_delete=models.CASCADE)
-    name = models.OneToOneField(Exercise, on_delete=models.CASCADE, null=True)
-    reps = models.TextField()
     
-    def __str__(self):
-        return self.name.name
     
-
