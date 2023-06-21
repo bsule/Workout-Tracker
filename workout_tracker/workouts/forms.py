@@ -11,6 +11,11 @@ class Workout_SplitForm(ModelForm):
         model = Workout_Split
         fields = ['name']
     
+
+class Workout_SplitReps(ModelForm):
+    
+    class Meta:
+        model = Workout_Split
+        fields = ['reps']
     
     
-            

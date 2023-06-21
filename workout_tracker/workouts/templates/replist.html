@@ -3,5 +3,11 @@
 {% block content %}
 
     {{ workoutsplit.name }}
+    
+    <form method="POST">
+        {% csrf_token %}
+        {{ form }}
+        <input type="submit" value="Submit" class="btn btn-primary">
+    </form>
 
 {% endblock %}
