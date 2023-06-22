@@ -5,3 +5,4 @@ from .models import *
 
 admin.site.register(Workout_Split)
 admin.site.register(Exercise)
+admin.site.register(Weight_and_reps)
