@@ -29,12 +29,20 @@ def reps_view(request, pk):
         return HttpResponseForbidden("You are not allowed to access this page.")
     
     form = Weight_and_reps(request.POST)
-
-    if form.is_valid():
-        weight = form.cleaned_data['weight']
-        reps = form.cleaned_data['reps']
-        my_model.reps += (str(weight) + " " + str(reps))
-        my_model.save()
+    if request.method == 'POST':
+        
+        if request.POST.get('form_submit'):
+            if form.is_valid():
+                weight = form.cleaned_data['weight']
+                reps = form.cleaned_data['reps']
+                if my_model.reps != "":
+                    my_model.reps += " "
+                my_model.reps += (str(weight) + " " + str(reps))
+                my_model.save()
+                
+        if request.POST.get('next_day'):
+            my_model.reps = "\n" + my_model.reps
+            my_model.save()
         
     
     workoutsplit = Workout_Split.objects.get(id=pk)
@@ -42,3 +50,7 @@ def reps_view(request, pk):
     context['form'] = form
     context['workoutsplit'] = workoutsplit
     return render(request, 'replist.html', context)
+
+# TODO create a different model with pk, weight and reps in one, and date
+# TODO then get the objects like this workoutsplit = Workout_Split.objects.get(id=pk)
+# TODO and make the table
