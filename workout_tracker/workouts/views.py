@@ -41,14 +41,19 @@ def reps_view(request, pk):
                 reps = form.cleaned_data['reps']
                 if weight_reps_model.reps != "":
                     weight_reps_model.reps += " "
-                weight_reps_model.reps += (str(weight) + " " + str(reps))
+                    weight_reps_model.weight += " "
+                weight_reps_model.reps += str(reps) + ","
+                weight_reps_model.weight += str(weight) + ","
                 weight_reps_model.save()
         if request.POST.get('next_day'):
             weight_reps_model = Weight_and_reps.objects.create(model=my_model)
             
         
     
-    workoutsplit = Weight_and_reps.objects.filter(model=my_model)
+    workoutsplit = Weight_and_reps.objects.filter(model=my_model).order_by('-date')
+    
+        
+        
     context = {}
     context['form'] = form
     context['workoutsplit'] = workoutsplit
