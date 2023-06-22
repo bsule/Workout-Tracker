@@ -28,10 +28,14 @@ def reps_view(request, pk):
     if my_model.user != request.user:
         return HttpResponseForbidden("You are not allowed to access this page.")
     
-    form = Workout_SplitReps(request.POST or None, instance=my_model)
+    form = Weight_and_reps(request.POST)
 
     if form.is_valid():
+        weight = form.cleaned_data['weight']
+        reps = form.cleaned_data['reps']
+        my_model.reps += (str(weight) + " " + str(reps))
         my_model.save()
+        
     
     workoutsplit = Workout_Split.objects.get(id=pk)
     context = {}
