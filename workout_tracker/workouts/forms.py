@@ -11,18 +11,9 @@ class Workout_SplitForm(ModelForm):
         model = Workout_Split
         fields = ['name']
     
-
-class Workout_SplitReps(ModelForm):
     
-    class Meta:
-        model = Workout_Split
-        fields = ['reps']
-    
-    
-class Weight_and_reps(forms.Form):
+class Weight_and_reps_form(forms.Form):
     weight = forms.IntegerField()
     reps = forms.IntegerField()
     
         
-    
-    

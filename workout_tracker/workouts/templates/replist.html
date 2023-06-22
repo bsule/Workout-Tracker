@@ -31,10 +31,13 @@
             </tr>
         </tbody>
     </table> -->
-
-    {% for reps in workoutsplit.reps %}
-        {{ reps }}
+    
+    {% for workout in workoutsplit %}
+        {{ workout.date }}
+        {% for reps in workout.reps %}
+            {{ reps }}
+        {% endfor %}
     {% endfor %}
-        
+
 
 {% endblock %}
