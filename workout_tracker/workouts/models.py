@@ -20,6 +20,7 @@ class Exercise(models.Model):
     
 class Weight_and_reps(models.Model):
     model = models.ForeignKey(Workout_Split, on_delete=models.CASCADE)
+    weight = models.TextField(null=True, blank=True, default="")
     reps = models.TextField(null=True, blank=True, default="")
     date = models.DateTimeField(auto_now_add=True)
     
