@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% load widget_tweaks %}
+
+{% block content %}
+<head>
+
+    <form method="POST">
+        {% csrf_token %}
+        <div class="form-number-input">
+            <p>Weight</p>
+            {% render_field form.weight class="form-control" %}
+            <p>Reps</p>
+            {% render_field form.reps class="form-control" %}
+        </div>
+        
+        <input type="submit" class="btn btn-primary" value="Submit">
+    </form>
+    
+    {% if onerep > 0 %}
+        {{ onerep }}
+    {% endif %}
+        
+    
+
+{% endblock %}

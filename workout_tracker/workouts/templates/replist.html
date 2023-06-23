@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% load custom_filters %}
+{% load widget_tweaks %}
 
 {% block content %}
 
@@ -14,24 +15,13 @@
     <form method="POST">
         {% csrf_token %}
 
-        {{ form.as_p }}
+        <p>Weight</p>
+        {% render_field form.weight class="form-control" %}
+        <p>Reps</p>
+        {% render_field form.reps class="form-control" %}
         <input class="btn btn-primary" type="submit" name="form_submit" value="Submit" />
 
     </form>
-
-    <!-- <table>
-        <thead>
-            <tr>
-                <th>Weight</th>
-                <th>Reps</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-
-            </tr>
-        </tbody>
-    </table> -->
     
     {% for workout in workoutsplit %}
         {{ workout.date }}
@@ -44,8 +34,6 @@
                 </tr>
             </thead>
             <tbody>
-            
-
                 
                 {% for weight,reps in workout.weight|zip_lists:workout.reps %}
                     <tr>
@@ -53,8 +41,6 @@
                         <td>{{reps}}</td>
                     </tr>
                 {% endfor %}
-                
-                        
                 
             </tbody>
         </table>
