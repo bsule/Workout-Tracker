@@ -5,6 +5,21 @@ from django.http import HttpResponseForbidden
 
 # Create your views here.
 
+def calculator_view(request):
+    form = Max_Rep_Calculator_Form(request.POST)
+    onerep=-1
+    
+    if request.method == 'POST' and form.is_valid():
+        weight = form.cleaned_data.get('weight')
+        reps = form.cleaned_data.get('reps')
+        onerep = weight/(1.0278-(.0278*reps))
+    
+    onerep = onerep
+    content = {}
+    content['form'] = form
+    content['onerep'] = round(onerep, 1)
+    return render(request, 'calculator.html', content)
+
 def workout_chooser(request):
     form = Workout_SplitForm(request.POST or None)
 
@@ -48,12 +63,8 @@ def reps_view(request, pk):
         if request.POST.get('next_day'):
             weight_reps_model = Weight_and_reps.objects.create(model=my_model)
             
-        
-    
     workoutsplit = Weight_and_reps.objects.filter(model=my_model).order_by('-date')
     
-        
-        
     context = {}
     context['form'] = form
     context['workoutsplit'] = workoutsplit
