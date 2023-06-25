@@ -1,8 +1,11 @@
 {% extends 'base.html' %}
 {% load widget_tweaks %}
+{% load static %}
 
 {% block content %}
-<head>
+
+    <link rel="stylesheet" href="{% static 'workouts/workout_style.css' %}">
+
 
     <form method="POST">
         {% csrf_token %}
