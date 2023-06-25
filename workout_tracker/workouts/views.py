@@ -2,9 +2,11 @@ from django.shortcuts import render, redirect, get_object_or_404
 from .forms import *
 from .models import Workout_Split, Weight_and_reps
 from django.http import HttpResponseForbidden
+from django.contrib.auth.decorators import login_required
 
 # Create your views here.
 
+@login_required
 def calculator_view(request):
     form = Max_Rep_Calculator_Form(request.POST)
     onerep=-1
@@ -20,6 +22,8 @@ def calculator_view(request):
     content['onerep'] = round(onerep, 1)
     return render(request, 'calculator.html', content)
 
+
+@login_required
 def workout_chooser(request):
     form = Workout_SplitForm(request.POST or None)
 
@@ -34,10 +38,14 @@ def workout_chooser(request):
     context['form'] = form
     return render(request, 'workout_chooser.html', context)
 
+
+@login_required
 def workoutsplitshowerview(request):
     workoutsplit = Workout_Split.objects.filter(user=request.user)
     return render(request, 'workoutsplitshower.html',{'workoutsplit':workoutsplit})
 
+
+@login_required
 def reps_view(request, pk):
     my_model = get_object_or_404(Workout_Split, pk=pk)
     if my_model.user != request.user:

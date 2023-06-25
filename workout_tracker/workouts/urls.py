@@ -5,8 +5,8 @@ from .views import *
 
 
 urlpatterns = [
-    path('', views.workout_chooser, name='workout_choose'),
-    path('list/', views.workoutsplitshowerview, name='workoutsplitshowerview'),
-    path('list/<int:pk>/', views.reps_view, name='reps_view'),
+    path('workouts/', views.workout_chooser, name='workout_choose'),
+    path('workouts/list/', views.workoutsplitshowerview, name='workoutsplitshowerview'),
+    path('workouts/list/<int:pk>/', views.reps_view, name='reps_view'),
     path('calculator/', views.calculator_view, name='calculator_view'),
 ]
