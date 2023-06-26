@@ -1,11 +1,19 @@
 {% extends 'base.html' %}
+{% load widget_tweaks %}
+{% load static %}
 
 {% block content %}
 
-    <form method="POST">
-        {% csrf_token %}
-        {{ form }}
-        <input type="submit" value="Submit" class="btn btn-primary">
-    </form>
+<link rel="stylesheet" href="{% static 'workouts/workout_style.css' %}">
+
+    <div class="workout_name_form">
+        <form method="POST">
+            {% csrf_token %}
+            <h2>Workout Name:</h2>
+            {% render_field form.name class="form-control" id="form-submit-workout"%}
+            <input type="submit" value="Submit" id="submit-button-workout-form" class="btn btn-primary">
+        </form>
+    </div>
+
 
 {% endblock %}
