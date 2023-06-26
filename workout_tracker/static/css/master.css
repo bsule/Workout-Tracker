@@ -1,8 +1,26 @@
 
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@500&display=swap');
+
+.navbar .navbar-brand{
+    color: #ffffff;
+    font-weight: bold;
+}
+
+.nav-item{
+    margin-left: 2em;
+    font-size: 105%;
+}
+
+* {
+    font-family: 'Nunito', sans-serif;
+    color: white;
+}
+
 #login_signup{
     margin-top:10px;
 }
 
 body{
-    background-color: blue;
+    background-color: #18191A;
 }
+
