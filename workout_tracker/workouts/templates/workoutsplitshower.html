@@ -6,11 +6,12 @@
 
 
     <div class="workout_list_class">
-        <a href="{% url 'workout_choose' %}"><input type="submit" class="btn btn-primary" value="New Workout"></a>
+        <a href="{% url 'workout_choose' %}" id="newworkoutbutton"><input type="submit" class="btn btn-primary" value="New Workout"></a>
+        <a href="{% url 'delete_view' %}"><input type="submit" class="btn btn-danger" value="Delete Workout"></a>
         
         {% if workoutsplit %}
             {% for workout in workoutsplit %}
-                <p><a class="link" href="{% url 'reps_view' workout.id %}">{{ workout.name }}</a></p>
+                <p class="link"><a href="{% url 'reps_view' workout.id %}">{{ workout.name }}</a></p>
             {% endfor %}
         {% else %}
             <h5>No Workouts Made</h5>

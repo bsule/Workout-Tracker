@@ -12,12 +12,6 @@ class Workout_Split(models.Model):
     def __str__(self):
         return self.name
     
-class Exercise(models.Model):
-    name = models.CharField(max_length=100)
-
-    def __str__(self):
-        return self.name
-    
 class Weight_and_reps(models.Model):
     model = models.ForeignKey(Workout_Split, on_delete=models.CASCADE)
     weight = models.TextField(null=True, blank=True, default="")
