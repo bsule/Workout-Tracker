@@ -10,12 +10,10 @@
         <form method="POST">
             {% csrf_token %}
 
-            <input class="btn btn-secondary col-sm" type="submit" name="next_day" value="Next Workout">
+            <input class="btn btn-primary col-sm" type="submit" name="next_day" value="Next Workout">
         </form>
 
-
         <a href="{% url 'delete_day_view' model.id %}"><input type="submit" class="btn btn-danger col-sm" value="Delete Day" name="delete"></a>
-        
     </div>
 
     <h5>{{ name }}</h5>
@@ -34,8 +32,6 @@
 
         </form>
     </div>
-
-    
 
     {% for workout in workoutsplit %}
         
