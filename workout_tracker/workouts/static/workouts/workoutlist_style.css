@@ -7,8 +7,12 @@
     margin-top: 20vh;
 }
 
-p{
-    margin-top: 2vh;
+#newworkoutbutton{
+    margin-bottom: 2vh;
+}
+
+.link{
+    margin-bottom: 2vh;
 }
 
 a{

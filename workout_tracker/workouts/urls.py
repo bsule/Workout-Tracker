@@ -9,4 +9,5 @@ urlpatterns = [
     path('workouts/list/', views.workoutsplitshowerview, name='workoutsplitshowerview'),
     path('workouts/list/<int:pk>/', views.reps_view, name='reps_view'),
     path('calculator/', views.calculator_view, name='calculator_view'),
+    path('delete/',views.delete_view, name='delete_view'),
 ]

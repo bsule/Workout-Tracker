@@ -7,6 +7,22 @@ from django.contrib.auth.decorators import login_required
 # Create your views here.
 
 @login_required
+def delete_view(request):
+    models = Workout_Split.objects.filter(user=request.user)
+
+    if request.method == 'POST':
+        workout_id = request.POST.get('deleted_workout')
+        model = get_object_or_404(Workout_Split, id=workout_id)
+        
+        model.delete()
+        return redirect('workoutsplitshowerview')
+
+    content = {}
+    content['models'] = models
+    return render(request,'delete_workout.html', content)
+
+
+@login_required
 def calculator_view(request):
     form = Max_Rep_Calculator_Form(request.POST)
     onerep=-1
@@ -68,9 +84,11 @@ def reps_view(request, pk):
                 weight_reps_model.reps += str(reps) + ","
                 weight_reps_model.weight += str(weight) + ","
                 weight_reps_model.save()
-        if request.POST.get('next_day'):
+                
+        elif request.POST.get('next_day'):
             weight_reps_model = Weight_and_reps.objects.create(model=my_model)
             
+              
     workoutsplit = Weight_and_reps.objects.filter(model=my_model).order_by('-date')
     
     context = {}
