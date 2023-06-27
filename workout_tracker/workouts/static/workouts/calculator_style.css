@@ -1,0 +1,25 @@
+
+.form-number-input {
+    align-items: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    height: 80vh;
+    text-align: center;
+}
+
+#submit-button-calc{
+    margin-top: 10px;
+    width: 100%;
+    text-align: center;
+}
+
+#namesforcalc{
+    margin-top: 10px;
+}
+
+#calc_onerep{
+    margin-top: 20px;
+    text-align: center;
+}
+
