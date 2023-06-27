@@ -4,26 +4,21 @@
 
 {% block content %}
 
-    <link rel="stylesheet" href="{% static 'workouts/workout_style.css' %}">
+    <link rel="stylesheet" href="{% static 'workouts/calculator_style.css' %}">
 
     <div class="form-number-input">
         <form method="POST">
             {% csrf_token %}
-            <h3>Weight</h3>
+            <h3 id="namesforcalc">Weight</h3>
             {% render_field form.weight class="form-control" id="calch3" %}
-            <h3>Reps</h3>
+            <h3 id="namesforcalc">Reps</h3>
             {% render_field form.reps class="form-control" id="calch3" %}
             <input type="submit" class="btn btn-primary" value="Submit" id="submit-button-calc">
         </form>
 
         {% if onerep > 0 %}
-            <h4>Your estimated one rep max is {{ onerep }}</h4>
+            <h4 id="calc_onerep">Your estimated one rep max is {{ onerep }}</h4>
         {% endif %}
     </div>
-
-    
-    
-    
-    
 
 {% endblock %}
