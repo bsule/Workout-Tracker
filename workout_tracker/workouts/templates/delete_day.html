@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+
+    <!-- <link rel="stylesheet" href="{% static 'workouts/calculator_style.css' %}"> -->
+
+    <form method="POST" class="form-css">
+        {% csrf_token %}
+        <select class="form-control" name="deleted_workout">
+
+            {% for workout in workouts %}
+                <option value="{{ workout.id }}" class="items">{{workout.date}}</option>
+            {% endfor %}
+                
+        </select>
+
+        <input type="submit" value="Delete" id="submitbutton" class="btn btn-danger">
+    </form>
+
+{% endblock %}
