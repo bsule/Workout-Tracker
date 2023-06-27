@@ -4,11 +4,23 @@
     justify-content: center;
     align-items: center;
     flex-direction: column;
-    margin-top: 20vh;
+    margin-top: 10vh;
+    font-size: larger;
 }
 
-#newworkoutbutton{
-    margin-bottom: 2vh;
+.new_and_delete{
+    display: flex;
+    justify-content: space-between;
+}
+
+.submitbtn{
+    margin-top: 20px;
+    margin-left: 100px;
+}
+
+.deletebtn{
+    margin-top: 20px;
+    margin-right: 100px;
 }
 
 .link{
