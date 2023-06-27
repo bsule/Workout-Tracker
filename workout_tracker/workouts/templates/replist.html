@@ -13,11 +13,9 @@
             <input class="btn btn-secondary col-sm" type="submit" name="next_day" value="Next Workout">
         </form>
 
-        <form method="POST">
-            {% csrf_token %}
 
-            <input type="submit" class="btn btn-danger col-sm" value="Delete Day" name="delete">
-        </form>
+        <a href="{% url 'delete_day_view' model.id %}"><input type="submit" class="btn btn-danger col-sm" value="Delete Day" name="delete"></a>
+        
     </div>
 
     <h5>{{ name }}</h5>

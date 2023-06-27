@@ -20,6 +20,20 @@ def delete_view(request):
     content['models'] = models
     return render(request,'delete_workout.html', content)
 
+@login_required
+def delete_day_view(request,pk):
+    my_model = Workout_Split.objects.get(id=pk)
+    if my_model.user != request.user:
+        return HttpResponseForbidden("You are not allowed to access this page.")
+    
+    if request.method == 'POST':
+        workout_id = request.POST.get('deleted_workout')
+        model = Weight_and_reps.objects.get(id=workout_id)
+        model.delete()
+        return redirect('reps_view', pk=my_model.id)
+    
+    workouts = Weight_and_reps.objects.filter(model=my_model).order_by('-date')
+    return render(request,'delete_day.html', {'workouts': workouts})
 
 @login_required
 def calculator_view(request):
@@ -92,6 +106,7 @@ def reps_view(request, pk):
     
     context = {}
     context['form'] = form
+    context['model'] = my_model
     context['workoutsplit'] = workoutsplit
     context['name'] = name
     return render(request, 'replist.html', context)
