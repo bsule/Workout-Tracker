@@ -1,5 +1,8 @@
 
-@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@500&display=swap');
+@font-face{
+    font-family: Montserrat;
+    src:url(../font/Montserrat-VariableFont_wght.ttf);
+}
 
 .navbar .navbar-brand{
     color: #ffffff;
@@ -12,7 +15,7 @@
 }
 
 * {
-    font-family: 'Nunito', sans-serif;
+    font-family: 'Montserrat', sans-serif;
     color: white;
 }
 
@@ -21,6 +24,6 @@
 }
 
 body{
-    background-color: #18191A;
+    background-color: #121212;
 }
 
