@@ -5,17 +5,15 @@
     <link rel="stylesheet" href="{% static 'workouts/workoutlist_style.css' %}">
 
     <div class="new_and_delete">
-        
-        
         {% if workoutsplit %}
             <a href="{% url 'workout_choose' %}"><input type="submit" class="btn btn-primary submitbtn" value="New Workout"></a>
             <a href="{% url 'delete_view' %}"><input type="submit" class="btn btn-danger deletebtn" value="Delete Workout"></a>
+
         {% else %}
             <a href="{% url 'workout_choose' %}"><input type="submit" class="btn btn-primary submitbtn" value="New Workout"></a>
         {% endif %}
-            
-        
     </div>
+
     <div class="workout_list_class">
         
         {% if workoutsplit %}
