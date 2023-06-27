@@ -5,17 +5,17 @@
 
     <link rel="stylesheet" href="{% static 'workouts/delete_page.css' %}">
 
-    <form method="POST">
+    <form method="POST" class="form-css">
         {% csrf_token %}
         <select class="form-control" name="deleted_workout">
-            
+
             {% for workout in models %}
                 <option value="{{ workout.id }}" class="items">{{workout}}</option>
             {% endfor %}
                 
         </select>
 
-        <input type="submit" value="Delete" class="btn btn-danger">
+        <input type="submit" value="Delete" id="submitbutton" class="btn btn-danger">
     </form>
     
 

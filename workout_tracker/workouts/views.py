@@ -9,10 +9,9 @@ from django.contrib.auth.decorators import login_required
 @login_required
 def delete_view(request):
     models = Workout_Split.objects.filter(user=request.user)
-
     if request.method == 'POST':
         workout_id = request.POST.get('deleted_workout')
-        model = get_object_or_404(Workout_Split, id=workout_id)
+        model = Workout_Split.objects.get(id=workout_id)
         
         model.delete()
         return redirect('workoutsplitshowerview')
