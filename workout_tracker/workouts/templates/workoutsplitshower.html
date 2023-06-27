@@ -1,12 +1,21 @@
 {% extends 'base.html' %}
+{% load static %}
 
 {% block content %}
-
-    
-    {% for workout in workoutsplit %}
-        <li><a href="{% url 'reps_view' workout.id %}">{{ workout.name }}</a></li>
-    {% endfor %}
+    <link rel="stylesheet" href="{% static 'workouts/workoutlist_style.css' %}">
 
 
+    <div class="workout_list_class">
+        <a href="{% url 'workout_choose' %}"><input type="submit" class="btn btn-primary" value="New Workout"></a>
+        
+        {% if workoutsplit %}
+            {% for workout in workoutsplit %}
+                <p><a class="link" href="{% url 'reps_view' workout.id %}">{{ workout.name }}</a></p>
+            {% endfor %}
+        {% else %}
+            <h5>No Workouts Made</h5>
+        {% endif %}
+        
+    </div>
 
 {% endblock %}
