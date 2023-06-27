@@ -3,3 +3,16 @@
     color: black;
 }
 
+.form-control{
+    width: 20%;
+    display: block;
+    margin: 0 auto;
+    margin-top: 35vh;
+}
+
+#submitbutton{
+    width:20%;
+    display: block;
+    margin: 0 auto;
+    margin-top: 10px;
+}
