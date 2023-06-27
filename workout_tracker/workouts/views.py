@@ -1,4 +1,4 @@
-from django.shortcuts import render, redirect, get_object_or_404
+from django.shortcuts import render, redirect, get_object_or_404, reverse
 from .forms import *
 from .models import Workout_Split, Weight_and_reps
 from django.http import HttpResponseForbidden
@@ -86,11 +86,12 @@ def reps_view(request, pk):
                 
         elif request.POST.get('next_day'):
             weight_reps_model = Weight_and_reps.objects.create(model=my_model)
-            
               
     workoutsplit = Weight_and_reps.objects.filter(model=my_model).order_by('-date')
+    name = my_model.name
     
     context = {}
     context['form'] = form
     context['workoutsplit'] = workoutsplit
+    context['name'] = name
     return render(request, 'replist.html', context)
