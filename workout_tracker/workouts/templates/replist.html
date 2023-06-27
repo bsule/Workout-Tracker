@@ -1,31 +1,47 @@
 {% extends 'base.html' %}
 {% load custom_filters %}
 {% load widget_tweaks %}
+{% load static %}
 
 {% block content %}
+    <link rel="stylesheet" href="{% static 'workouts/replist_style.css' %}">
 
-    {{ workoutsplit.name }}
+    <div class="top">
+        <form method="POST">
+            {% csrf_token %}
+
+            <input class="btn btn-secondary col-sm" type="submit" name="next_day" value="Next Workout">
+        </form>
+
+        <form method="POST">
+            {% csrf_token %}
+
+            <input type="submit" class="btn btn-danger col-sm" value="Delete Day" name="delete">
+        </form>
+    </div>
+
+    <h5>{{ name }}</h5>
+
+    <div class="inputs">
+        <form method="POST">
+            {% csrf_token %}
+
+            <label id="weightlabel">{{form.weight.label}}</label>
+            {% render_field form.weight class="form-control" %}
+
+            <label id="replabel">{{form.reps.label}}</label>
+            {% render_field form.reps class="form-control" %}
+
+            <input class="btn btn-primary submit-btn" type="submit" name="form_submit" value="Submit"/>
+
+        </form>
+    </div>
+
     
-    <form method="POST">
-        {% csrf_token %}
 
-        <input class="btn btn-primary" type="submit" name="next_day" value="Next Day">
-    </form>
-
-    <form method="POST">
-        {% csrf_token %}
-
-        <p>Weight</p>
-        {% render_field form.weight class="form-control" %}
-        <p>Reps</p>
-        {% render_field form.reps class="form-control" %}
-        <input class="btn btn-primary" type="submit" name="form_submit" value="Submit" />
-
-    </form>
-    
     {% for workout in workoutsplit %}
-        {{ workout.date }}
-
+        
+        <label id="datelabel">{{ workout.date }}</label>
         <table>
             <thead>
                 <tr>

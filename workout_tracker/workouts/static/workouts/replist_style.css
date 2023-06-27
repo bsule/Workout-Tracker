@@ -1,0 +1,57 @@
+
+table, th, td{
+    border: 1px solid;
+    width: 25%;
+}
+
+table{
+    margin-bottom: 20px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+th{
+    background-color: #0275d8;
+}
+
+td{
+    background-color: #242526;
+}
+
+.inputs{
+    width: 25%;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.top{
+    display: flex ;
+    justify-content: space-between;
+    margin-left: 100px;
+    margin-right: 100px;
+    margin-top: 20px;
+}
+
+h5{
+    display: grid;
+    justify-content: center;
+}
+
+#datelabel{
+    display: grid;
+    justify-content: center;
+}
+
+#weightlabel{
+    margin-top: 5px;
+}
+
+#replabel{
+    margin-top: 5px;
+}
+
+.submit-btn{
+    margin-top: 7px;
+    width: 100%;
+    margin-bottom: 30px;
+}
