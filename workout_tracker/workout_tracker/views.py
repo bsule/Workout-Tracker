@@ -8,8 +8,9 @@ from django.http import JsonResponse
 def home_view(request):
     if not request.user.is_authenticated:
         return redirect(reverse_lazy('login'))
-    
-    return render(request, 'index.html')
+    context = {}
+    context['bench'] = 'Bench'
+    return render(request, 'index.html', context)
 
 @login_required
 def about_view(request):
