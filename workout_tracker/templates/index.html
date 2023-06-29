@@ -1,8 +1,36 @@
 {% extends 'base.html' %}
+{% load static %}
 
 {% block content %}
+<head>
+    <script type="text/javascript">
+        window.onload = function () {
+            var chart= new CanvasJS.Chart("chartContainer", {
+              theme: "dark1",
+              title: {
+                text: "Max Reps for Bench"
+              },
+              axisY: {
+                title: "Weight"
+              },
+              data: [{
+                type: "line",
+                yValueFormatString: "### Weight",
+                dataPoints: {{ table|safe }}
+              }]
+            });
+            chart.render();
+          }
+    </script>
+    <script type="text/javascript" src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
+</head>
+
 
     <h1>Hello</h1>
 
+    <div id="chartContainer" style="width: 100%; height: 360px;"></div>
+    
+    
+    
 
 {% endblock %}

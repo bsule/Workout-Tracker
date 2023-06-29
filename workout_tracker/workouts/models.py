@@ -17,6 +17,7 @@ class Weight_and_reps(models.Model):
     weight = models.TextField(null=True, blank=True, default="")
     reps = models.TextField(null=True, blank=True, default="")
     date = models.DateTimeField(auto_now_add=True)
+    max_weight = models.FloatField(null=True, blank=True, default=0)
     id = models.AutoField(primary_key=True)
     
     def __str__(self):

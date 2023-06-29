@@ -91,6 +91,12 @@ def reps_view(request, pk):
             if form.is_valid():
                 weight = form.cleaned_data['weight']
                 reps = form.cleaned_data['reps']
+                
+                onerepmax = weight/(1.0278-(.0278*reps))  # calculate one rep max and compare to see
+                print(onerepmax)                          # if its higher than the other for the day
+                if onerepmax > weight_reps_model.max_weight:
+                    weight_reps_model.max_weight = round(onerepmax,1)
+                    
                 if weight_reps_model.reps != "":
                     weight_reps_model.reps += " "
                     weight_reps_model.weight += " "
