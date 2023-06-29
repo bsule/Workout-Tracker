@@ -39,9 +39,9 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     
-    'widget_tweaks',
+    'widget_tweaks', # pip install django-widget-tweaks
+    'bootstrap4', # pip install django-bootstrap4
     
-    'bootstrap4',
     'accounts',
     'workouts',
     
