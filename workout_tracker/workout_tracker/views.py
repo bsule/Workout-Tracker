@@ -2,18 +2,14 @@ from django.views.generic import TemplateView
 from django.urls import reverse_lazy
 from django.shortcuts import redirect, render
 from django.contrib.auth.decorators import login_required
+from django.http import JsonResponse
+
     
 def home_view(request):
     if not request.user.is_authenticated:
         return redirect(reverse_lazy('login'))
     
-    table = [
-        {"y":200, "label": "August 2"},
-        {"y":225, "label": "August 3"},
-        {"y":226, "label": "August 5"},
-    ]
-    
-    return render(request, 'index.html', {'table': table})
+    return render(request, 'index.html')
 
 @login_required
 def about_view(request):

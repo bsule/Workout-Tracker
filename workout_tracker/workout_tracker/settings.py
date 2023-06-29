@@ -40,7 +40,6 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     
     'widget_tweaks',
-    'chartjs',
     
     'bootstrap4',
     'accounts',
