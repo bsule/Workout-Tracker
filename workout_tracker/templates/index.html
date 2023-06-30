@@ -3,7 +3,37 @@
 
 {% block content %} 
     <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
-    <script src="{% static 'js/chart.js' %}"></script>
+    <script>
+        google.charts.load('current', {'packages':['line']});
+        google.charts.setOnLoadCallback(drawChart);
+
+        function drawChart() {
+            var counter = 1;
+            var data = new google.visualization.arrayToDataTable([
+                ['Number of workout', 'Bench'],
+                {% for i in data %}
+                    [counter++, {{i.max_weight}}],
+                {% endfor %}
+            ]);
+            
+            var options = {
+                chart: {
+                    title: 'Max Rep Amount',
+                },
+                backgroundColor: '#212121',
+                vAxis: {
+                    title: 'Weight'
+                },
+                fontName: 'Montserrat',
+                width: 900,
+                height: 500,
+            };
+
+            var chart = new google.charts.Line(document.getElementById('linechart_material'));
+
+            chart.draw(data, google.charts.Line.convertOptions(options));
+        }
+    </script>
 
     <h1>Hello</h1>
     
