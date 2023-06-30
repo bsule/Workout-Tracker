@@ -2,7 +2,7 @@
 {% load static %}
 
 {% block content %} 
-    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+    <script src="{% static 'js/loader.js' %}"></script>
     <script>
         google.charts.load('current', {'packages':['line']});
         google.charts.setOnLoadCallback(drawChart);
