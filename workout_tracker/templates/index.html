@@ -9,8 +9,9 @@
 
         function drawChart() {
             var counter = 1;
+            var name = "{{name}}";
             var data = new google.visualization.arrayToDataTable([
-                ['Number of workout', 'Bench'],
+                ['Number of Workout (Last 7)', name],
                 {% for i in data %}
                     [counter++, {{i.max_weight}}],
                 {% endfor %}
@@ -20,10 +21,30 @@
                 chart: {
                     title: 'Max Rep Amount',
                 },
-                backgroundColor: '#212121',
-                vAxis: {
-                    title: 'Weight'
+                chartArea: {
+                    backgroundColor: '#121212'
                 },
+                crosshair: {
+                    trigger: 'both'
+                },
+                titleTextStyle: {
+                    color: '#fff'
+                },
+                hAxis: {
+                    textStyle: {
+                        color: '#fff',
+                        fontSize: 15,
+                    }
+                },
+                vAxis: {
+                    title: 'Weight',
+                    textStyle: {
+                        color: '#fff',
+                        fontSize: 15,
+                    }
+                },
+                colors:['red'],
+                backgroundColor: '#212121',
                 fontName: 'Montserrat',
                 width: 900,
                 height: 500,
