@@ -110,9 +110,14 @@ def reps_view(request, pk):
     workoutsplit = Weight_and_reps.objects.filter(model=my_model).order_by('-date')
     name = my_model.name
     
+    hold2 = Weight_and_reps.objects.filter(model=my_model)[::-1]   # negative indexing not supported so 
+    hold2 = hold2[:7]                                              # flip the list and get the last 7 
+    hold2 = hold2[::-1]                                            # then flip back
+    
     context = {}
     context['form'] = form
     context['model'] = my_model
     context['workoutsplit'] = workoutsplit
     context['name'] = name
+    context['data'] = hold2
     return render(request, 'replist.html', context)
