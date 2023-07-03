@@ -5,6 +5,7 @@
 
 {% block content %}
     <link rel="stylesheet" href="{% static 'workouts/replist_style.css' %}">
+    <script src="{% static 'js/replist_java.js' %}"></script>
     <script src="{% static 'js/loader.js' %}"></script>
 
     <div class="top">
@@ -32,6 +33,7 @@
             <input class="btn btn-primary submit-btn" type="submit" name="form_submit" value="Submit"/>
 
         </form>
+        <input type="submit" class="btn btn-success graph_hide" name="graph_hide" value="Show Graph" id="graphhide">
     </div>
     
     <script>
@@ -87,11 +89,33 @@
                 height: 400,
             };
 
-            var chart = new google.charts.Line(document.getElementById('linechart_material'));
+            
+            var chartContainer = document.getElementById('linechart_material');
 
-            chart.draw(data, google.charts.Line.convertOptions(options));
+            function showchart(){
+                var chart = new google.charts.Line(document.getElementById('linechart_material'));
+                chart.draw(data, google.charts.Line.convertOptions(options));
+                chartContainer.style.display = "flex";
+            }
+            
+            var button = document.getElementById('graphhide');
+            var shown = false;
+            button.addEventListener("click", function(){
+                    if(shown==false){
+                        shown = true;
+                        button.value="Hide Graph";
+                        showchart();
+                    }
+                    else{
+                        chartContainer.style.display = "none";
+                        button.value = "Show Graph";
+                        shown = false;
+                    }
+            });
         }
     </script>
+
+
     <div id="linechart_material" style="width: 620px; height: 400px"></div>
 
 

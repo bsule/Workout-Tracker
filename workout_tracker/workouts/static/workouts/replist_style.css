@@ -53,9 +53,18 @@ h5{
 .submit-btn{
     margin-top: 10px;
     width: 100%;
-    margin-bottom: 30px;
 }
 
 #linechart_material{
     margin: 0px auto 20px auto;
+}
+
+.graph_hide{
+    margin-top: 10px;
+    width: 100%;
+    margin-bottom: 30px;
+}
+
+#linechart_material{
+    display: none;
 }
