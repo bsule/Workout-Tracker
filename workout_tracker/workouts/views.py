@@ -114,10 +114,13 @@ def reps_view(request, pk):
     hold2 = hold2[:7]                                              # flip the list and get the last 7 
     hold2 = hold2[::-1]                                            # then flip back
     
+    lengthofdata = len(hold2)
+    
     context = {}
     context['form'] = form
     context['model'] = my_model
     context['workoutsplit'] = workoutsplit
     context['name'] = name
     context['data'] = hold2
+    context['lengthofdata'] = lengthofdata
     return render(request, 'replist.html', context)
