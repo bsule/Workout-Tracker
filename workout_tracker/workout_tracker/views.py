@@ -10,7 +10,7 @@ def home_view(request):
     if not request.user.is_authenticated:
         return redirect(reverse_lazy('login'))
     
-    return render(request, 'index.html', context)
+    return render(request, 'index.html')
 
 @login_required
 def about_view(request):
