@@ -4,15 +4,21 @@
 {% block content %}
     <link rel="stylesheet" href="{% static 'workouts/workoutlist_style.css' %}">
 
-    <div class="new_and_delete">
-        {% if workoutsplit %}
-            <a href="{% url 'workout_choose' %}"><input type="submit" class="btn btn-primary submitbtn" value="New Workout"></a>
-            <a href="{% url 'delete_view' %}"><input type="submit" class="btn btn-danger deletebtn" value="Delete Workout"></a>
 
-        {% else %}
-            <a href="{% url 'workout_choose' %}"><input type="submit" class="btn btn-primary submitbtn" value="New Workout"></a>
-        {% endif %}
+    {% if workoutsplit %}
+    <div class="new-and-delete">
+        <a href="{% url 'workout_choose' %}"><input type="submit" class="btn btn-primary submitbtn" value="New Workout"></a>
+        <a href="{% url 'delete_view' %}"><input type="submit" class="btn btn-danger deletebtn" value="Delete Workout"></a>
     </div>
+    <div class="screen-small-new">
+        <a href="{% url 'workout_choose' %}"><input type="submit" class="btn btn-primary submitbtn" value="New Workout"></a>
+    </div>
+    {% else %}
+    <div class="new-only">
+        <a href="{% url 'workout_choose' %}"><input type="submit" class="btn btn-primary submitbtn" value="New Workout"></a>
+    </div>
+    {% endif %}
+    
 
     <div class="workout_list_class">
         
@@ -24,6 +30,10 @@
             <h5>No Workouts Made</h5>
         {% endif %}
         
+    </div>
+
+    <div class="screen-small-delete">
+        <a href="{% url 'delete_view' %}"><input type="submit" class="btn btn-danger deletebtn" value="Delete Workout"></a>
     </div>
 
 {% endblock %}
