@@ -8,7 +8,7 @@
     font-size: larger;
 }
 
-.new_and_delete{
+.new-and-delete, .new-only{
     display: flex;
     justify-content: space-between;
 }
@@ -16,11 +16,13 @@
 .submitbtn{
     margin-top: 20px;
     margin-left: 100px;
+    width: 80%;
 }
 
 .deletebtn{
     margin-top: 20px;
     margin-right: 100px;
+    width: 80%;
 }
 
 .link{
@@ -33,4 +35,39 @@ a{
 
 a:hover{
     color: white;
+}
+
+.screen-small-new{
+    display: none;
+}
+
+.screen-small-delete{
+    display: none;
+}
+
+@media screen and (max-width: 768px) {
+    .new-and-delete{
+        display: none;
+    }
+    .screen-small-new{
+        display: flex;
+        justify-content: center;
+    }
+    .screen-small-delete{
+        display: flex;
+        justify-content: center;
+    }
+    .submitbtn{
+        margin-left: 0;
+        margin-top: 20px;
+        width: 150px;
+    }
+    .deletebtn{
+        margin-right: 0;
+        margin-top: 1vh;
+        width: 150px;
+    }
+    .workout_list_class{
+        margin-top: 15px;
+    }
 }
