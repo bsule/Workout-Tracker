@@ -16,13 +16,13 @@
 .submitbtn{
     margin-top: 20px;
     margin-left: 100px;
-    width: 80%;
+    width: 170px;
 }
 
 .deletebtn{
     margin-top: 20px;
     margin-right: 100px;
-    width: 80%;
+    width: 170px;
 }
 
 .link{
@@ -59,7 +59,7 @@ a:hover{
     }
     .submitbtn{
         margin-left: 0;
-        margin-top: 20px;
+        margin-top: 25px;
         width: 150px;
     }
     .deletebtn{
