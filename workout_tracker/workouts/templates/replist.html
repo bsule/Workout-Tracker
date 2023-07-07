@@ -5,17 +5,16 @@
 
 {% block content %}
     <link rel="stylesheet" href="{% static 'workouts/replist_style.css' %}">
-    <script src="{% static 'js/replist_java.js' %}"></script>
     <script src="{% static 'js/loader.js' %}"></script>
-
+    
     <div class="top">
         <form method="POST">
             {% csrf_token %}
 
-            <input class="btn btn-primary col-sm" type="submit" name="next_day" value="Next Workout">
+            <input class="btn btn-primary col-sm firstsubmitbtn" type="submit" name="next_day" value="Next Workout">
         </form>
         {% if workoutsplit %}
-            <a href="{% url 'delete_day_view' model.id %}"><input type="submit" class="btn btn-danger col-sm" value="Delete Day" name="delete"></a>
+            <a href="{% url 'delete_day_view' model.id %}"><input type="submit" class="btn btn-danger col-sm deletebtn" value="Delete Day" name="delete"></a>
         {% endif %}
     </div>
 
@@ -121,7 +120,7 @@
             
             var button = document.getElementById('graphhide');
             var shown = false;
-            button.addEventListener("click", function(){
+            button.addEventListener("click", function(){ // functionality for hiding and showing graph
                     if(shown==false){
                         shown = true;
                         button.value="Hide Graph";
