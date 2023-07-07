@@ -74,3 +74,59 @@ h5{
 #linechart_material{
     display: none;
 }
+
+/* changing button positioning and sizing when screen gets smaller */
+@media screen and (max-width: 991px) {
+    .top{
+        display: grid;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+    }
+    .firstsubmitbtn{
+        width: 50vh;
+    }
+    .deletebtn{
+        width: 50vh;
+        margin-top: 1vh;
+        margin-bottom: 2vh;
+    }
+    .inputs{
+        width: 70%;
+    }
+    table{
+        width: 70%;
+    }
+}
+
+@media screen and (max-width: 490px) {
+    .firstsubmitbtn{
+        width: 40vh;
+    }
+    .deletebtn{
+        width: 40vh;
+    }
+}
+
+@media screen and (max-width: 380px) {
+    .top{
+        display: grid;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+    }
+    .firstsubmitbtn{
+        width: 30vh;
+    }
+    .deletebtn{
+        width: 30vh;
+        margin-top: 1vh;
+        margin-bottom: 2vh;
+    }
+    .inputs{
+        width: 85%;
+    }
+    table{
+        width: 85%;
+    }
+}
