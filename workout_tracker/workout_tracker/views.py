@@ -6,6 +6,9 @@ def home_view(request):
     if not request.user.is_authenticated:
         return redirect(reverse_lazy('login'))
     
+    if request.method == 'POST':
+        return redirect('workoutsplitshowerview')
+    
     return render(request, 'index.html')
 
 

@@ -30,3 +30,7 @@ body{
 .jumbotron{
     background-color: #121212;
 }
+
+.btn-getstarted{
+    margin-top: 20px;
+}

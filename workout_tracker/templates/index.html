@@ -3,8 +3,14 @@
 
 {% block content %} 
 
-    <div class="jumbotron">
+    <div class="jumbotron jumbotron-fluid">
         <h3>Log Your Workouts</h3>
         <h3>Track Your progress</h3>
+        
+        <form method="POST">
+            {% csrf_token %}
+            <input type="submit" class="btn btn-primary btn-getstarted" value="Get Started">
+        </form>
+
     </div>
 {% endblock %}
