@@ -27,7 +27,8 @@
                 <p class="link"><a href="{% url 'reps_view' workout.id %}">{{ workout.name }}</a></p>
             {% endfor %}
         {% else %}
-            <h5>No Workouts Made</h5>
+            <h5>No Workouts Made.</h5>
+            <h5>Click New Workout to Get Started.</h5>
         {% endif %}
         
     </div>

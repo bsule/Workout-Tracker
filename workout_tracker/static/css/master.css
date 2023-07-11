@@ -34,3 +34,9 @@ body{
 .btn-getstarted{
     margin-top: 20px;
 }
+
+.about-jumbotron{
+    display: flex;    
+    justify-content: center;
+}
+
