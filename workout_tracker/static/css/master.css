@@ -36,7 +36,32 @@ body{
 }
 
 .about-jumbotron{
-    display: flex;    
+    display: flex;
+    flex-direction: column;
     justify-content: center;
 }
 
+#about-text{
+    margin-left: auto;
+    margin-right: auto;
+    margin-bottom: 30px;
+    justify-content: center;
+}
+
+button{
+    border: 1px #fff solid;
+    background-color: #fff;
+    color: black;
+    font-weight: bold;
+    
+}
+
+.buttons{
+    display: flex;
+    justify-content: center;
+}
+
+#linkedinbtn{
+    margin-left: 5px;
+    margin-right: 5px;
+}
