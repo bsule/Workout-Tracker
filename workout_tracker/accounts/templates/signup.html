@@ -4,15 +4,17 @@
 {% block content %}
     
     {% if not user.is_authenticated %}
-        
-    <h2 id="login_signup">Sign Up</h2>
-
-    <form method="POST">
-        {% csrf_token %}
-        {% bootstrap_form form %}
-        <input type="submit" class="btn btn-success" value="Sign Up">
     
-    </form>
+    <div class="signup_container">
+        <h3 id="login_signup">Sign Up</h3>
+
+        <form method="POST">
+            {% csrf_token %}
+            {% bootstrap_form form %}
+            <input type="submit" class="btn btn-success" value="Sign Up">
+        
+        </form>
+    </div>
 
     {% else %}
         <h2 id="login_signup">You are already logged in, click here to go to the home page: </h2>
