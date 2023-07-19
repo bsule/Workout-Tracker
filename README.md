@@ -7,3 +7,13 @@ Workout tracking application where the user can make an account, create a routin
 
 
 ## Demo
+
+### Signing Up
+<img src="https://github.com/bsule/Workout-Tracker/assets/84888206/6edbdd40-e27f-4117-a192-a4cc17d6e36e" width="650" height="370" >
+
+### Creating a Workout
+<img src="https://github.com/bsule/Workout-Tracker/assets/84888206/777d84b9-c941-464e-b73a-cfbe772a8025" width="650" height="370" >
+
+### Adding Weight and Showing Graph
+<img src="https://github.com/bsule/Workout-Tracker/assets/84888206/51519d81-3c6a-4cae-9d9d-60119568d9e6" width="650" height="370" >
+
