@@ -4,3 +4,4 @@ workout_tracker/accounts/__pycache__
 workout_tracker/workouts/migrations
 workout_tracker/workouts/__pycache__
 workout_tracker/db.sqlite3
+.idea
