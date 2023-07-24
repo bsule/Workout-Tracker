@@ -24,7 +24,7 @@ TEMPLATES_DIR = (BASE_DIR / 'templates')
 SECRET_KEY = 'django-insecure-8u*aoa*j)2$29z=!b2rd!q!418yc+yd9b1dsyql5=+(qf$4$22'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
 ALLOWED_HOSTS = []
 
