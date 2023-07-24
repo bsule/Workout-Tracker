@@ -24,7 +24,7 @@ TEMPLATES_DIR = (BASE_DIR / 'templates')
 SECRET_KEY = 'django-insecure-dummy-development-key'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
 ALLOWED_HOSTS = ['bsule.pythonanywhere.com']
 
