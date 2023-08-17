@@ -1,9 +1,16 @@
 # Workout Tracker Application
 
 ## Description
-Personal Project using Django, HTML, CSS, Bootstrap, SQLite, Javascript, and Google Charts.
+![<Django>](https://img.shields.io/badge/Django-092E20?style=for-the-badge&logo=Django&logoColor=white)
+![<sqlite>](https://img.shields.io/badge/sqlite-003B57?style=for-the-badge&logo=SQLite&logoColor=white)
+![<html>](https://img.shields.io/badge/HTML5-E34F26?style=for-the-badge&logo=html5&logoColor=white)
+![<css>](https://img.shields.io/badge/CSS-1572B6?style=for-the-badge&logo=css3&logoColor=white)
+![<javascript>](https://img.shields.io/badge/JavaScript-F7DF1E?style=for-the-badge&logo=javascript&logoColor=white)
+![<bootstrap>](https://img.shields.io/badge/Bootstrap-7952B3?style=for-the-badge&logo=Bootstrap&logoColor=white)
 
-Full-stack workout tracking application where the user can make an account, create a routine name, and log the amount of weight and reps completed. After 2 new days are added to a workout, a graph is available that shows the estimated one rep max amount for each day. There is also a seperate page were the user can input weight and amount of reps completed to see their estimated one rep max.
+
+
+Full-stack workout tracking application where the user can make an account, create a routine name, and log the amount of weight and reps completed. After 2 new days are added to a workout, a graph is available that shows the estimated one rep max amount for each day. There is also a seperate page were the user can input weight and amount of reps completed to see their estimated one rep max. Charts made with Google Charts.
 
 
 ## Demo
