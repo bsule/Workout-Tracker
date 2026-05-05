@@ -1,7 +1,16 @@
+# Django (server)
+Workout-Tracker/workout_tracker/accounts/migrations/
+Workout-Tracker/workout_tracker/accounts/__pycache__/
+Workout-Tracker/workout_tracker/workouts/migrations/
+Workout-Tracker/workout_tracker/workouts/__pycache__/
+Workout-Tracker/workout_tracker/workout_tracker/__pycache__/
+Workout-Tracker/workout_tracker/db.sqlite3
+Workout-Tracker/.idea/
 
-workout_tracker/accounts/migrations
-workout_tracker/accounts/__pycache__
-workout_tracker/workouts/migrations
-workout_tracker/workouts/__pycache__
-workout_tracker/db.sqlite3
-.idea
+# Next.js (client)
+workout-tracker-next/.next/
+workout-tracker-next/node_modules/
+workout-tracker-next/.env*.local
+
+# Claude memory
+.claude/
