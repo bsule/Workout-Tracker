@@ -9,13 +9,14 @@ import { useAuth } from "@/components/auth/AuthProvider"
 const navLinks = [
   { href: "/workouts", label: "Workouts" },
   { href: "/calculator", label: "Calculator" },
-  { href: "/about", label: "About" },
 ]
 
 export function Navbar() {
   const pathname = usePathname()
   const router = useRouter()
   const { user, loading, logout } = useAuth()
+  const hideNavLinks =
+    pathname === "/" || pathname === "/login" || pathname === "/signup"
 
   async function handleLogout() {
     await logout()
@@ -33,22 +34,24 @@ export function Navbar() {
           LIFT
         </Link>
 
-        <nav className="hidden sm:flex items-center gap-1">
-          {navLinks.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                pathname.startsWith(link.href)
-                  ? "bg-white/8 text-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-white/5"
-              )}
-            >
-              {link.label}
-            </Link>
-          ))}
-        </nav>
+        {!hideNavLinks && (
+          <nav className="hidden sm:flex items-center gap-1">
+            {navLinks.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={cn(
+                  "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  pathname.startsWith(link.href)
+                    ? "bg-white/8 text-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+                )}
+              >
+                {link.label}
+              </Link>
+            ))}
+          </nav>
+        )}
 
         <div className="flex items-center gap-2">
           {loading ? null : user ? (
