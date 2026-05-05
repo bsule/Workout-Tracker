@@ -114,7 +114,7 @@ export default function SignupPage() {
 
           {/* Card */}
           <div className="rounded-2xl border border-white/8 bg-card p-6 shadow-2xl">
-            <div className="mb-6 h-0.5 w-full rounded-full bg-gradient-to-r from-emerald-500/60 via-emerald-500 to-emerald-500/60" />
+            <div className="mb-6 h-0.5 w-full rounded-full bg-gradient-to-r from-primary/60 via-primary to-primary/60" />
 
             <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
               <div className="flex flex-col gap-1.5">
@@ -202,7 +202,7 @@ export default function SignupPage() {
 
               <Button
                 type="submit"
-                className="mt-2 h-10 w-full bg-emerald-600 font-semibold hover:bg-emerald-500"
+                className="mt-2 h-10 w-full bg-primary font-semibold text-primary-foreground hover:bg-primary/90"
                 disabled={isSubmitting}
               >
                 {isSubmitting ? "Creating account…" : "Create account"}
