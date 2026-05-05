@@ -1,0 +1,65 @@
+"use client"
+
+import Link from "next/link"
+import { usePathname } from "next/navigation"
+import { Dumbbell } from "lucide-react"
+import { cn } from "@/lib/utils"
+
+const navLinks = [
+  { href: "/workouts", label: "Workouts" },
+  { href: "/calculator", label: "Calculator" },
+  { href: "/about", label: "About" },
+]
+
+export function Navbar() {
+  const pathname = usePathname()
+
+  return (
+    <header className="sticky top-0 z-50 border-b border-white/8 bg-black/60 backdrop-blur-md">
+      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
+        {/* Logo */}
+        <Link
+          href="/"
+          className="flex items-center gap-2 text-lg font-bold tracking-tight text-foreground hover:opacity-80 transition-opacity"
+        >
+          <Dumbbell className="size-5 text-primary" />
+          LIFT
+        </Link>
+
+        {/* Nav links */}
+        <nav className="hidden sm:flex items-center gap-1">
+          {navLinks.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                pathname.startsWith(link.href)
+                  ? "bg-white/8 text-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+              )}
+            >
+              {link.label}
+            </Link>
+          ))}
+        </nav>
+
+        {/* Auth buttons (static for now) */}
+        <div className="flex items-center gap-2">
+          <Link
+            href="/login"
+            className="hidden sm:inline-flex rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
+          >
+            Log in
+          </Link>
+          <Link
+            href="/signup"
+            className="inline-flex rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground hover:bg-primary/80 transition-colors"
+          >
+            Sign up
+          </Link>
+        </div>
+      </div>
+    </header>
+  )
+}
