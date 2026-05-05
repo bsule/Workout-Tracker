@@ -2,12 +2,16 @@
 
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
+import { useEffect, useState } from "react"
 import { Dumbbell } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/components/auth/AuthProvider"
 
 const navLinks = [
-  { href: "/workouts", label: "Workouts" },
+  { href: "/workouts", label: "Workout" },
+  { href: "/calendar", label: "Calendar" },
+  { href: "/exercises", label: "Exercises" },
+  { href: "/import", label: "Import" },
   { href: "/calculator", label: "Calculator" },
 ]
 
@@ -15,6 +19,8 @@ export function Navbar() {
   const pathname = usePathname()
   const router = useRouter()
   const { user, loading, logout } = useAuth()
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
   const hideNavLinks =
     pathname === "/" || pathname === "/login" || pathname === "/signup"
 
@@ -53,8 +59,8 @@ export function Navbar() {
           </nav>
         )}
 
-        <div className="flex items-center gap-2">
-          {loading ? null : user ? (
+        <div className="flex items-center gap-2" suppressHydrationWarning>
+          {!mounted || loading ? null : user ? (
             <>
               <span className="hidden sm:inline text-sm text-muted-foreground">
                 {user.username}

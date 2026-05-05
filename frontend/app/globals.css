@@ -118,6 +118,16 @@
   --sidebar-accent-foreground: oklch(0.97 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.61 0.20 260);
+
+  /* Exercise category dot colors */
+  --cat-abs: oklch(0.78 0.18 80);
+  --cat-back: oklch(0.65 0.18 250);
+  --cat-biceps: oklch(0.70 0.20 25);
+  --cat-cardio: oklch(0.78 0.18 158);
+  --cat-chest: oklch(0.65 0.20 30);
+  --cat-legs: oklch(0.65 0.20 310);
+  --cat-shoulders: oklch(0.78 0.18 60);
+  --cat-triceps: oklch(0.62 0.20 200);
 }
 
 @layer base {
@@ -129,6 +139,38 @@
   }
   html {
     @apply font-sans;
+    overflow-y: scroll;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  a[href],
+  label[for],
+  summary,
+  select:not(:disabled),
+  [type="button"]:not(:disabled),
+  [type="submit"]:not(:disabled),
+  [type="reset"]:not(:disabled),
+  [type="checkbox"]:not(:disabled),
+  [type="radio"]:not(:disabled),
+  [type="file"]:not(:disabled) {
+    cursor: pointer;
+  }
+  /* Hide native number-input spinners */
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+  button:disabled,
+  [role="button"][aria-disabled="true"],
+  [type="button"]:disabled,
+  [type="submit"]:disabled,
+  [type="reset"]:disabled {
+    cursor: not-allowed;
   }
 }
 
