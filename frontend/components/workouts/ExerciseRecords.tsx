@@ -1,0 +1,163 @@
+"use client"
+
+import { Trophy } from "lucide-react"
+import type { ExerciseHistoryDay, HistorySet } from "@/types"
+import { parseLocalDate } from "@/lib/utils"
+
+interface Props {
+  history: ExerciseHistoryDay[]
+}
+
+type Achievement = {
+  set: HistorySet
+  date: string
+}
+
+export function ExerciseRecords({ history }: Props) {
+  if (history.length === 0) return null
+
+  const all: Achievement[] = []
+  for (const day of history) {
+    for (const s of day.sets) all.push({ set: s, date: day.date })
+  }
+  if (all.length === 0) return null
+
+  // Headline records
+  const best1RM = all.reduce((b, a) =>
+    a.set.estimated_one_rm > b.set.estimated_one_rm ? a : b
+  )
+  const heaviest = all.reduce((b, a) => (a.set.weight > b.set.weight ? a : b))
+  const bestVolume = all.reduce((b, a) =>
+    a.set.weight * a.set.reps > b.set.weight * b.set.reps ? a : b
+  )
+
+  // Per-rep PRs: take the current is_pr sets, ordered by reps ascending.
+  const perRep: Achievement[] = all
+    .filter((a) => a.set.is_pr)
+    .sort((a, b) => a.set.reps - b.set.reps)
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-card/40 p-4 sm:p-5">
+      <div className="mb-3 flex items-center gap-2">
+        <Trophy className="size-4 text-[oklch(0.78_0.18_80)]" />
+        <h2 className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          Records
+        </h2>
+      </div>
+
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <HeadlineCard
+          label="Best 1RM"
+          accent="primary"
+          value={best1RM.set.estimated_one_rm.toFixed(1)}
+          unit="lb"
+          subtitle={`${best1RM.set.weight} × ${best1RM.set.reps}`}
+          date={best1RM.date}
+        />
+        <HeadlineCard
+          label="Heaviest"
+          accent="amber"
+          value={heaviest.set.weight.toString()}
+          unit="lb"
+          subtitle={`× ${heaviest.set.reps} reps`}
+          date={heaviest.date}
+        />
+        <HeadlineCard
+          label="Best Volume"
+          accent="green"
+          value={(bestVolume.set.weight * bestVolume.set.reps).toFixed(0)}
+          unit="lb"
+          subtitle={`${bestVolume.set.weight} × ${bestVolume.set.reps}`}
+          date={bestVolume.date}
+        />
+      </div>
+
+      {perRep.length > 0 && (
+        <div className="mt-5 border-t border-white/5 pt-4">
+          <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            By Reps
+          </h3>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {perRep.map((a) => (
+              <RepCard key={a.set.id} ach={a} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function HeadlineCard({
+  label,
+  value,
+  unit,
+  subtitle,
+  date,
+  accent,
+}: {
+  label: string
+  value: string
+  unit: string
+  subtitle: string
+  date: string
+  accent: "primary" | "amber" | "green"
+}) {
+  const dotClass =
+    accent === "primary"
+      ? "bg-primary"
+      : accent === "amber"
+        ? "bg-[oklch(0.78_0.18_80)]"
+        : "bg-[oklch(0.78_0.18_158)]"
+  return (
+    <div className="rounded-lg border border-white/5 bg-white/[.02] px-3 py-3">
+      <div className="flex items-center gap-1.5">
+        <span className={"inline-block size-1.5 rounded-full " + dotClass} />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {label}
+        </span>
+      </div>
+      <div className="mt-1 flex items-baseline gap-1">
+        <span className="font-mono text-2xl font-semibold tabular-nums">
+          {value}
+        </span>
+        <span className="text-[10px] text-muted-foreground">{unit}</span>
+      </div>
+      <div className="mt-0.5 flex items-baseline justify-between">
+        <span className="font-mono text-[11px] text-foreground/70">
+          {subtitle}
+        </span>
+        <span className="text-[10px] text-muted-foreground">
+          {formatShort(date)}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function RepCard({ ach }: { ach: Achievement }) {
+  return (
+    <div className="rounded-lg border border-primary/30 bg-primary/[.06] px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-primary/80">
+        {ach.set.reps} rep{ach.set.reps === 1 ? "" : "s"}
+      </div>
+      <div className="mt-0.5 flex items-baseline gap-1">
+        <span className="font-mono text-xl font-semibold tabular-nums text-foreground">
+          {ach.set.weight}
+        </span>
+        <span className="text-[10px] text-muted-foreground">lb</span>
+      </div>
+      <div className="text-[10px] text-muted-foreground">
+        {formatShort(ach.date)}
+      </div>
+    </div>
+  )
+}
+
+function formatShort(iso: string): string {
+  return parseLocalDate(iso).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "2-digit",
+  })
+}

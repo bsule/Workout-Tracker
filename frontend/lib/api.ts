@@ -1,9 +1,16 @@
 import type {
   AuthResponse,
+  CalendarMap,
+  Category,
+  CsvImportResponse,
+  CsvMapping,
+  CsvPreviewResponse,
+  Exercise,
+  ExerciseHistoryDay,
   User,
-  WorkoutSession,
+  Workout,
+  WorkoutExercise,
   WorkoutSet,
-  WorkoutSplit,
 } from "@/types"
 
 const API_BASE =
@@ -35,7 +42,9 @@ export class ApiError extends Error {
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getToken()
   const headers = new Headers(init.headers)
-  if (init.body && !headers.has("Content-Type")) {
+  const isForm =
+    typeof FormData !== "undefined" && init.body instanceof FormData
+  if (init.body && !isForm && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json")
   }
   if (token) headers.set("Authorization", `Token ${token}`)
@@ -68,7 +77,18 @@ function extractErrorMessage(body: Record<string, unknown>): string {
   return "Request failed"
 }
 
+function qs(params: Record<string, string | number | undefined | null>) {
+  const entries = Object.entries(params).filter(
+    ([, v]) => v !== undefined && v !== null && v !== ""
+  )
+  if (!entries.length) return ""
+  const usp = new URLSearchParams()
+  for (const [k, v] of entries) usp.set(k, String(v))
+  return `?${usp.toString()}`
+}
+
 export const api = {
+  // ---------- auth ----------
   signup(payload: { username: string; email: string; password: string }) {
     return request<AuthResponse>("/auth/signup/", {
       method: "POST",
@@ -87,35 +107,124 @@ export const api = {
   me() {
     return request<User>("/auth/me/")
   },
-  listWorkouts() {
-    return request<WorkoutSplit[]>("/workouts/")
+
+  // ---------- exercises ----------
+  listExercises(params?: {
+    category?: Category
+    q?: string
+    sort?: "name" | "last_performed"
+  }) {
+    return request<Exercise[]>(`/exercises/${qs({ ...params })}`)
+  },
+  createExercise(body: { name: string; category: Category }) {
+    return request<Exercise>("/exercises/", {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
+  },
+  deleteExercise(id: number) {
+    return request<void>(`/exercises/${id}/`, { method: "DELETE" })
+  },
+  exerciseHistory(id: number) {
+    return request<ExerciseHistoryDay[]>(`/exercises/${id}/history/`)
+  },
+
+  // ---------- workouts ----------
+  listWorkouts(params?: { date?: string; month?: string }) {
+    return request<Workout[]>(`/workouts/${qs({ ...params })}`)
   },
   getWorkout(id: number) {
-    return request<WorkoutSplit>(`/workouts/${id}/`)
+    return request<Workout>(`/workouts/${id}/`)
   },
-  createWorkout(name: string) {
-    return request<WorkoutSplit>("/workouts/", {
+  async getWorkoutByDate(date: string): Promise<Workout | null> {
+    try {
+      return await request<Workout>(`/workouts/by-date/${date}/`)
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null
+      throw e
+    }
+  },
+  createWorkout(date: string) {
+    return request<Workout>("/workouts/", {
       method: "POST",
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ date }),
     })
   },
   deleteWorkout(id: number) {
     return request<void>(`/workouts/${id}/`, { method: "DELETE" })
   },
-  createSession(splitId: number) {
-    return request<WorkoutSession>(`/workouts/${splitId}/sessions/`, {
-      method: "POST",
+  patchWorkout(
+    id: number,
+    patch: Partial<Pick<Workout, "notes" | "started_at" | "finished_at">>
+  ) {
+    return request<Workout>(`/workouts/${id}/`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
     })
   },
-  deleteSession(sessionId: number) {
-    return request<void>(`/sessions/${sessionId}/`, { method: "DELETE" })
+  addExerciseToWorkout(workoutId: number, exerciseId: number) {
+    return request<WorkoutExercise>(`/workouts/${workoutId}/exercises/`, {
+      method: "POST",
+      body: JSON.stringify({ exercise_id: exerciseId }),
+    })
   },
-  addSet(sessionId: number, set: { weight: number; reps: number }) {
-    return request<WorkoutSet>(`/sessions/${sessionId}/sets/`, {
+  removeExerciseFromWorkout(workoutId: number, weId: number) {
+    return request<void>(`/workouts/${workoutId}/exercises/${weId}/`, {
+      method: "DELETE",
+    })
+  },
+  copyFromWorkout(targetId: number, sourceId: number, withSets = false) {
+    return request<Workout>(
+      `/workouts/${targetId}/copy-from/${sourceId}/${qs({ with_sets: withSets ? 1 : 0 })}`,
+      { method: "POST" }
+    )
+  },
+
+  // ---------- sets ----------
+  addSet(weId: number, set: { weight: number; reps: number; note?: string }) {
+    return request<WorkoutSet>(`/workout-exercises/${weId}/sets/`, {
       method: "POST",
       body: JSON.stringify(set),
     })
   },
+  updateSet(
+    setId: number,
+    patch: { weight?: number; reps?: number; note?: string }
+  ) {
+    return request<WorkoutSet>(`/sets/${setId}/`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    })
+  },
+  deleteSet(setId: number) {
+    return request<void>(`/sets/${setId}/`, { method: "DELETE" })
+  },
+
+  // ---------- calendar ----------
+  getCalendar(year: number, month: number) {
+    return request<CalendarMap>(`/calendar/${qs({ year, month })}`)
+  },
+
+  // ---------- csv ----------
+  csvPreview(file: File) {
+    const fd = new FormData()
+    fd.append("file", file)
+    return request<CsvPreviewResponse>("/csv/preview/", {
+      method: "POST",
+      body: fd,
+    })
+  },
+  csvImport(file: File, mapping: CsvMapping) {
+    const fd = new FormData()
+    fd.append("file", file)
+    fd.append("mapping", JSON.stringify(mapping))
+    return request<CsvImportResponse>("/csv/import/", {
+      method: "POST",
+      body: fd,
+    })
+  },
+
+  // ---------- calculator ----------
   calculator(payload: { weight: number; reps: number }) {
     return request<{ one_rep_max: number }>("/calculator/", {
       method: "POST",
