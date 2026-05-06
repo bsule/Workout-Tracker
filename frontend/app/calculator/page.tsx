@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PageWrapper } from "@/components/layout/PageWrapper"
+import { useWeightUnit } from "@/components/settings/SettingsProvider"
 
 function calculateOneRepMax(weight: number, reps: number): number {
   if (reps === 1) return weight
@@ -46,6 +47,7 @@ const percentages = [
 ]
 
 export default function CalculatorPage() {
+  const unit = useWeightUnit()
   const [result, setResult] = useState<number | null>(null)
 
   const {
@@ -85,7 +87,7 @@ export default function CalculatorPage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="weight" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Weight (lbs)
+                  Weight ({unit})
                 </Label>
                 <Input
                   id="weight"
@@ -142,7 +144,7 @@ export default function CalculatorPage() {
                 </p>
                 <p className="text-5xl font-extrabold tracking-tight text-foreground">
                   {Math.round(result)}{" "}
-                  <span className="text-2xl font-medium text-muted-foreground">lbs</span>
+                  <span className="text-2xl font-medium text-muted-foreground">{unit}</span>
                 </p>
               </div>
 
@@ -163,7 +165,7 @@ export default function CalculatorPage() {
                       <p className="text-xs text-muted-foreground">{description}</p>
                     </div>
                     <p className="text-sm font-bold text-foreground tabular-nums">
-                      {Math.round(result * pct)} lbs
+                      {Math.round(result * pct)} {unit}
                     </p>
                   </div>
                 ))}

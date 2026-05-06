@@ -1,16 +1,8 @@
-# Django (server)
-backend/workout_tracker/accounts/migrations/
-backend/workout_tracker/accounts/__pycache__/
-backend/workout_tracker/workouts/migrations/
-backend/workout_tracker/workouts/__pycache__/
-backend/workout_tracker/workout_tracker/__pycache__/
-backend/workout_tracker/db.sqlite3
-backend/.idea/
-
-# Next.js (client)
-frontend/.next/
-frontend/node_modules/
-frontend/.env*.local
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
 
 # Claude memory
 .claude/

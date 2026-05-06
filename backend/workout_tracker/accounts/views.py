@@ -4,7 +4,12 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
-from .serializers import LoginSerializer, SignupSerializer, UserSerializer
+from .serializers import (
+    LoginSerializer,
+    ProfileUpdateSerializer,
+    SignupSerializer,
+    UserSerializer,
+)
 
 
 @api_view(["POST"])
@@ -37,7 +42,13 @@ def logout_view(request):
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-@api_view(["GET"])
+@api_view(["GET", "PATCH"])
 @permission_classes([IsAuthenticated])
 def me_view(request):
+    if request.method == "PATCH":
+        serializer = ProfileUpdateSerializer(
+            request.user, data=request.data, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
     return Response(UserSerializer(request.user).data)

@@ -1,7 +1,8 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
 
-workout_tracker/accounts/migrations
-workout_tracker/accounts/__pycache__
-workout_tracker/workouts/migrations
-workout_tracker/workouts/__pycache__
+# Django
+workout_tracker/*/migrations/
 workout_tracker/db.sqlite3
-.idea

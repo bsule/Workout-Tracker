@@ -34,6 +34,11 @@ export function todayLocal(): string {
   return formatLocalDate(new Date())
 }
 
+/** True for any local YYYY-MM-DD strictly after today. */
+export function isFutureDate(iso: string): boolean {
+  return iso > todayLocal()
+}
+
 export function parseLocalDate(iso: string): Date {
   // iso = YYYY-MM-DD; build in local TZ to avoid UTC shifts.
   const [y, m, d] = iso.split("-").map(Number)
@@ -67,17 +72,6 @@ export function formatDuration(seconds: number | null): string | null {
   const h = Math.floor(total / 3600)
   const m = Math.floor((total % 3600) / 60)
   return `${h}h ${m}m`
-}
-
-export const CATEGORY_LABELS: Record<Category, string> = {
-  abs: "Abs",
-  back: "Back",
-  biceps: "Biceps",
-  cardio: "Cardio",
-  chest: "Chest",
-  legs: "Legs",
-  shoulders: "Shoulders",
-  triceps: "Triceps",
 }
 
 export function categoryVar(category: Category): string {

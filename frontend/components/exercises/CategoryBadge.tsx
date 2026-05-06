@@ -1,5 +1,8 @@
+"use client"
+
 import type { Category } from "@/types"
-import { CATEGORY_LABELS, categoryVar, cn } from "@/lib/utils"
+import { categoryVar, cn } from "@/lib/utils"
+import { useCategoryStyles } from "@/components/categories/CategoryStylesProvider"
 
 interface Props {
   category: Category
@@ -17,6 +20,7 @@ export function CategoryDot({
   size?: "sm" | "md"
   className?: string
 }) {
+  const { labels } = useCategoryStyles()
   return (
     <span
       className={cn(
@@ -25,7 +29,7 @@ export function CategoryDot({
         className
       )}
       style={{ backgroundColor: categoryVar(category) }}
-      aria-label={CATEGORY_LABELS[category]}
+      aria-label={labels[category]}
     />
   )
 }
@@ -36,6 +40,7 @@ export function CategoryBadge({
   size = "md",
   className,
 }: Props) {
+  const { labels } = useCategoryStyles()
   return (
     <span
       className={cn(
@@ -45,7 +50,7 @@ export function CategoryBadge({
       )}
     >
       <CategoryDot category={category} size={size} />
-      {showLabel && CATEGORY_LABELS[category]}
+      {showLabel && labels[category]}
     </span>
   )
 }

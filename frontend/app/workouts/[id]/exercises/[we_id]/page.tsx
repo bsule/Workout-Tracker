@@ -10,7 +10,7 @@ import {
   ListPlus,
   Trophy,
 } from "lucide-react"
-import { api } from "@/lib/api"
+import { localApi as api } from "@/lib/store"
 import { useAuth } from "@/components/auth/AuthProvider"
 import { CategoryDot } from "@/components/exercises/CategoryBadge"
 import { SetLogger } from "@/components/workouts/SetLogger"
@@ -102,11 +102,17 @@ export default function ExerciseLoggerPage({
       />
 
       {tab === "track" && we && (
-        <SetLogger
-          workoutExerciseId={we.id}
-          sets={we.sets}
-          onChanged={refresh}
-        />
+        history === null ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : (
+          <SetLogger
+            workoutExerciseId={we.id}
+            sets={we.sets}
+            fallback={getPreviousFirstSet(allHistory, workout?.date)}
+            isPlanned={workout?.status === "planned"}
+            onChanged={refresh}
+          />
+        )
       )}
 
       {tab === "chart" && (
@@ -137,6 +143,31 @@ export default function ExerciseLoggerPage({
       )}
     </div>
   )
+}
+
+/**
+ * Most recent prior workout's first set, used to pre-fill the SetLogger when
+ * the current day has no sets logged yet.
+ */
+function getPreviousFirstSet(
+  history: ExerciseHistoryDay[],
+  currentDate: string | undefined
+): { weight: number; reps: number } | null {
+  if (!history.length) return null
+  const earlier = history
+    .filter((d) => (currentDate ? d.date < currentDate : true) && d.sets.length)
+    .sort((a, b) => (a.date < b.date ? 1 : -1))
+  const last = earlier[0]
+  if (!last) return null
+  const ordered = [...last.sets]
+    .filter(
+      (s): s is typeof s & { weight: number; reps: number } =>
+        s.weight != null && s.reps != null,
+    )
+    .sort((a, b) => a.order - b.order || a.id - b.id)
+  const first = ordered[0]
+  if (!first) return null
+  return { weight: first.weight, reps: first.reps }
 }
 
 function Tabs({
