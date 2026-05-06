@@ -19,6 +19,7 @@ import { useAuth } from "@/components/auth/AuthProvider"
 import { useSettings } from "@/components/settings/SettingsProvider"
 import { useTheme } from "@/components/settings/ThemeProvider"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
+import { FullPageLoader, LoadingBlock } from "@/components/ui/Spinner"
 import { api as netApi, ApiError } from "@/lib/api"
 import { localApi, useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -28,11 +29,7 @@ export default function SettingsPage() {
   const { user, loading: authLoading, refreshUser } = useAuth()
 
   if (authLoading) {
-    return (
-      <div className="mx-auto max-w-3xl px-4 py-10 text-sm text-muted-foreground">
-        Loading…
-      </div>
-    )
+    return <FullPageLoader />
   }
   if (!user) {
     return (
@@ -328,7 +325,7 @@ function GymsSection() {
       {error && <StatusLine kind="error" msg={error} />}
 
       {gyms === null ? (
-        <p className="mt-4 text-xs text-muted-foreground">Loading…</p>
+        <div className="mt-4"><LoadingBlock /></div>
       ) : saved.length === 0 && historical.length === 0 ? (
         <p className="mt-4 text-xs text-muted-foreground">No gyms yet.</p>
       ) : (

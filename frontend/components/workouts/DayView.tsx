@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { Plus, Trash2, Files, FilePlus2, Play, CalendarClock } from "lucide-react"
+import { Plus, Trash2, Play, CalendarClock } from "lucide-react"
 import { PrIcon } from "@/components/workouts/PrIcon"
 import { useMemo, useState } from "react"
 import {
@@ -24,6 +24,7 @@ import { CategoryDot } from "@/components/exercises/CategoryBadge"
 import { DateNav } from "@/components/layout/DateNav"
 import { GymEditor } from "@/components/workouts/GymEditor"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
+import { LoadingBlock } from "@/components/ui/Spinner"
 import { useWeightUnit } from "@/components/settings/SettingsProvider"
 import { formatWeight } from "@/lib/units"
 
@@ -51,18 +52,8 @@ export function DayView({ date }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  // No-op kept for handlers that previously called load() after a mutation.
-  // The useMemo above re-derives automatically when the snapshot changes.
-  function refresh() {}
-
   function changeDate(next: string) {
     router.push(`/workouts/date/${next}`)
-  }
-
-  function startWorkout() {
-    // Defer creating the Workout until the user actually picks an exercise,
-    // so backing out without picking doesn't leave an empty day around.
-    router.push(`/exercises?forDate=${date}`)
   }
 
   async function startPlanned() {
@@ -71,33 +62,8 @@ export function DayView({ date }: Props) {
     setError(null)
     try {
       startPlannedWorkout(workout.id)
-      refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start workout")
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function copyPrevious() {
-    setBusy(true)
-    setError(null)
-    try {
-      // Find the most recent prior workout.
-      const list = await api.listWorkouts()
-      const earlier = list
-        .filter((w) => w.date < date)
-        .sort((a, b) => (a.date < b.date ? 1 : -1))
-      const source = earlier[0]
-      if (!source) {
-        setError("No previous workout to copy from.")
-        return
-      }
-      const target = await api.createWorkout(date)
-      await api.copyFromWorkout(target.id, source.id, false)
-      refresh()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to copy workout")
     } finally {
       setBusy(false)
     }
@@ -114,21 +80,17 @@ export function DayView({ date }: Props) {
     if (!ok) return
     try {
       await api.removeExerciseFromWorkout(workout.id, weId)
-      refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to remove exercise")
     }
   }
 
+
   return (
     <div className="space-y-5">
       <DateNav date={date} onChange={changeDate} />
 
-      {workout === undefined && (
-        <div className="rounded-md border border-white/10 p-8 text-center text-sm text-muted-foreground">
-          Loading…
-        </div>
-      )}
+      {workout === undefined && <LoadingBlock />}
 
       {error && (
         <p className="text-sm text-destructive" role="alert">
@@ -137,24 +99,26 @@ export function DayView({ date }: Props) {
       )}
 
       {workout === null && (
-        isFutureDate(date) ? (
-          <FutureDayBlock />
-        ) : (
-          <EmptyDay
-            busy={busy}
-            onStart={startWorkout}
-            onCopy={copyPrevious}
-          />
-        )
+        <>
+          <DateStrip date={date} />
+          <div className="rounded-md border border-dashed border-white/15 p-6 text-center text-sm text-muted-foreground">
+            No exercises yet. Add one below.
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <Link
+              href={`/exercises?forDate=${date}`}
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/20 transition-colors"
+            >
+              <Plus className="size-4" />
+              Add Exercise
+            </Link>
+          </div>
+        </>
       )}
 
       {workout && (
         <>
-          <SummaryStrip
-            workout={workout}
-            lastGym={lastGym}
-            onGymChange={refresh}
-          />
+          <SummaryStrip workout={workout} lastGym={lastGym} />
 
           {workout.status === "planned" && (
             <PlannedBanner
@@ -199,11 +163,9 @@ export function DayView({ date }: Props) {
 function SummaryStrip({
   workout,
   lastGym,
-  onGymChange,
 }: {
   workout: Workout
   lastGym: string | null
-  onGymChange: () => void
 }) {
   const dur = formatDuration(workout.duration_seconds)
   const dt = parseLocalDate(workout.date)
@@ -221,7 +183,6 @@ function SummaryStrip({
           workoutId={workout.id}
           gym={workout.gym}
           lastGym={lastGym}
-          onChange={onGymChange}
         />
       </div>
       {workout.exercises.length > 0 && (
@@ -433,45 +394,17 @@ function pad(n: number) {
   return String(n).padStart(2, "0")
 }
 
-function FutureDayBlock() {
+function DateStrip({ date }: { date: string }) {
+  const dt = parseLocalDate(date)
+  const niceDate = dt.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  })
   return (
-    <div className="rounded-xl border border-dashed border-white/15 bg-white/[.02] p-10 text-center">
-      <CalendarClock className="mx-auto size-10 text-muted-foreground" />
-      <div className="mt-3 text-base font-semibold">Future date</div>
-      <p className="mt-1 text-sm text-muted-foreground">
-        You can&rsquo;t log a workout for a day that hasn&rsquo;t happened yet.
-      </p>
-    </div>
-  )
-}
-
-function EmptyDay({
-  busy,
-  onStart,
-  onCopy,
-}: {
-  busy: boolean
-  onStart: () => void
-  onCopy: () => void
-}) {
-  return (
-    <div className="grid gap-6 py-10 sm:grid-cols-2">
-      <button
-        onClick={onStart}
-        disabled={busy}
-        className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 p-10 text-primary hover:bg-primary/10 disabled:opacity-50"
-      >
-        <FilePlus2 className="size-12" />
-        <span className="text-base font-semibold">Start New Workout</span>
-      </button>
-      <button
-        onClick={onCopy}
-        disabled={busy}
-        className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 p-10 text-primary hover:bg-primary/10 disabled:opacity-50"
-      >
-        <Files className="size-12" />
-        <span className="text-base font-semibold">Copy Previous Workout</span>
-      </button>
+    <div className="rounded-lg border border-white/10 bg-white/[.02] p-4">
+      <div className="text-sm text-muted-foreground">{niceDate}</div>
     </div>
   )
 }

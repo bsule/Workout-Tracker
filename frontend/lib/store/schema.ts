@@ -1,8 +1,9 @@
 import type { Category, ExerciseKind, UserSettings, WorkoutStatus } from "@/types"
 
+// v3: add soft-delete support to ExerciseRow.
 // v2: add kind to ExerciseRow, distance/time fields to SetRow.
 // Older snapshots are migrated in blob.ts:migrate().
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 export interface ExerciseRow {
   id: number
@@ -10,6 +11,7 @@ export interface ExerciseRow {
   category: Category
   kind: ExerciseKind
   is_custom: boolean
+  is_deleted?: boolean
 }
 
 export interface WorkoutRow {

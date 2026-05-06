@@ -4,6 +4,7 @@ import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { todayLocal } from "@/lib/utils"
 import { useAuth } from "@/components/auth/AuthProvider"
+import { FullPageLoader } from "@/components/ui/Spinner"
 
 export default function WorkoutsIndex() {
   const router = useRouter()
@@ -18,9 +19,5 @@ export default function WorkoutsIndex() {
     router.replace(`/workouts/date/${todayLocal()}`)
   }, [user, loading, router])
 
-  return (
-    <div className="mx-auto max-w-2xl px-4 py-10 text-sm text-muted-foreground">
-      Loading…
-    </div>
-  )
+  return <FullPageLoader />
 }

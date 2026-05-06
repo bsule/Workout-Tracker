@@ -57,6 +57,15 @@ export const localApi = {
     const row = M.createExercise(body)
     return Promise.resolve(exerciseFromRow(row, row.id, getState().indexes))
   },
+  patchExercise(id: number, patch: { name?: string }): Promise<Exercise> {
+    const row = M.patchExercise(id, patch)
+    if (!row) return Promise.reject(new Error("Exercise not found"))
+    return Promise.resolve(exerciseFromRow(row, row.id, getState().indexes))
+  },
+  deleteExercise(id: number): Promise<void> {
+    M.deleteExercise(id)
+    return Promise.resolve()
+  },
   exerciseHistory(id: number): Promise<ExerciseHistoryDay[]> {
     return Promise.resolve(Q.getExerciseHistoryQ(id))
   },

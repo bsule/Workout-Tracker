@@ -10,7 +10,7 @@ import type {
   WorkoutExerciseRow,
   WorkoutRow,
 } from "./schema"
-import { FIRST_CUSTOM_ID } from "./seed"
+import { FIRST_CUSTOM_ID, SEED_EXERCISES, isSeedId } from "./seed"
 
 // All mutations follow the same shape:
 // 1. Compute next snapshot (immutable update).
@@ -68,21 +68,64 @@ export function createExercise(input: {
   return row
 }
 
+export function patchExercise(
+  id: number,
+  patch: Partial<Pick<ExerciseRow, "name">>
+): ExerciseRow | null {
+  let result: ExerciseRow | null = null
+  applyMutation((snap) => {
+    const idx = snap.exercises.findIndex((e) => e.id === id)
+    const existing = idx >= 0 ? snap.exercises[idx] : undefined
+    const seed = isSeedId(id)
+      ? SEED_EXERCISES.find((e) => e.id === id)
+      : undefined
+    const cur = existing ?? seed
+    if (!cur) return snap
+
+    const name = patch.name?.trim()
+    if (!name) return snap
+
+    const next: ExerciseRow = { ...cur, name }
+    result = next
+    const exercises = snap.exercises.slice()
+    if (idx >= 0) exercises[idx] = next
+    else exercises.push(next)
+    return { ...snap, exercises }
+  })
+  if (result) {
+    recordPending({ op: "patch_exercise", id, row: result })
+  }
+  return result
+}
+
 export function deleteExercise(id: number): void {
-  if (id < FIRST_CUSTOM_ID) return // can't delete a seed exercise
+  let deletedRow: ExerciseRow | null = null
   applyMutation((snap) => {
     const referenced = snap.workout_exercises.some((we) => we.exercise_id === id)
-    if (referenced) {
-      // Soft-delete by removing only if no history. Otherwise leave it alone
-      // so existing sets keep resolving (visible in history).
-      return snap
+    const idx = snap.exercises.findIndex((e) => e.id === id)
+    const existing = idx >= 0 ? snap.exercises[idx] : undefined
+    const seed = isSeedId(id)
+      ? SEED_EXERCISES.find((e) => e.id === id)
+      : undefined
+
+    if (referenced || seed) {
+      const cur = existing ?? seed
+      if (!cur) return snap
+      const next: ExerciseRow = { ...cur, is_deleted: true }
+      deletedRow = next
+      const exercises = snap.exercises.slice()
+      if (idx >= 0) exercises[idx] = next
+      else exercises.push(next)
+      return { ...snap, exercises }
     }
+
+    if (id < FIRST_CUSTOM_ID) return snap
     return {
       ...snap,
       exercises: snap.exercises.filter((e) => e.id !== id),
     }
   })
-  recordPending({ op: "delete_exercise", id })
+  recordPending({ op: "delete_exercise", id, row: deletedRow })
 }
 
 // ---- workouts -----------------------------------------------------
@@ -404,7 +447,11 @@ function recomputePrsForWe(snap: Snapshot, weId: number): Snapshot {
   return recomputePrsForExercise(snap, we.exercise_id)
 }
 
-function recomputePrsForExercise(snap: Snapshot, exerciseId: number): Snapshot {
+function recomputePrsForExercise(
+  snap: Snapshot,
+  exerciseId: number,
+  opts: { deriveHistorical?: boolean } = {}
+): Snapshot {
   // PR logic only applies to weight×reps exercises. Cardio / time-only sets
   // are skipped — their is_pr stays false.
   const ex = snap.exercises.find((e) => e.id === exerciseId)
@@ -431,27 +478,37 @@ function recomputePrsForExercise(snap: Snapshot, exerciseId: number): Snapshot {
       s.weight != null &&
       s.reps != null
   ) as Array<SetRow & { weight: number; reps: number }>
-  const ts = (s: SetRow) => Date.parse(s.created_at) || 0
   const dateOf = (s: SetRow) => weToDate.get(s.workout_exercise_id) ?? ""
+  const weOrderOf = (s: SetRow) =>
+    snap.workout_exercises.find((we) => we.id === s.workout_exercise_id)
+      ?.order ?? 0
+  const ts = (s: SetRow) => Date.parse(s.created_at) || 0
   const isPriorTo = (o: SetRow, s: SetRow) => {
     const od = dateOf(o)
     const sd = dateOf(s)
     if (od !== sd) return od < sd
+    const ow = weOrderOf(o)
+    const sw = weOrderOf(s)
+    if (ow !== sw) return ow < sw
+    if (o.order !== s.order) return o.order < s.order
     const ot = ts(o)
     const st = ts(s)
     if (ot !== st) return ot < st
     return o.id < s.id
   }
+  const dominates = (
+    o: SetRow & { weight: number; reps: number },
+    s: SetRow & { weight: number; reps: number }
+  ) =>
+    (o.weight > s.weight && o.reps >= s.reps) ||
+    (o.weight === s.weight && o.reps > s.reps)
+
   const prIds = new Set<number>()
   for (const s of candidates) {
     let dominated = false
     for (const o of candidates) {
       if (o.id === s.id) continue
-      if (o.weight > s.weight && o.reps >= s.reps) {
-        dominated = true
-        break
-      }
-      if (o.weight === s.weight && o.reps > s.reps) {
+      if (dominates(o, s)) {
         dominated = true
         break
       }
@@ -464,13 +521,36 @@ function recomputePrsForExercise(snap: Snapshot, exerciseId: number): Snapshot {
     if (!dominated) prIds.add(s.id)
   }
 
+  const historicalPrIds = new Set<number>()
+  if (opts.deriveHistorical) {
+    const ordered = candidates
+      .slice()
+      .sort((a, b) => (isPriorTo(a, b) ? -1 : isPriorTo(b, a) ? 1 : 0))
+    const prior: typeof candidates = []
+    for (const s of ordered) {
+      const hadPriorRecord = prior.some(
+        (o) =>
+          dominates(o, s) ||
+          (o.weight === s.weight && o.reps === s.reps && isPriorTo(o, s))
+      )
+      if (!hadPriorRecord) historicalPrIds.add(s.id)
+      prior.push(s)
+    }
+  }
+
   const sets = snap.sets.map((s) => {
-    if (!weIds.has(s.workout_exercise_id) || s.is_planned) {
-      return s.is_pr ? { ...s, is_pr: false } : s
+    if (!weIds.has(s.workout_exercise_id)) return s
+    if (s.is_planned || s.weight == null || s.reps == null) {
+      const wasPr = opts.deriveHistorical ? false : s.was_pr
+      if (!s.is_pr && s.was_pr === wasPr) return s
+      return { ...s, is_pr: false, was_pr: wasPr }
     }
     const isPr = prIds.has(s.id)
-    if (s.is_pr === isPr && (isPr ? s.was_pr : true)) return s
-    return { ...s, is_pr: isPr, was_pr: s.was_pr || isPr }
+    const wasPr = opts.deriveHistorical
+      ? historicalPrIds.has(s.id)
+      : s.was_pr || isPr
+    if (s.is_pr === isPr && s.was_pr === wasPr) return s
+    return { ...s, is_pr: isPr, was_pr: wasPr }
   })
   return { ...snap, sets }
 }
@@ -483,7 +563,7 @@ export function recomputeAllPrs(): { recomputed: number } {
       snap.workout_exercises.map((we) => we.exercise_id)
     )
     for (const id of exerciseIds) {
-      next = recomputePrsForExercise(next, id)
+      next = recomputePrsForExercise(next, id, { deriveHistorical: true })
     }
     count = exerciseIds.size
     return next
@@ -491,4 +571,3 @@ export function recomputeAllPrs(): { recomputed: number } {
   recordPending({ op: "recompute_prs" })
   return { recomputed: count }
 }
-

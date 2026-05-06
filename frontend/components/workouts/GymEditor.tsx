@@ -8,7 +8,6 @@ import { cn } from "@/lib/utils"
 interface Props {
   workoutId: number
   gym: string
-  onChange: (gym: string) => void
   /**
    * The most recently used gym across all of the user's workouts. We pass it
    * in so the empty-state shows the last-known gym as a one-click suggestion.
@@ -16,7 +15,7 @@ interface Props {
   lastGym?: string | null
 }
 
-export function GymEditor({ workoutId, gym, onChange, lastGym }: Props) {
+export function GymEditor({ workoutId, gym, lastGym }: Props) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(gym)
   const [busy, setBusy] = useState(false)
@@ -50,7 +49,6 @@ export function GymEditor({ workoutId, gym, onChange, lastGym }: Props) {
     setBusy(true)
     try {
       await api.patchWorkout(workoutId, { gym: trimmed })
-      onChange(trimmed)
       setEditing(false)
       setOpen(false)
     } finally {

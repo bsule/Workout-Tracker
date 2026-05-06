@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { localApi as api, getPlannedDatesQ } from "@/lib/store"
 import { useAuth } from "@/components/auth/AuthProvider"
 import { CalendarMonth } from "@/components/calendar/CalendarMonth"
+import { FullPageLoader } from "@/components/ui/Spinner"
 import type { CalendarMap } from "@/types"
 
 export default function CalendarPage() {
@@ -50,11 +51,7 @@ export default function CalendarPage() {
   }
 
   if (loading || !user) {
-    return (
-      <div className="mx-auto max-w-2xl px-4 py-10 text-sm text-muted-foreground">
-        Loading…
-      </div>
-    )
+    return <FullPageLoader />
   }
 
   return (

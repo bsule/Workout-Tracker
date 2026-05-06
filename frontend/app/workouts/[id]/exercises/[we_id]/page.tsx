@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { use, useCallback, useEffect, useState } from "react"
+import { use, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
   ChevronLeft,
@@ -10,7 +10,9 @@ import {
   ListPlus,
   Trophy,
 } from "lucide-react"
-import { localApi as api } from "@/lib/store"
+import { useStore, useHydrated } from "@/lib/store"
+import { FullPageLoader, LoadingBlock } from "@/components/ui/Spinner"
+import { getWorkoutQ, getExerciseHistoryQ } from "@/lib/store/queries"
 import { useAuth } from "@/components/auth/AuthProvider"
 import { CategoryDot } from "@/components/exercises/CategoryBadge"
 import { SetLogger } from "@/components/workouts/SetLogger"
@@ -18,7 +20,7 @@ import { ExerciseChart } from "@/components/workouts/ExerciseChart"
 import { ExerciseHistory } from "@/components/workouts/ExerciseHistory"
 import { ExerciseRecords } from "@/components/workouts/ExerciseRecords"
 import { cn } from "@/lib/utils"
-import type { ExerciseHistoryDay, Workout, WorkoutExercise } from "@/types"
+import type { ExerciseHistoryDay } from "@/types"
 
 type Tab = "track" | "chart" | "records" | "history"
 
@@ -30,10 +32,26 @@ export default function ExerciseLoggerPage({
   const { id, we_id } = use(params)
   const router = useRouter()
   const { user, loading } = useAuth()
+  const hydrated = useHydrated()
+  // Subscribe to the snapshot reference so we re-render on any mutation.
+  // Materialization is done via useMemo below — calling getWorkoutQ inside
+  // useStore directly would trip useSyncExternalStore's getSnapshot cache.
+  const snapshot = useStore((s) => s.snapshot)
 
-  const [workout, setWorkout] = useState<Workout | null>(null)
-  const [we, setWe] = useState<WorkoutExercise | null>(null)
-  const [history, setHistory] = useState<ExerciseHistoryDay[] | null>(null)
+  const workout = useMemo(
+    () => (hydrated ? getWorkoutQ(Number(id)) : null),
+    [hydrated, id, snapshot],
+  )
+  const we = useMemo(
+    () => workout?.exercises.find((e) => e.id === Number(we_id)) ?? null,
+    [workout, we_id],
+  )
+  const history: ExerciseHistoryDay[] | null = useMemo(() => {
+    if (!hydrated || !we) return null
+    return getExerciseHistoryQ(we.exercise.id)
+    // history depends on snapshot, not just the WE — pull `snapshot` into deps.
+  }, [hydrated, we, snapshot])
+
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>("track")
 
@@ -41,33 +59,16 @@ export default function ExerciseLoggerPage({
     if (!loading && !user) router.replace("/login")
   }, [user, loading, router])
 
-  const refresh = useCallback(async () => {
-    try {
-      const w = await api.getWorkout(Number(id))
-      setWorkout(w)
-      const found = w.exercises.find((e) => e.id === Number(we_id))
-      setWe(found ?? null)
-      if (!found) {
-        setError("Exercise not found on this workout.")
-        return
-      }
-      const hist = await api.exerciseHistory(found.exercise.id)
-      setHistory(hist)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load")
-    }
-  }, [id, we_id])
-
   useEffect(() => {
-    if (user) refresh()
-  }, [user, refresh])
+    if (hydrated && workout && we == null) {
+      setError("Exercise not found on this workout.")
+    } else {
+      setError(null)
+    }
+  }, [hydrated, workout, we])
 
   if (loading || !user) {
-    return (
-      <div className="mx-auto max-w-2xl px-4 py-10 text-sm text-muted-foreground">
-        Loading…
-      </div>
-    )
+    return <FullPageLoader />
   }
 
   const allHistory = history ?? []
@@ -103,21 +104,20 @@ export default function ExerciseLoggerPage({
 
       {tab === "track" && we && (
         history === null ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <LoadingBlock />
         ) : (
           <SetLogger
             workoutExerciseId={we.id}
             sets={we.sets}
             fallback={getPreviousFirstSet(allHistory, workout?.date)}
             isPlanned={workout?.status === "planned"}
-            onChanged={refresh}
           />
         )
       )}
 
       {tab === "chart" && (
         history === null ? (
-          <p className="text-sm text-muted-foreground">Loading chart…</p>
+          <LoadingBlock />
         ) : (
           <ExerciseChart history={history} />
         )
@@ -125,7 +125,7 @@ export default function ExerciseLoggerPage({
 
       {tab === "records" && (
         history === null ? (
-          <p className="text-sm text-muted-foreground">Loading records…</p>
+          <LoadingBlock />
         ) : (
           <ExerciseRecords history={allHistory} />
         )
@@ -133,7 +133,7 @@ export default function ExerciseLoggerPage({
 
       {tab === "history" && (
         history === null ? (
-          <p className="text-sm text-muted-foreground">Loading history…</p>
+          <LoadingBlock />
         ) : (
           <ExerciseHistory
             history={allHistory}

@@ -13,7 +13,7 @@ import {
   workoutFromRow,
 } from "./materialize"
 import { getState } from "./store"
-import { SEED_EXERCISES } from "./seed"
+import { SEED_EXERCISES, isSeedId } from "./seed"
 import type { ExerciseRow } from "./schema"
 
 export function listExercisesQ(params?: {
@@ -25,6 +25,7 @@ export function listExercisesQ(params?: {
   const all: ExerciseRow[] = mergeSeedAndCustom(snapshot.exercises)
 
   const filtered = all.filter((e) => {
+    if (e.is_deleted) return false
     if (params?.category && e.category !== params.category) return false
     if (params?.q) {
       const q = params.q.toLowerCase()
@@ -176,12 +177,12 @@ export function getPlannedWorkoutForToday(): Workout | null {
 // helpers ------------------------------------------------------------
 
 function mergeSeedAndCustom(custom: ExerciseRow[]): ExerciseRow[] {
-  const customIds = new Set(custom.map((e) => e.id))
+  const overridesById = new Map(custom.map((e) => [e.id, e]))
   const out: ExerciseRow[] = []
   for (const seed of SEED_EXERCISES) {
-    if (!customIds.has(seed.id)) out.push(seed)
+    out.push(overridesById.get(seed.id) ?? seed)
   }
-  out.push(...custom)
+  out.push(...custom.filter((e) => !isSeedId(e.id)))
   return out
 }
 

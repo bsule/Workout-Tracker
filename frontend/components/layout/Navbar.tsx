@@ -11,7 +11,6 @@ const navLinks = [
   { href: "/workouts", label: "Workout" },
   { href: "/calendar", label: "Calendar" },
   { href: "/exercises", label: "Exercises" },
-  { href: "/calculator", label: "Calculator" },
 ]
 
 export function Navbar() {

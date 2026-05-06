@@ -78,12 +78,6 @@ export default function HomePage() {
               Start Logging
               <ArrowRight className="size-5 transition-transform group-hover:translate-x-1" />
             </Link>
-            <Link
-              href="/calculator"
-              className="inline-flex h-14 items-center gap-3 rounded-none border-2 border-white/20 bg-transparent px-8 font-display text-base uppercase tracking-wider text-foreground transition-all hover:border-white/60 hover:bg-white/5"
-            >
-              1RM Calculator
-            </Link>
           </div>
 
         </div>
