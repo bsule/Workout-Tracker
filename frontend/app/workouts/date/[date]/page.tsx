@@ -4,6 +4,7 @@ import { use, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { DayView } from "@/components/workouts/DayView"
 import { useAuth } from "@/components/auth/AuthProvider"
+import { FullPageLoader } from "@/components/ui/Spinner"
 
 export default function DayPage({
   params,
@@ -19,11 +20,7 @@ export default function DayPage({
   }, [user, loading, router])
 
   if (loading || !user) {
-    return (
-      <div className="mx-auto max-w-2xl px-4 py-10 text-sm text-muted-foreground">
-        Loading…
-      </div>
-    )
+    return <FullPageLoader />
   }
 
   return (

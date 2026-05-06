@@ -29,7 +29,6 @@ interface Props {
   repsStep?: number
   /** When true, sets are saved as planned targets (workout.status === "planned"). */
   isPlanned?: boolean
-  onChanged: () => void
 }
 
 export function SetLogger({
@@ -39,14 +38,19 @@ export function SetLogger({
   weightStep,
   repsStep = 1,
   isPlanned = false,
-  onChanged,
 }: Props) {
   const unit = useWeightUnit()
   const step = weightStep ?? defaultStep(unit)
 
+  // When the user is logging against a planned workout, seed the inputs from
+  // the next queued target so Save defaults to the planned values. While
+  // authoring targets (isPlanned), or when no targets exist, fall back to the
+  // most recent set in the list, then to the prior-session fallback.
+  const nextPlanned = !isPlanned ? sets.find((s) => s.is_planned) ?? null : null
   const lastSet = sets.length ? sets[sets.length - 1] : null
-  const initialKg = lastSet?.weight ?? fallback?.weight ?? 0
-  const initialReps = lastSet?.reps ?? fallback?.reps ?? 8
+  const seed = nextPlanned ?? lastSet
+  const initialKg = seed?.weight ?? fallback?.weight ?? 0
+  const initialReps = seed?.reps ?? fallback?.reps ?? 8
   // Weight state is in display unit so user sees and edits in their unit.
   const [weight, setWeight] = useState<number>(roundForDisplay(fromKg(initialKg, unit), unit))
   const [reps, setReps] = useState<number>(initialReps)
@@ -83,7 +87,6 @@ export function SetLogger({
           })
         }
       }
-      onChanged()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save set")
     } finally {
@@ -146,7 +149,7 @@ export function SetLogger({
         )}
       </div>
 
-      <SetList sets={sets} onChanged={onChanged} />
+      <SetList sets={sets} canHit={!isPlanned} />
     </div>
   )
 }
@@ -213,13 +216,7 @@ function NumericField({
   )
 }
 
-function SetList({
-  sets,
-  onChanged,
-}: {
-  sets: WorkoutSet[]
-  onChanged: () => void
-}) {
+function SetList({ sets, canHit }: { sets: WorkoutSet[]; canHit: boolean }) {
   if (!sets.length) {
     return (
       <div className="rounded-2xl border border-dashed border-white/10 bg-white/[.01] p-10 text-center text-sm text-muted-foreground">
@@ -238,7 +235,7 @@ function SetList({
         </div>
         <div className="divide-y divide-white/5">
           {sets.map((s, i) => (
-            <SetRow key={s.id} index={i + 1} set={s} onChanged={onChanged} />
+            <SetRow key={s.id} index={i + 1} set={s} canHit={canHit} />
           ))}
         </div>
       </div>
@@ -249,11 +246,11 @@ function SetList({
 function SetRow({
   index,
   set,
-  onChanged,
+  canHit,
 }: {
   index: number
   set: WorkoutSet
-  onChanged: () => void
+  canHit: boolean
 }) {
   const confirm = useConfirm()
   const unit = useWeightUnit()
@@ -265,6 +262,10 @@ function SetRow({
   const [noteOpen, setNoteOpen] = useState(false)
   const [noteDraft, setNoteDraft] = useState(set.note)
   const [noteSaving, setNoteSaving] = useState(false)
+  // Two-step UX for planned sets: first the user picks Hit / Not hit; only
+  // after Not hit do Edit + Delete reveal.
+  const [missMode, setMissMode] = useState(false)
+  const isPlannedRow = canHit && set.is_planned
 
   async function save() {
     if (weight <= 0 || reps <= 0) {
@@ -276,7 +277,6 @@ function SetRow({
     try {
       await api.updateSet(set.id, { weight: toKg(weight, unit), reps })
       setEditing(false)
-      onChanged()
     } finally {
       setBusy(false)
     }
@@ -286,10 +286,19 @@ function SetRow({
     setNoteSaving(true)
     try {
       await api.updateSet(set.id, { note: noteDraft })
-      onChanged()
       setNoteOpen(false)
     } finally {
       setNoteSaving(false)
+    }
+  }
+
+  async function hit() {
+    if (set.weight == null || set.reps == null) return
+    setBusy(true)
+    try {
+      logPlannedSet(set.id, { weight: set.weight, reps: set.reps })
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -304,7 +313,6 @@ function SetRow({
     setBusy(true)
     try {
       await api.deleteSet(set.id)
-      onChanged()
     } finally {
       setBusy(false)
     }
@@ -367,16 +375,38 @@ function SetRow({
   return (
     <div>
       <div className="group relative">
-        <div className="grid grid-cols-[1.25rem_2rem_1fr_4rem] items-center gap-x-4 px-4 py-3 hover:bg-white/[.02] transition-colors">
-          <PrIcon isPr={set.is_pr} wasPr={set.was_pr} className="size-4" />
+        <div
+          className={cn(
+            "grid grid-cols-[1.25rem_2rem_1fr_4rem] items-center gap-x-4 px-4 py-3 hover:bg-white/[.02] transition-colors",
+            set.is_planned && "opacity-60"
+          )}
+        >
+          {set.is_planned ? (
+            <span
+              className="size-2 rounded-full border border-dashed border-primary/60"
+              aria-label="Target set"
+            />
+          ) : (
+            <PrIcon isPr={set.is_pr} wasPr={set.was_pr} className="size-4" />
+          )}
           <span className="font-mono text-base font-semibold tabular-nums text-muted-foreground">
             {index}
           </span>
-          <span className="text-center text-xl font-semibold tabular-nums">
+          <span
+            className={cn(
+              "text-center text-xl font-semibold tabular-nums",
+              set.is_planned && "italic text-muted-foreground"
+            )}
+          >
             <span className="font-mono">{formatWeight(set.weight, unit)}</span>
             <span className="ml-1 text-xs font-medium text-muted-foreground">{unit}</span>
           </span>
-          <span className="text-right text-xl font-semibold tabular-nums">
+          <span
+            className={cn(
+              "text-right text-xl font-semibold tabular-nums",
+              set.is_planned && "italic text-muted-foreground"
+            )}
+          >
             <span className="font-mono">{set.reps}</span>
           </span>
         </div>
@@ -385,36 +415,85 @@ function SetRow({
             {set.note}
           </p>
         )}
-        <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
-          <button
-            onClick={() => setEditing(true)}
-            className="rounded-md bg-card/90 p-1.5 text-muted-foreground hover:bg-white/10 hover:text-foreground"
-            aria-label="Edit set"
-          >
-            <Pencil className="size-3.5" />
-          </button>
-          <button
-            onClick={() => {
-              setNoteDraft(set.note)
-              setNoteOpen((v) => !v)
-            }}
-            className={cn(
-              "rounded-md bg-card/90 p-1.5 hover:bg-white/10",
-              hasNote ? "text-primary" : "text-muted-foreground hover:text-foreground"
-            )}
-            aria-label={hasNote ? "Edit note" : "Add note"}
-          >
-            <StickyNote className="size-3.5" />
-          </button>
-          <button
-            onClick={remove}
-            disabled={busy}
-            className="rounded-md bg-card/90 p-1.5 text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
-            aria-label="Delete set"
-          >
-            <Trash2 className="size-3.5" />
-          </button>
-        </div>
+        {isPlannedRow && !missMode && set.weight != null && set.reps != null && (
+          <div className="flex items-center justify-end gap-2 px-4 pb-2.5">
+            <button
+              onClick={hit}
+              disabled={busy}
+              className="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-400 hover:bg-emerald-500/25 disabled:opacity-50"
+            >
+              <Check className="size-3.5" />
+              Hit
+            </button>
+            <button
+              onClick={() => setMissMode(true)}
+              disabled={busy}
+              className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2.5 py-1 text-xs font-semibold text-muted-foreground hover:bg-white/10 hover:text-foreground disabled:opacity-50"
+            >
+              <X className="size-3.5" />
+              Not hit
+            </button>
+          </div>
+        )}
+        {isPlannedRow && missMode && (
+          <div className="flex items-center justify-end gap-2 px-4 pb-2.5">
+            <button
+              onClick={() => setEditing(true)}
+              className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2.5 py-1 text-xs font-semibold text-muted-foreground hover:bg-white/10 hover:text-foreground"
+            >
+              <Pencil className="size-3.5" />
+              Edit
+            </button>
+            <button
+              onClick={remove}
+              disabled={busy}
+              className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2.5 py-1 text-xs font-semibold text-muted-foreground hover:bg-destructive/15 hover:text-destructive disabled:opacity-50"
+            >
+              <Trash2 className="size-3.5" />
+              Delete
+            </button>
+            <button
+              onClick={() => setMissMode(false)}
+              className="rounded-md bg-card/90 p-1.5 text-muted-foreground hover:bg-white/10 hover:text-foreground"
+              aria-label="Back"
+              title="Back"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        )}
+        {!isPlannedRow && (
+          <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
+            <button
+              onClick={() => setEditing(true)}
+              className="rounded-md bg-card/90 p-1.5 text-muted-foreground hover:bg-white/10 hover:text-foreground"
+              aria-label="Edit set"
+            >
+              <Pencil className="size-3.5" />
+            </button>
+            <button
+              onClick={() => {
+                setNoteDraft(set.note)
+                setNoteOpen((v) => !v)
+              }}
+              className={cn(
+                "rounded-md bg-card/90 p-1.5 hover:bg-white/10",
+                hasNote ? "text-primary" : "text-muted-foreground hover:text-foreground"
+              )}
+              aria-label={hasNote ? "Edit note" : "Add note"}
+            >
+              <StickyNote className="size-3.5" />
+            </button>
+            <button
+              onClick={remove}
+              disabled={busy}
+              className="rounded-md bg-card/90 p-1.5 text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
+              aria-label="Delete set"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          </div>
+        )}
       </div>
       {noteOpen && (
         <div className="border-t border-white/5 bg-white/[.015] px-4 py-2.5">

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useAuth } from "@/components/auth/AuthProvider"
+import { FullPageLoader } from "@/components/ui/Spinner"
 import {
   configureStore,
   hydrateStore,
@@ -13,15 +14,15 @@ interface Props {
 }
 
 export function StoreProvider({ children }: Props) {
-  const { user } = useAuth()
+  const { user, loading } = useAuth()
   const userKey = user?.username ?? "anon"
   const [error, setError] = useState<string | null>(null)
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const hydrated = useHydrated()
 
   useEffect(() => {
+    if (loading) return
     let cancelled = false
-    setActiveKey(null)
     configureStore(`users/${userKey}`)
     hydrateStore()
       .then(() => {
@@ -33,18 +34,14 @@ export function StoreProvider({ children }: Props) {
     return () => {
       cancelled = true
     }
-  }, [userKey])
+  }, [loading, userKey])
 
   if (error) {
     console.error("Local store error:", error)
   }
 
-  if (!hydrated || activeKey !== userKey) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center text-sm text-muted-foreground">
-        Loading…
-      </div>
-    )
+  if (loading || !hydrated || activeKey !== userKey) {
+    return <FullPageLoader />
   }
 
   // Remount children whenever the active user changes so per-page effects

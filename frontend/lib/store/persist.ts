@@ -1,6 +1,5 @@
 import { parse, serialize } from "./blob"
 import { newDeviceId } from "./ids"
-import { recomputeAllPrs } from "./mutations"
 import { emptySnapshot, type Snapshot } from "./schema"
 import { pickStorage, type BlobStorage } from "./storage"
 import { clearDirty, getState, markHydrated } from "./store"
@@ -11,7 +10,13 @@ let hydratePromise: Promise<void> | null = null
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 let visibilityWired = false
 let pendingRecordingPaused = 0 // refcount; >0 disables crash log appends.
+let consecutiveFlushFailures = 0
+let flushInFlight = false
 const FLUSH_DEBOUNCE_MS = 5000
+// Exponential backoff for retrying failed flushes — 1s, 2s, 4s, 8s, 16s,
+// then capped. Each successful flush resets the counter.
+const FLUSH_RETRY_BASE_MS = 1000
+const FLUSH_RETRY_MAX_MS = 16000
 
 export function configure(subPath: string) {
   if (storageKey === subPath) return
@@ -51,13 +56,6 @@ export async function hydrate(): Promise<void> {
     }
 
     markHydrated(snap)
-
-    // Reconcile PRs against current algorithm (date-aware). Idempotent.
-    try {
-      recomputeAllPrs()
-    } catch (e) {
-      console.error("Failed to recompute PRs on hydrate", e)
-    }
 
     if (pending.length > 0) {
       // Persist replayed state and clear the log.
@@ -112,25 +110,46 @@ export async function runBatched<T>(fn: () => Promise<T> | T): Promise<T> {
   }
 }
 
-function scheduleFlush() {
+function scheduleFlush(delay = FLUSH_DEBOUNCE_MS) {
   if (flushTimer) clearTimeout(flushTimer)
   flushTimer = setTimeout(() => {
     flushTimer = null
     void flushNow()
-  }, FLUSH_DEBOUNCE_MS)
+  }, delay)
 }
 
+/**
+ * Persist the in-memory snapshot to storage. Resilient to transient I/O
+ * failures: on error, schedules a retry with exponential backoff so the
+ * user's data isn't permanently lost just because (e.g.) IDB threw a
+ * QuotaExceededError or a transient transaction abort. Successful flushes
+ * reset the failure counter.
+ */
 export async function flushNow(): Promise<void> {
+  if (flushInFlight) return
   const s = ensureStorage()
   const { snapshot, hydrated } = getState()
   if (!hydrated) return
+  flushInFlight = true
   try {
     const bytes = await serialize(snapshot)
     await s.writeSnapshot(bytes)
     await s.clearPending()
     clearDirty()
+    consecutiveFlushFailures = 0
   } catch (e) {
-    console.error("Failed to flush snapshot", e)
+    consecutiveFlushFailures += 1
+    const delay = Math.min(
+      FLUSH_RETRY_BASE_MS * 2 ** (consecutiveFlushFailures - 1),
+      FLUSH_RETRY_MAX_MS
+    )
+    console.error(
+      `Failed to flush snapshot (attempt ${consecutiveFlushFailures}, retrying in ${delay}ms)`,
+      e
+    )
+    scheduleFlush(delay)
+  } finally {
+    flushInFlight = false
   }
 }
 
@@ -182,9 +201,33 @@ function applyOne(snap: Snapshot, op: OpEnvelope): Snapshot {
       if (snap.exercises.some((e) => e.id === row.id)) return snap
       return { ...snap, exercises: [...snap.exercises, row] }
     }
+    case "patch_exercise": {
+      const id = op.id as number
+      const row = op.row as Snapshot["exercises"][number] | undefined
+      if (row && !snap.exercises.some((e) => e.id === id)) {
+        return { ...snap, exercises: [...snap.exercises, row] }
+      }
+      const patch =
+        row ?? (op.patch as Partial<Snapshot["exercises"][number]>)
+      return {
+        ...snap,
+        exercises: snap.exercises.map((e) =>
+          e.id === id ? { ...e, ...patch } : e
+        ),
+      }
+    }
     case "delete_exercise": {
       const id = op.id as number
-      return { ...snap, exercises: snap.exercises.filter((e) => e.id !== id) }
+      const row = op.row as Snapshot["exercises"][number] | null | undefined
+      if (row && !snap.exercises.some((e) => e.id === id)) {
+        return { ...snap, exercises: [...snap.exercises, row] }
+      }
+      return {
+        ...snap,
+        exercises: snap.exercises.map((e) =>
+          e.id === id ? { ...e, is_deleted: true } : e
+        ),
+      }
     }
     case "create_workout": {
       const row = op.row as Snapshot["workouts"][number]

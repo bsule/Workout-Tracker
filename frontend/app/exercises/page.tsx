@@ -5,18 +5,13 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { ExercisePicker } from "@/components/exercises/ExercisePicker"
 import { useAuth } from "@/components/auth/AuthProvider"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
+import { FullPageLoader } from "@/components/ui/Spinner"
 import { localApi as api } from "@/lib/store"
 import type { Exercise } from "@/types"
 
 export default function ExercisesPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="mx-auto max-w-2xl px-4 py-10 text-sm text-muted-foreground">
-          Loading…
-        </div>
-      }
-    >
+    <Suspense fallback={<FullPageLoader />}>
       <ExercisesPageInner />
     </Suspense>
   )
@@ -70,11 +65,7 @@ function ExercisesPageInner() {
   }
 
   if (loading || !user) {
-    return (
-      <div className="mx-auto max-w-2xl px-4 py-10 text-sm text-muted-foreground">
-        Loading…
-      </div>
-    )
+    return <FullPageLoader />
   }
 
   return (

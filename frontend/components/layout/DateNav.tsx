@@ -3,7 +3,7 @@
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useEffect } from "react"
-import { cn, formatDayLabel, isFutureDate, shiftDate, todayLocal } from "@/lib/utils"
+import { formatDayLabel, shiftDate, todayLocal } from "@/lib/utils"
 
 interface Props {
   date: string
@@ -12,16 +12,16 @@ interface Props {
 
 export function DateNav({ date, onChange }: Props) {
   const router = useRouter()
+  const today = todayLocal()
   const prev = shiftDate(date, -1)
   const next = shiftDate(date, 1)
-  const nextDisabled = date >= todayLocal() || isFutureDate(next)
+  const isToday = date === today
 
-  // Warm Next's route cache for adjacent days so the chevron click skips the
-  // network round-trip / RSC payload fetch and feels instant.
   useEffect(() => {
     router.prefetch(`/workouts/date/${prev}`)
-    if (!nextDisabled) router.prefetch(`/workouts/date/${next}`)
-  }, [router, prev, next, nextDisabled])
+    router.prefetch(`/workouts/date/${next}`)
+    if (!isToday) router.prefetch(`/workouts/date/${today}`)
+  }, [router, prev, next, isToday, today])
 
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[.02] px-3 py-2">
@@ -38,16 +38,9 @@ export function DateNav({ date, onChange }: Props) {
       </div>
       <button
         type="button"
-        onClick={() => nextDisabled || onChange(next)}
-        disabled={nextDisabled}
-        className={cn(
-          "rounded-md p-1.5 transition-colors",
-          nextDisabled
-            ? "text-white/20 cursor-not-allowed"
-            : "text-primary hover:bg-white/5",
-        )}
+        onClick={() => onChange(next)}
+        className="rounded-md p-1.5 text-primary hover:bg-white/5 transition-colors"
         aria-label="Next day"
-        title={nextDisabled ? "Future dates can't be logged" : undefined}
       >
         <ChevronRight className="size-5" />
       </button>

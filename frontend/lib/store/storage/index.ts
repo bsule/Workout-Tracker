@@ -4,6 +4,9 @@ import type { BlobStorage } from "./types"
 
 export type { BlobStorage } from "./types"
 
+// OPFS where supported, IDB fallback. Both adapters re-resolve their handles
+// per operation and serialize writes, so neither suffers from stale-handle
+// or read-modify-write race classes of bugs.
 export function pickStorage(subPath: string): BlobStorage {
   if (typeof window === "undefined") {
     return new MemoryStorage()
