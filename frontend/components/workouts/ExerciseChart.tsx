@@ -55,6 +55,10 @@ export function ExerciseChart({ history }: Props) {
     return history
       .map((d) => ({ date: d.date, value: fromKg(dayValueKg(d, metric), unit) }))
       .filter((p) => p.value > 0)
+      .sort(
+        (a, b) =>
+          parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime()
+      )
   }, [history, metric, unit])
 
   const opt = METRIC_OPTIONS.find((m) => m.id === metric)!

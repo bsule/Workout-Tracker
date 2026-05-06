@@ -83,10 +83,10 @@ export function CalendarMonth({ year, month, data, plannedDates, onPrev, onNext 
             "flex aspect-square flex-col items-center justify-center gap-1 rounded-md border text-sm transition-colors",
             isToday
               ? "border-primary/60 bg-primary/5 text-primary"
-              : isFuture
-              ? "border-transparent text-white/25 cursor-not-allowed"
               : isPlanned
               ? "border-dashed border-primary/40 text-foreground/85 hover:bg-white/[.04]"
+              : isFuture
+              ? "border-transparent text-foreground/50 hover:bg-white/[.04]"
               : "border-transparent text-foreground/85 hover:bg-white/[.04]"
           )
           const inner = (
@@ -105,18 +105,6 @@ export function CalendarMonth({ year, month, data, plannedDates, onPrev, onNext 
               )}
             </>
           )
-          if (isFuture) {
-            return (
-              <div
-                key={i}
-                aria-disabled
-                title="Future dates can't be logged"
-                className={baseCls}
-              >
-                {inner}
-              </div>
-            )
-          }
           return (
             <Link key={i} href={`/workouts/date/${iso}`} className={baseCls}>
               {inner}

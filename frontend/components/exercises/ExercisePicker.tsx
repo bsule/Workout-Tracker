@@ -1,13 +1,16 @@
 "use client"
 
 import Link from "next/link"
-import { Search, Plus } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { Check, Pencil, Plus, Search, Trash2, X } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { localApi as api } from "@/lib/store"
 import { type Category, type Exercise } from "@/types"
 import { categoryVar, cn } from "@/lib/utils"
 import { CategoryDot } from "./CategoryBadge"
 import { useCategoryStyles } from "@/components/categories/CategoryStylesProvider"
+import { useConfirm } from "@/components/ui/ConfirmDialog"
+import { LoadingBlock } from "@/components/ui/Spinner"
 
 interface Props {
   mode?: "browse" | "pick"
@@ -15,11 +18,16 @@ interface Props {
 }
 
 export function ExercisePicker({ mode = "browse", onPick }: Props) {
+  const router = useRouter()
   const { labels, categories } = useCategoryStyles()
+  const confirm = useConfirm()
   const [exercises, setExercises] = useState<Exercise[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
   const [activeCats, setActiveCats] = useState<Set<Category>>(new Set())
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [draftName, setDraftName] = useState("")
+  const [savingId, setSavingId] = useState<number | null>(null)
 
   async function load() {
     try {
@@ -31,8 +39,68 @@ export function ExercisePicker({ mode = "browse", onPick }: Props) {
   }
 
   useEffect(() => {
-    load()
+    queueMicrotask(() => {
+      void load()
+    })
   }, [])
+
+  function startEdit(ex: Exercise) {
+    setEditingId(ex.id)
+    setDraftName(ex.name)
+    setError(null)
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setDraftName("")
+  }
+
+  async function saveEdit(ex: Exercise) {
+    const name = draftName.trim()
+    if (!name) {
+      setError("Exercise name is required.")
+      return
+    }
+    if (name === ex.name) {
+      cancelEdit()
+      return
+    }
+    setSavingId(ex.id)
+    setError(null)
+    try {
+      await api.patchExercise(ex.id, { name })
+      cancelEdit()
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update exercise")
+    } finally {
+      setSavingId(null)
+    }
+  }
+
+  async function handleDelete(ex: Exercise) {
+    const used = (ex.workouts_count ?? 0) > 0
+    const ok = await confirm({
+      title: "Delete this exercise?",
+      message: used
+        ? `"${ex.name}" will be removed from the exercises list. Past workouts that used it will keep their history.`
+        : `"${ex.name}" will be removed from your exercises list.`,
+      destructive: true,
+      confirmLabel: "Delete",
+    })
+    if (!ok) return
+    setSavingId(ex.id)
+    try {
+      await api.deleteExercise(ex.id)
+      if (editingId === ex.id) cancelEdit()
+      setError(null)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete exercise")
+    } finally {
+      setSavingId(null)
+    }
+  }
 
   const filtered = useMemo(() => {
     if (!exercises) return []
@@ -101,9 +169,7 @@ export function ExercisePicker({ mode = "browse", onPick }: Props) {
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
-      {exercises === null && (
-        <p className="text-sm text-muted-foreground">Loading…</p>
-      )}
+      {exercises === null && <LoadingBlock />}
 
       {exercises && (
         <ul className="divide-y divide-white/5 rounded-md border border-white/10 bg-card">
@@ -123,7 +189,47 @@ export function ExercisePicker({ mode = "browse", onPick }: Props) {
                 </button>
               ) : (
                 <div className="flex items-center gap-3 px-4 py-3">
-                  <ExerciseRowContent ex={e} />
+                  {editingId === e.id ? (
+                    <ExerciseRowEditor
+                      ex={e}
+                      value={draftName}
+                      busy={savingId === e.id}
+                      onChange={setDraftName}
+                      onSave={() => saveEdit(e)}
+                      onCancel={cancelEdit}
+                    />
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => router.push(`/exercises/${e.id}`)}
+                        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                      >
+                        <ExerciseRowContent ex={e} />
+                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => startEdit(e)}
+                          className="rounded p-1.5 text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                          aria-label={`Edit ${e.name}`}
+                          title="Edit exercise"
+                        >
+                          <Pencil className="size-4" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={savingId === e.id}
+                          onClick={() => handleDelete(e)}
+                          className="rounded p-1.5 text-muted-foreground hover:bg-destructive/15 hover:text-destructive disabled:opacity-50"
+                          aria-label={`Delete ${e.name}`}
+                          title="Delete exercise"
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </li>
@@ -134,13 +240,73 @@ export function ExercisePicker({ mode = "browse", onPick }: Props) {
   )
 }
 
+function ExerciseRowEditor({
+  ex,
+  value,
+  busy,
+  onChange,
+  onSave,
+  onCancel,
+}: {
+  ex: Exercise
+  value: string
+  busy: boolean
+  onChange: (value: string) => void
+  onSave: () => void
+  onCancel: () => void
+}) {
+  return (
+    <>
+      <CategoryDot category={ex.category} />
+      <input
+        type="text"
+        value={value}
+        disabled={busy}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault()
+            onSave()
+          }
+          if (event.key === "Escape") onCancel()
+        }}
+        className="min-w-0 flex-1 rounded-md border border-white/10 bg-white/[.02] px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60"
+        aria-label={`Name for ${ex.name}`}
+        autoFocus
+      />
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onSave}
+          className="rounded p-1.5 text-muted-foreground hover:bg-primary/15 hover:text-primary disabled:opacity-50"
+          aria-label={`Save ${ex.name}`}
+          title="Save"
+        >
+          <Check className="size-4" />
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onCancel}
+          className="rounded p-1.5 text-muted-foreground hover:bg-white/5 hover:text-foreground disabled:opacity-50"
+          aria-label={`Cancel editing ${ex.name}`}
+          title="Cancel"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+    </>
+  )
+}
+
 function ExerciseRowContent({ ex }: { ex: Exercise }) {
   const meta = formatLastPerformed(ex)
   return (
     <>
       <CategoryDot category={ex.category} />
-      <div className="flex-1">
-        <div className="text-base font-semibold">{ex.name}</div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-base font-semibold">{ex.name}</div>
         <div className="text-xs text-muted-foreground">{meta}</div>
       </div>
       {ex.is_custom && (

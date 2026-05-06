@@ -42,7 +42,15 @@ function tx<T>(
   )
 }
 
+/**
+ * IndexedDB-backed storage. Per-instance write queue serializes
+ * `appendPending` / `writeSnapshot` / `clearPending` so concurrent callers
+ * don't lose entries to read-modify-write races. A failed write doesn't
+ * poison the queue.
+ */
 export class IdbStorage implements BlobStorage {
+  private writeQueue: Promise<unknown> = Promise.resolve()
+
   constructor(private readonly subPath: string) {}
 
   private snapshotKey() {
@@ -50,6 +58,12 @@ export class IdbStorage implements BlobStorage {
   }
   private pendingKey() {
     return PENDING_KEY_PREFIX + this.subPath
+  }
+
+  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.writeQueue.then(() => fn())
+    this.writeQueue = next.catch(() => undefined)
+    return next
   }
 
   async readSnapshot(): Promise<Uint8Array | null> {
@@ -61,19 +75,21 @@ export class IdbStorage implements BlobStorage {
   }
 
   async writeSnapshot(bytes: Uint8Array): Promise<void> {
-    await tx<IDBValidKey>("readwrite", (s) =>
-      s.put(bytes, this.snapshotKey())
+    await this.enqueue(() =>
+      tx<IDBValidKey>("readwrite", (s) => s.put(bytes, this.snapshotKey()))
     )
   }
 
   async appendPending(line: string): Promise<void> {
-    const existing =
-      (await tx<string | undefined>("readonly", (s) =>
-        s.get(this.pendingKey())
-      )) ?? ""
-    await tx<IDBValidKey>("readwrite", (s) =>
-      s.put(existing + line + "\n", this.pendingKey())
-    )
+    await this.enqueue(async () => {
+      const existing =
+        (await tx<string | undefined>("readonly", (s) =>
+          s.get(this.pendingKey())
+        )) ?? ""
+      await tx<IDBValidKey>("readwrite", (s) =>
+        s.put(existing + line + "\n", this.pendingKey())
+      )
+    })
   }
 
   async readPending(): Promise<string[]> {
@@ -85,6 +101,8 @@ export class IdbStorage implements BlobStorage {
   }
 
   async clearPending(): Promise<void> {
-    await tx<undefined>("readwrite", (s) => s.delete(this.pendingKey()))
+    await this.enqueue(() =>
+      tx<undefined>("readwrite", (s) => s.delete(this.pendingKey()))
+    )
   }
 }

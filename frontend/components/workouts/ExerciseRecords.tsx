@@ -35,9 +35,13 @@ export function ExerciseRecords({ history }: Props) {
   if (all.length === 0) return null
 
   // Headline records — comparisons use kg (storage) but display converts.
-  const best1RM = all.reduce((b, a) =>
-    a.set.estimated_one_rm > b.set.estimated_one_rm ? a : b
-  )
+  const oneRepSets = all.filter((a) => a.set.reps === 1)
+  const best1RM = oneRepSets.length
+    ? oneRepSets.reduce((b, a) => (a.set.weight > b.set.weight ? a : b))
+    : all.reduce((b, a) =>
+        a.set.estimated_one_rm > b.set.estimated_one_rm ? a : b
+      )
+  const best1RMIsEstimated = oneRepSets.length === 0
   const heaviest = all.reduce((b, a) => (a.set.weight > b.set.weight ? a : b))
   const bestVolume = all.reduce((b, a) =>
     a.set.weight * a.set.reps > b.set.weight * b.set.reps ? a : b
@@ -61,9 +65,20 @@ export function ExerciseRecords({ history }: Props) {
         <HeadlineCard
           label="Best 1RM"
           accent="primary"
-          value={roundForDisplay(fromKg(best1RM.set.estimated_one_rm, unit), unit).toFixed(unit === "kg" ? 1 : 0)}
+          value={
+            best1RMIsEstimated
+              ? roundForDisplay(
+                  fromKg(best1RM.set.estimated_one_rm, unit),
+                  unit
+                ).toFixed(unit === "kg" ? 1 : 0)
+              : formatWeight(best1RM.set.weight, unit)
+          }
           unit={unit}
-          subtitle={`${formatWeight(best1RM.set.weight, unit)} × ${best1RM.set.reps}`}
+          subtitle={
+            best1RMIsEstimated
+              ? `est. from ${formatWeight(best1RM.set.weight, unit)} × ${best1RM.set.reps}`
+              : "1 rep"
+          }
           date={best1RM.date}
         />
         <HeadlineCard

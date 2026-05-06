@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { Upload } from "lucide-react"
 import { useAuth } from "@/components/auth/AuthProvider"
 import { Button } from "@/components/ui/button"
+import { FullPageLoader } from "@/components/ui/Spinner"
 import { cn } from "@/lib/utils"
 import {
   importFitnotesCsv,
@@ -69,11 +70,7 @@ export default function ImportPage() {
   }
 
   if (loading || !user) {
-    return (
-      <div className="mx-auto max-w-2xl px-4 py-10 text-sm text-muted-foreground">
-        Loading…
-      </div>
-    )
+    return <FullPageLoader />
   }
 
   return (

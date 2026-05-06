@@ -11,22 +11,41 @@ export function isOpfsAvailable(): boolean {
   )
 }
 
+/**
+ * OPFS-backed storage.
+ *
+ * **Why we re-resolve the directory handle on every operation.** A previous
+ * version cached `Promise<FileSystemDirectoryHandle>` for the lifetime of the
+ * instance. That handle could be silently invalidated by Turbopack hot
+ * reloads, browser GC, or the user clearing site data; subsequent calls
+ * 404'd with NotFoundError and writes silently dropped. Re-resolving via
+ * `navigator.storage.getDirectory()` + walking the sub-path on each call is
+ * sub-millisecond (browsers internally cache the root handle) and eliminates
+ * the entire stale-handle bug class. Hot reload can't invalidate a handle
+ * that doesn't outlive a single operation.
+ *
+ * **Concurrent writes.** `appendPending` is read-modify-write — concurrent
+ * callers used to race and lose entries. Writes now serialize through a
+ * per-instance promise queue. Failed writes don't poison the queue.
+ */
 export class OpfsStorage implements BlobStorage {
-  private dirPromise: Promise<FileSystemDirectoryHandle> | null = null
+  private writeQueue: Promise<unknown> = Promise.resolve()
 
   constructor(private readonly subPath: string) {}
 
+  /** Always resolves a fresh handle. Don't cache this. */
   private async dir(): Promise<FileSystemDirectoryHandle> {
-    if (!this.dirPromise) {
-      this.dirPromise = (async () => {
-        let handle = await navigator.storage.getDirectory()
-        for (const part of this.subPath.split("/").filter(Boolean)) {
-          handle = await handle.getDirectoryHandle(part, { create: true })
-        }
-        return handle
-      })()
+    let handle = await navigator.storage.getDirectory()
+    for (const part of this.subPath.split("/").filter(Boolean)) {
+      handle = await handle.getDirectoryHandle(part, { create: true })
     }
-    return this.dirPromise
+    return handle
+  }
+
+  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.writeQueue.then(() => fn())
+    this.writeQueue = next.catch(() => undefined)
+    return next
   }
 
   async readSnapshot(): Promise<Uint8Array | null> {
@@ -44,21 +63,25 @@ export class OpfsStorage implements BlobStorage {
   }
 
   async writeSnapshot(bytes: Uint8Array): Promise<void> {
-    const dir = await this.dir()
-    const fh = await dir.getFileHandle(SNAPSHOT_NAME, { create: true })
-    const writable = await fh.createWritable()
-    await writable.write(new Blob([new Uint8Array(bytes)]))
-    await writable.close()
+    return this.enqueue(async () => {
+      const dir = await this.dir()
+      const fh = await dir.getFileHandle(SNAPSHOT_NAME, { create: true })
+      const writable = await fh.createWritable()
+      await writable.write(new Blob([new Uint8Array(bytes)]))
+      await writable.close()
+    })
   }
 
   async appendPending(line: string): Promise<void> {
-    const dir = await this.dir()
-    const fh = await dir.getFileHandle(PENDING_NAME, { create: true })
-    const file = await fh.getFile()
-    const existing = file.size ? await file.text() : ""
-    const writable = await fh.createWritable()
-    await writable.write(existing + line + "\n")
-    await writable.close()
+    return this.enqueue(async () => {
+      const dir = await this.dir()
+      const fh = await dir.getFileHandle(PENDING_NAME, { create: true })
+      const file = await fh.getFile()
+      const existing = file.size ? await file.text() : ""
+      const writable = await fh.createWritable()
+      await writable.write(existing + line + "\n")
+      await writable.close()
+    })
   }
 
   async readPending(): Promise<string[]> {
@@ -76,16 +99,13 @@ export class OpfsStorage implements BlobStorage {
   }
 
   async clearPending(): Promise<void> {
-    try {
+    return this.enqueue(async () => {
       const dir = await this.dir()
       const fh = await dir.getFileHandle(PENDING_NAME, { create: true })
       const writable = await fh.createWritable()
       await writable.write(new Uint8Array(0))
       await writable.close()
-    } catch (e) {
-      if (isNotFound(e)) return
-      throw e
-    }
+    })
   }
 }
 

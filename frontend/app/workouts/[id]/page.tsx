@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { localApi as api } from "@/lib/store"
 import { DayView } from "@/components/workouts/DayView"
 import { useAuth } from "@/components/auth/AuthProvider"
+import { FullPageLoader } from "@/components/ui/Spinner"
 
 export default function WorkoutByIdPage({
   params,
@@ -38,12 +39,7 @@ export default function WorkoutByIdPage({
         {error}
       </div>
     )
-  if (!date)
-    return (
-      <div className="mx-auto max-w-2xl px-4 py-10 text-sm text-muted-foreground">
-        Loading…
-      </div>
-    )
+  if (!date) return <FullPageLoader />
   return (
     <div className="mx-auto max-w-2xl px-4 py-6 sm:py-10">
       <DayView date={date} />
