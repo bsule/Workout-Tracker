@@ -3,12 +3,14 @@
 import Link from "next/link"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import type { CalendarMap, Category } from "@/types"
-import { categoryVar, cn, formatLocalDate, todayLocal } from "@/lib/utils"
+import { categoryVar, cn, formatLocalDate, isFutureDate, todayLocal } from "@/lib/utils"
+import { useSettings } from "@/components/settings/SettingsProvider"
 
 interface Props {
   year: number
   month: number // 1-12
   data: CalendarMap
+  plannedDates?: string[]
   onPrev: () => void
   onNext: () => void
 }
@@ -18,12 +20,19 @@ const MONTH_LABELS = [
   "July", "August", "September", "October", "November", "December",
 ]
 
-const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+const WEEKDAYS_MON = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+const WEEKDAYS_SUN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
-export function CalendarMonth({ year, month, data, onPrev, onNext }: Props) {
+export function CalendarMonth({ year, month, data, plannedDates, onPrev, onNext }: Props) {
+  const plannedSet = plannedDates ? new Set(plannedDates) : null
+  const { settings } = useSettings()
+  const firstDayOfWeek = settings.first_day_of_week  // 0=Sun, 1=Mon
+  const labels = firstDayOfWeek === 0 ? WEEKDAYS_SUN : WEEKDAYS_MON
+
   const firstDay = new Date(year, month - 1, 1)
-  // Convert to Mon-start: JS getDay returns 0=Sun..6=Sat. We want Mon=0..Sun=6.
-  const startCol = (firstDay.getDay() + 6) % 7
+  // JS getDay returns 0=Sun..6=Sat. Shift by firstDayOfWeek so the chosen
+  // day is column 0.
+  const startCol = (firstDay.getDay() - firstDayOfWeek + 7) % 7
   const daysInMonth = new Date(year, month, 0).getDate()
   const today = todayLocal()
 
@@ -55,7 +64,7 @@ export function CalendarMonth({ year, month, data, onPrev, onNext }: Props) {
       </div>
 
       <div className="mt-4 grid grid-cols-7 gap-1">
-        {WEEKDAY_LABELS.map((d) => (
+        {labels.map((d) => (
           <div
             key={d}
             className="px-1 py-1 text-center text-[11px] font-medium text-muted-foreground"
@@ -68,24 +77,49 @@ export function CalendarMonth({ year, month, data, onPrev, onNext }: Props) {
           const iso = formatLocalDate(new Date(year, month - 1, d))
           const cats = data[iso] ?? null
           const isToday = iso === today
-          return (
-            <Link
-              key={i}
-              href={`/workouts/date/${iso}`}
-              className={cn(
-                "flex aspect-square flex-col items-center justify-center gap-1 rounded-md border text-sm transition-colors",
-                isToday
-                  ? "border-primary/60 bg-primary/5 text-primary"
-                  : "border-transparent text-foreground/85 hover:bg-white/[.04]"
-              )}
-            >
+          const isPlanned = plannedSet?.has(iso) ?? false
+          const isFuture = isFutureDate(iso)
+          const baseCls = cn(
+            "flex aspect-square flex-col items-center justify-center gap-1 rounded-md border text-sm transition-colors",
+            isToday
+              ? "border-primary/60 bg-primary/5 text-primary"
+              : isFuture
+              ? "border-transparent text-white/25 cursor-not-allowed"
+              : isPlanned
+              ? "border-dashed border-primary/40 text-foreground/85 hover:bg-white/[.04]"
+              : "border-transparent text-foreground/85 hover:bg-white/[.04]"
+          )
+          const inner = (
+            <>
               <span className="tabular-nums">{d}</span>
               {cats && cats.length > 0 && (
-                <DotRow cats={cats} />
+                <DotRow cats={cats} planned={isPlanned} />
               )}
               {cats && cats.length === 0 && (
-                <span className="size-1.5 rounded-full bg-white/30" />
+                <span
+                  className={cn(
+                    "size-1.5 rounded-full",
+                    isPlanned ? "ring-1 ring-primary/60" : "bg-white/30"
+                  )}
+                />
               )}
+            </>
+          )
+          if (isFuture) {
+            return (
+              <div
+                key={i}
+                aria-disabled
+                title="Future dates can't be logged"
+                className={baseCls}
+              >
+                {inner}
+              </div>
+            )
+          }
+          return (
+            <Link key={i} href={`/workouts/date/${iso}`} className={baseCls}>
+              {inner}
             </Link>
           )
         })}
@@ -94,15 +128,18 @@ export function CalendarMonth({ year, month, data, onPrev, onNext }: Props) {
   )
 }
 
-function DotRow({ cats }: { cats: Category[] }) {
+function DotRow({ cats, planned }: { cats: Category[]; planned?: boolean }) {
   const shown = cats.slice(0, 3)
   return (
     <div className="flex items-center gap-1">
       {shown.map((c) => (
         <span
           key={c}
-          className="inline-block size-1.5 rounded-full"
-          style={{ backgroundColor: categoryVar(c) }}
+          className={cn(
+            "inline-block size-1.5 rounded-full",
+            planned && "ring-1 ring-primary/60 bg-transparent"
+          )}
+          style={planned ? undefined : { backgroundColor: categoryVar(c) }}
           aria-label={c}
         />
       ))}

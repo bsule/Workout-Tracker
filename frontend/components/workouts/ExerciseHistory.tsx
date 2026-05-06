@@ -3,6 +3,8 @@
 import type { ExerciseHistoryDay } from "@/types"
 import { cn, formatDayLabel, parseLocalDate } from "@/lib/utils"
 import { PrIcon } from "@/components/workouts/PrIcon"
+import { formatWeight, fromKg, roundForDisplay } from "@/lib/units"
+import { useWeightUnit } from "@/components/settings/SettingsProvider"
 
 interface Props {
   history: ExerciseHistoryDay[]
@@ -41,6 +43,7 @@ function DayBlock({
   day: ExerciseHistoryDay
   isCurrent?: boolean
 }) {
+  const unit = useWeightUnit()
   const longDate = parseLocalDate(day.date).toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
@@ -87,9 +90,9 @@ function DayBlock({
               Best 1RM
             </div>
             <div className="font-mono text-base font-semibold tabular-nums">
-              {bestSet.estimated_one_rm.toFixed(1)}
+              {roundForDisplay(fromKg(bestSet.estimated_one_rm, unit), unit).toFixed(unit === "kg" ? 1 : 0)}
               <span className="ml-1 text-[10px] font-medium text-muted-foreground">
-                lb
+                {unit}
               </span>
             </div>
           </div>
@@ -104,9 +107,9 @@ function DayBlock({
                 {i + 1}
               </span>
               <span className="ml-auto font-mono text-base font-semibold tabular-nums">
-                {s.weight}
+                {formatWeight(s.weight, unit)}
                 <span className="ml-1 text-[10px] font-medium text-muted-foreground">
-                  lb
+                  {unit}
                 </span>
               </span>
               <span className="font-mono w-20 text-right text-base font-semibold tabular-nums">

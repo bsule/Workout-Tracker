@@ -2,18 +2,30 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { Plus, Trash2, Files, FilePlus2 } from "lucide-react"
+import { Plus, Trash2, Files, FilePlus2, Play, CalendarClock } from "lucide-react"
 import { PrIcon } from "@/components/workouts/PrIcon"
-import { useEffect, useState } from "react"
-import { api, ApiError } from "@/lib/api"
+import { useMemo, useState } from "react"
+import {
+  localApi as api,
+  startPlannedWorkout,
+  useHydrated,
+  useStore,
+  getWorkoutByDateQ,
+  listGymsQ,
+} from "@/lib/store"
 import {
   cn,
   formatDuration,
+  isFutureDate,
   parseLocalDate,
 } from "@/lib/utils"
 import type { Workout, WorkoutExercise } from "@/types"
 import { CategoryDot } from "@/components/exercises/CategoryBadge"
 import { DateNav } from "@/components/layout/DateNav"
+import { GymEditor } from "@/components/workouts/GymEditor"
+import { useConfirm } from "@/components/ui/ConfirmDialog"
+import { useWeightUnit } from "@/components/settings/SettingsProvider"
+import { formatWeight } from "@/lib/units"
 
 interface Props {
   date: string
@@ -21,37 +33,45 @@ interface Props {
 
 export function DayView({ date }: Props) {
   const router = useRouter()
-  const [workout, setWorkout] = useState<Workout | null | undefined>(undefined)
+  const confirm = useConfirm()
+  const hydrated = useHydrated()
+  // Subscribe to the snapshot reference (stable between mutations) and
+  // materialize the view via useMemo. `getWorkoutByDateQ` builds a fresh
+  // object each call, so calling it directly inside a useStore selector trips
+  // React's getSnapshot cache check.
+  const snapshot = useStore((s) => s.snapshot)
+  const workout = useMemo(
+    () => (hydrated ? getWorkoutByDateQ(date) : undefined),
+    [hydrated, date, snapshot]
+  )
+  const lastGym = useMemo(
+    () => (hydrated ? listGymsQ()[0]?.name ?? null : null),
+    [hydrated, snapshot]
+  )
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  async function load(d: string) {
-    setError(null)
-    setWorkout(undefined)
-    try {
-      const w = await api.getWorkoutByDate(d)
-      setWorkout(w)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load workout")
-      setWorkout(null)
-    }
-  }
-
-  useEffect(() => {
-    load(date)
-  }, [date])
+  // No-op kept for handlers that previously called load() after a mutation.
+  // The useMemo above re-derives automatically when the snapshot changes.
+  function refresh() {}
 
   function changeDate(next: string) {
     router.push(`/workouts/date/${next}`)
   }
 
-  async function startWorkout() {
+  function startWorkout() {
+    // Defer creating the Workout until the user actually picks an exercise,
+    // so backing out without picking doesn't leave an empty day around.
+    router.push(`/exercises?forDate=${date}`)
+  }
+
+  async function startPlanned() {
+    if (!workout || workout.status !== "planned") return
     setBusy(true)
     setError(null)
     try {
-      const w = await api.createWorkout(date)
-      setWorkout(w)
-      router.push(`/exercises?pickFor=${w.id}`)
+      startPlannedWorkout(workout.id)
+      refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start workout")
     } finally {
@@ -74,8 +94,8 @@ export function DayView({ date }: Props) {
         return
       }
       const target = await api.createWorkout(date)
-      const updated = await api.copyFromWorkout(target.id, source.id, false)
-      setWorkout(updated)
+      await api.copyFromWorkout(target.id, source.id, false)
+      refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to copy workout")
     } finally {
@@ -83,29 +103,20 @@ export function DayView({ date }: Props) {
     }
   }
 
-  async function deleteWorkout() {
-    if (!workout) return
-    if (!confirm("Delete this entire day? All sets will be lost.")) return
-    setBusy(true)
-    try {
-      await api.deleteWorkout(workout.id)
-      setWorkout(null)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to delete workout")
-    } finally {
-      setBusy(false)
-    }
-  }
-
   async function removeExercise(weId: number) {
     if (!workout) return
-    if (!confirm("Remove this exercise and all its sets?")) return
+    const ok = await confirm({
+      title: "Remove exercise?",
+      message: "This exercise and all its sets will be removed from this day.",
+      destructive: true,
+      confirmLabel: "Remove",
+    })
+    if (!ok) return
     try {
       await api.removeExerciseFromWorkout(workout.id, weId)
-      const refreshed = await api.getWorkout(workout.id)
-      setWorkout(refreshed)
+      refresh()
     } catch (e) {
-      if (e instanceof ApiError) setError(e.message)
+      setError(e instanceof Error ? e.message : "Failed to remove exercise")
     }
   }
 
@@ -126,16 +137,32 @@ export function DayView({ date }: Props) {
       )}
 
       {workout === null && (
-        <EmptyDay
-          busy={busy}
-          onStart={startWorkout}
-          onCopy={copyPrevious}
-        />
+        isFutureDate(date) ? (
+          <FutureDayBlock />
+        ) : (
+          <EmptyDay
+            busy={busy}
+            onStart={startWorkout}
+            onCopy={copyPrevious}
+          />
+        )
       )}
 
       {workout && (
         <>
-          <SummaryStrip workout={workout} />
+          <SummaryStrip
+            workout={workout}
+            lastGym={lastGym}
+            onGymChange={refresh}
+          />
+
+          {workout.status === "planned" && (
+            <PlannedBanner
+              date={workout.date}
+              onStart={startPlanned}
+              busy={busy}
+            />
+          )}
 
           {workout.exercises.length === 0 ? (
             <div className="rounded-md border border-dashed border-white/15 p-6 text-center text-sm text-muted-foreground">
@@ -162,14 +189,6 @@ export function DayView({ date }: Props) {
               <Plus className="size-4" />
               Add Exercise
             </Link>
-            <button
-              onClick={deleteWorkout}
-              disabled={busy}
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/20"
-            >
-              <Trash2 className="size-3.5" />
-              Delete this day
-            </button>
           </div>
         </>
       )}
@@ -177,7 +196,15 @@ export function DayView({ date }: Props) {
   )
 }
 
-function SummaryStrip({ workout }: { workout: Workout }) {
+function SummaryStrip({
+  workout,
+  lastGym,
+  onGymChange,
+}: {
+  workout: Workout
+  lastGym: string | null
+  onGymChange: () => void
+}) {
   const dur = formatDuration(workout.duration_seconds)
   const dt = parseLocalDate(workout.date)
   const niceDate = dt.toLocaleDateString("en-US", {
@@ -188,33 +215,43 @@ function SummaryStrip({ workout }: { workout: Workout }) {
   })
   return (
     <div className="rounded-lg border border-white/10 bg-white/[.02] p-4">
-      <div className="text-sm text-muted-foreground">{niceDate}</div>
-      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-        {workout.started_at && (
-          <span>
-            <span className="text-foreground/70">Started </span>
-            {new Date(workout.started_at).toLocaleTimeString("en-US", {
-              hour: "numeric",
-              minute: "2-digit",
-            })}
-          </span>
-        )}
-        {workout.finished_at && (
-          <span>
-            <span className="text-foreground/70">Finished </span>
-            {new Date(workout.finished_at).toLocaleTimeString("en-US", {
-              hour: "numeric",
-              minute: "2-digit",
-            })}
-          </span>
-        )}
-        {dur && (
-          <span>
-            <span className="text-foreground/70">Duration </span>
-            {dur}
-          </span>
-        )}
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm text-muted-foreground">{niceDate}</div>
+        <GymEditor
+          workoutId={workout.id}
+          gym={workout.gym}
+          lastGym={lastGym}
+          onChange={onGymChange}
+        />
       </div>
+      {workout.exercises.length > 0 && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          {workout.started_at && (
+            <span>
+              <span className="text-foreground/70">Started </span>
+              {new Date(workout.started_at).toLocaleTimeString("en-US", {
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+            </span>
+          )}
+          {workout.finished_at && (
+            <span>
+              <span className="text-foreground/70">Finished </span>
+              {new Date(workout.finished_at).toLocaleTimeString("en-US", {
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+            </span>
+          )}
+          {dur && (
+            <span>
+              <span className="text-foreground/70">Duration </span>
+              {dur}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -228,18 +265,35 @@ function ExerciseCard({
   we: WorkoutExercise
   onRemove: () => void
 }) {
+  const router = useRouter()
+  const unit = useWeightUnit()
+  const href = `/workouts/${workoutId}/exercises/${we.id}`
+
+  function handleRemove(e: React.MouseEvent) {
+    e.stopPropagation()
+    onRemove()
+  }
+
   return (
-    <div className="overflow-hidden rounded-lg border border-white/10 bg-card">
+    <div
+      role="link"
+      tabIndex={0}
+      onClick={() => router.push(href)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          router.push(href)
+        }
+      }}
+      className="overflow-hidden rounded-lg border border-white/10 bg-card cursor-pointer hover:border-white/20 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+    >
       <div className="flex items-center gap-2 border-b border-white/5 bg-white/[.02] px-4 py-3">
         <CategoryDot category={we.exercise.category} />
-        <Link
-          href={`/workouts/${workoutId}/exercises/${we.id}`}
-          className="flex-1 text-base font-semibold tracking-tight hover:text-primary"
-        >
+        <span className="flex-1 text-base font-semibold tracking-tight">
           {we.exercise.name}
-        </Link>
+        </span>
         <button
-          onClick={onRemove}
+          onClick={handleRemove}
           className="rounded p-1 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
           aria-label="Remove exercise"
         >
@@ -248,55 +302,145 @@ function ExerciseCard({
       </div>
 
       {we.sets.length === 0 ? (
-        <Link
-          href={`/workouts/${workoutId}/exercises/${we.id}`}
-          className="block px-4 py-4 text-sm text-primary hover:bg-white/[.02]"
-        >
+        <div className="block px-4 py-4 text-sm text-primary hover:bg-white/[.02]">
           + Add first set
-        </Link>
+        </div>
       ) : (
-        <ul className="divide-y divide-white/5">
-          {we.sets.map((s, i) => (
-            <li key={s.id} className="px-4 py-2 text-sm">
-              <div className="flex items-center gap-3">
-                <PrIcon
-                  isPr={s.is_pr}
-                  wasPr={s.was_pr}
-                  className="size-4"
-                />
-                <span className="w-6 text-muted-foreground tabular-nums">
+        <div className="px-4 pt-3 pb-1">
+          <div className="grid grid-cols-[1.25rem_2rem_1fr_4rem] items-center gap-x-4 px-1 pb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+            <span />
+            <span>Set</span>
+            <span className="text-center">Weight</span>
+            <span className="text-right">Reps</span>
+          </div>
+          <ul className="divide-y divide-white/5">
+            {we.sets.map((s, i) => (
+              <li
+                key={s.id}
+                className={cn(
+                  "grid grid-cols-[1.25rem_2rem_1fr_4rem] items-center gap-x-4 px-1 py-2",
+                  s.is_planned && "opacity-60"
+                )}
+              >
+                {s.is_planned ? (
+                  <span
+                    className="size-2 rounded-full border border-dashed border-primary/60"
+                    aria-label="Target set"
+                  />
+                ) : (
+                  <PrIcon
+                    isPr={s.is_pr}
+                    wasPr={s.was_pr}
+                    className="size-4"
+                  />
+                )}
+                <span className="text-sm font-medium tabular-nums text-foreground/80">
                   {i + 1}
                 </span>
-                <span className="flex-1 text-right text-base font-semibold tabular-nums">
-                  {s.weight}
-                  <span className="ml-1 text-xs font-normal text-muted-foreground">
-                    lb
+                <span
+                  className={cn(
+                    "text-center text-base font-semibold tabular-nums",
+                    s.is_planned && "italic text-muted-foreground"
+                  )}
+                >
+                  {formatWeight(s.weight, unit)}
+                  <span className="ml-1 text-[11px] font-normal text-muted-foreground">
+                    {unit}
                   </span>
                 </span>
-                <span className="w-16 text-right text-base font-semibold tabular-nums">
+                <span
+                  className={cn(
+                    "text-right text-base font-semibold tabular-nums",
+                    s.is_planned && "italic text-muted-foreground"
+                  )}
+                >
                   {s.reps}
-                  <span className="ml-1 text-xs font-normal text-muted-foreground">
-                    reps
                 </span>
-                </span>
-              </div>
-              {s.note && (
-                <p className="mt-1 ml-7 whitespace-pre-wrap text-xs italic text-muted-foreground">
-                  {s.note}
-                </p>
-              )}
-            </li>
-          ))}
-          <li>
-            <Link
-              href={`/workouts/${workoutId}/exercises/${we.id}`}
-              className="block px-4 py-2 text-sm text-primary hover:bg-white/[.02]"
-            >
-              + Add set
-            </Link>
-          </li>
-        </ul>
+                {s.note && (
+                  <p className="col-span-4 mt-0.5 ml-8 whitespace-pre-wrap text-xs italic text-muted-foreground">
+                    {s.note}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
+    </div>
+  )
+}
+
+function PlannedBanner({
+  date,
+  onStart,
+  busy,
+}: {
+  date: string
+  onStart: () => void
+  busy: boolean
+}) {
+  const today = todayString()
+  const isToday = date === today
+  const isFuture = date > today
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between",
+        isToday
+          ? "border-primary/40 bg-primary/10"
+          : "border-white/10 bg-white/[.02]"
+      )}
+    >
+      <div className="flex items-center gap-3">
+        <CalendarClock
+          className={cn("size-5", isToday ? "text-primary" : "text-muted-foreground")}
+        />
+        <div>
+          <div className="text-sm font-semibold">
+            {isToday
+              ? "You have a planned workout today"
+              : isFuture
+              ? "Planned workout"
+              : "Planned (past — never started)"}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {isFuture
+              ? "Edit targets now; start when the day arrives."
+              : "Sets shown are targets, not logged yet."}
+          </div>
+        </div>
+      </div>
+      {!isFuture && (
+        <button
+          type="button"
+          onClick={onStart}
+          disabled={busy}
+          className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          <Play className="size-4" />
+          Start workout
+        </button>
+      )}
+    </div>
+  )
+}
+
+function todayString(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+function pad(n: number) {
+  return String(n).padStart(2, "0")
+}
+
+function FutureDayBlock() {
+  return (
+    <div className="rounded-xl border border-dashed border-white/15 bg-white/[.02] p-10 text-center">
+      <CalendarClock className="mx-auto size-10 text-muted-foreground" />
+      <div className="mt-3 text-base font-semibold">Future date</div>
+      <p className="mt-1 text-sm text-muted-foreground">
+        You can&rsquo;t log a workout for a day that hasn&rsquo;t happened yet.
+      </p>
     </div>
   )
 }

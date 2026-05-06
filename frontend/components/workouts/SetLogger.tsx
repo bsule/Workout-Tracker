@@ -10,30 +10,46 @@ import {
   StickyNote,
 } from "lucide-react"
 import { PrIcon } from "@/components/workouts/PrIcon"
+import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { api } from "@/lib/api"
+import { localApi as api, logPlannedSet } from "@/lib/store"
 import { cn } from "@/lib/utils"
+import { defaultStep, formatWeight, fromKg, roundForDisplay, toKg } from "@/lib/units"
+import { useWeightUnit } from "@/components/settings/SettingsProvider"
 import type { WorkoutSet } from "@/types"
 
 interface Props {
   workoutExerciseId: number
   sets: WorkoutSet[]
+  /** Used to pre-fill weight/reps when the current day has no sets yet. Weight is in kg (storage unit). */
+  fallback?: { weight: number; reps: number } | null
+  /** Step in display unit. If omitted, uses 5 lb / 2.5 kg based on user setting. */
   weightStep?: number
   repsStep?: number
+  /** When true, sets are saved as planned targets (workout.status === "planned"). */
+  isPlanned?: boolean
   onChanged: () => void
 }
 
 export function SetLogger({
   workoutExerciseId,
   sets,
-  weightStep = 5,
+  fallback,
+  weightStep,
   repsStep = 1,
+  isPlanned = false,
   onChanged,
 }: Props) {
+  const unit = useWeightUnit()
+  const step = weightStep ?? defaultStep(unit)
+
   const lastSet = sets.length ? sets[sets.length - 1] : null
-  const [weight, setWeight] = useState<number>(lastSet?.weight ?? 0)
-  const [reps, setReps] = useState<number>(lastSet?.reps ?? 8)
+  const initialKg = lastSet?.weight ?? fallback?.weight ?? 0
+  const initialReps = lastSet?.reps ?? fallback?.reps ?? 8
+  // Weight state is in display unit so user sees and edits in their unit.
+  const [weight, setWeight] = useState<number>(roundForDisplay(fromKg(initialKg, unit), unit))
+  const [reps, setReps] = useState<number>(initialReps)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -45,7 +61,28 @@ export function SetLogger({
     }
     setSaving(true)
     try {
-      await api.addSet(workoutExerciseId, { weight, reps })
+      if (isPlanned) {
+        // Workout is still planned — record this as another target set.
+        await api.addPlannedSet(workoutExerciseId, {
+          weight: toKg(weight, unit),
+          reps,
+        })
+      } else {
+        // If a target was queued for this exercise, log it in place rather
+        // than creating a parallel logged-set entry.
+        const nextPlanned = sets.find((s) => s.is_planned)
+        if (nextPlanned) {
+          logPlannedSet(nextPlanned.id, {
+            weight: toKg(weight, unit),
+            reps,
+          })
+        } else {
+          await api.addSet(workoutExerciseId, {
+            weight: toKg(weight, unit),
+            reps,
+          })
+        }
+      }
       onChanged()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save set")
@@ -66,9 +103,9 @@ export function SetLogger({
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
           <NumericField
             label="Weight"
-            unit="lb"
+            unit={unit}
             value={weight}
-            step={weightStep}
+            step={step}
             min={0}
             onChange={setWeight}
           />
@@ -192,18 +229,18 @@ function SetList({
   }
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between px-1">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-          Sets
-        </h3>
-        <span className="text-xs text-muted-foreground tabular-nums">
-          {sets.length} logged
-        </span>
-      </div>
-      <div className="divide-y divide-white/5 overflow-hidden rounded-2xl border border-white/10 bg-card/40">
-        {sets.map((s, i) => (
-          <SetRow key={s.id} index={i + 1} set={s} onChanged={onChanged} />
-        ))}
+      <div className="overflow-hidden rounded-2xl border border-white/10 bg-card/40">
+        <div className="grid grid-cols-[1.25rem_2rem_1fr_4rem] items-center gap-x-4 border-b border-white/5 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+          <span />
+          <span>Set</span>
+          <span className="text-center">Weight</span>
+          <span className="text-right">Reps</span>
+        </div>
+        <div className="divide-y divide-white/5">
+          {sets.map((s, i) => (
+            <SetRow key={s.id} index={i + 1} set={s} onChanged={onChanged} />
+          ))}
+        </div>
       </div>
     </div>
   )
@@ -218,18 +255,26 @@ function SetRow({
   set: WorkoutSet
   onChanged: () => void
 }) {
+  const confirm = useConfirm()
+  const unit = useWeightUnit()
   const [editing, setEditing] = useState(false)
-  const [weight, setWeight] = useState(set.weight)
-  const [reps, setReps] = useState(set.reps)
+  const [weight, setWeight] = useState(roundForDisplay(fromKg(set.weight, unit), unit))
+  const [reps, setReps] = useState<number>(set.reps ?? 0)
   const [busy, setBusy] = useState(false)
-  const [noteOpen, setNoteOpen] = useState(Boolean(set.note))
+  const [editError, setEditError] = useState<string | null>(null)
+  const [noteOpen, setNoteOpen] = useState(false)
   const [noteDraft, setNoteDraft] = useState(set.note)
   const [noteSaving, setNoteSaving] = useState(false)
 
   async function save() {
+    if (weight <= 0 || reps <= 0) {
+      setEditError("Weight and reps must be greater than zero.")
+      return
+    }
+    setEditError(null)
     setBusy(true)
     try {
-      await api.updateSet(set.id, { weight, reps })
+      await api.updateSet(set.id, { weight: toKg(weight, unit), reps })
       setEditing(false)
       onChanged()
     } finally {
@@ -238,22 +283,24 @@ function SetRow({
   }
 
   async function saveNote() {
-    if (noteDraft === set.note) {
-      setNoteOpen(Boolean(noteDraft))
-      return
-    }
     setNoteSaving(true)
     try {
       await api.updateSet(set.id, { note: noteDraft })
       onChanged()
-      setNoteOpen(Boolean(noteDraft))
+      setNoteOpen(false)
     } finally {
       setNoteSaving(false)
     }
   }
 
   async function remove() {
-    if (!confirm("Delete this set?")) return
+    const ok = await confirm({
+      title: "Delete this set?",
+      message: `${formatWeight(set.weight, unit)} ${unit} × ${set.reps ?? 0} reps will be removed.`,
+      destructive: true,
+      confirmLabel: "Delete",
+    })
+    if (!ok) return
     setBusy(true)
     try {
       await api.deleteSet(set.id)
@@ -265,42 +312,52 @@ function SetRow({
 
   if (editing) {
     return (
-      <div className="flex items-center gap-2 px-4 py-3 bg-white/[.02]">
-        <span className="w-7 text-sm font-semibold tabular-nums text-muted-foreground">
-          {index}
-        </span>
-        <input
-          type="number"
-          value={weight}
-          onChange={(e) => setWeight(Number(e.target.value))}
-          className="font-mono w-24 rounded-md border border-white/10 bg-white/[.04] px-2 py-1.5 text-right text-sm tabular-nums focus:outline-none focus:border-primary/50"
-        />
-        <span className="text-xs text-muted-foreground">lb</span>
-        <input
-          type="number"
-          value={reps}
-          onChange={(e) => setReps(Number(e.target.value))}
-          className="font-mono w-16 rounded-md border border-white/10 bg-white/[.04] px-2 py-1.5 text-right text-sm tabular-nums focus:outline-none focus:border-primary/50"
-        />
-        <span className="text-xs text-muted-foreground">reps</span>
-        <div className="ml-auto flex gap-1">
-          <button
-            onClick={save}
-            disabled={busy}
-            className="rounded-md p-1.5 text-emerald-400 hover:bg-emerald-500/10"
-            aria-label="Save"
-          >
-            <Check className="size-4" />
-          </button>
-          <button
-            onClick={() => setEditing(false)}
-            disabled={busy}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-white/5"
-            aria-label="Cancel"
-          >
-            <X className="size-4" />
-          </button>
+      <div className="px-4 py-3 bg-white/[.02]">
+        <div className="flex items-center gap-2">
+          <span className="w-7 text-sm font-semibold tabular-nums text-muted-foreground">
+            {index}
+          </span>
+          <input
+            type="number"
+            value={weight}
+            onChange={(e) => setWeight(Number(e.target.value))}
+            className="font-mono w-24 rounded-md border border-white/10 bg-white/[.04] px-2 py-1.5 text-right text-sm tabular-nums focus:outline-none focus:border-primary/50"
+          />
+          <span className="text-xs text-muted-foreground">{unit}</span>
+          <input
+            type="number"
+            value={reps}
+            onChange={(e) => setReps(Number(e.target.value))}
+            className="font-mono w-16 rounded-md border border-white/10 bg-white/[.04] px-2 py-1.5 text-right text-sm tabular-nums focus:outline-none focus:border-primary/50"
+          />
+          <span className="text-xs text-muted-foreground">reps</span>
+          <div className="ml-auto flex gap-1">
+            <button
+              onClick={save}
+              disabled={busy}
+              className="rounded-md p-1.5 text-emerald-400 hover:bg-emerald-500/10"
+              aria-label="Save"
+            >
+              <Check className="size-4" />
+            </button>
+            <button
+              onClick={() => {
+                setEditError(null)
+                setEditing(false)
+              }}
+              disabled={busy}
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-white/5"
+              aria-label="Cancel"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
         </div>
+        {editError && (
+          <p className="mt-2 text-xs text-destructive" role="alert">
+            {editError}
+          </p>
+        )}
       </div>
     )
   }
@@ -308,77 +365,88 @@ function SetRow({
   const hasNote = Boolean(set.note)
 
   return (
-    <div className="group">
-      <div className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-white/[.02] transition-colors">
-        <button
-          onClick={() => setEditing(true)}
-          className="rounded-md p-1 text-muted-foreground/60 opacity-0 group-hover:opacity-100 hover:bg-white/5 hover:text-foreground transition-opacity"
-          aria-label="Edit set"
-        >
-          <Pencil className="size-3.5" />
-        </button>
-        <PrIcon isPr={set.is_pr} wasPr={set.was_pr} />
-        <span className="font-mono w-7 text-base font-semibold tabular-nums text-muted-foreground">
-          {index}
-        </span>
-        <span className="ml-2 flex-1 text-right text-xl font-semibold tabular-nums">
-          <span className="font-mono">{set.weight}</span>
-          <span className="ml-1 text-xs font-medium text-muted-foreground">lb</span>
-        </span>
-        <span className="w-20 text-right text-xl font-semibold tabular-nums">
-          <span className="font-mono">{set.reps}</span>
-          <span className="ml-1 text-xs font-medium text-muted-foreground">reps</span>
-        </span>
-        <button
-          onClick={() => {
-            setNoteDraft(set.note)
-            setNoteOpen((v) => !v)
-          }}
-          className={cn(
-            "rounded-md p-1 transition-opacity",
-            hasNote
-              ? "text-primary hover:bg-primary/10"
-              : "text-muted-foreground/60 opacity-0 group-hover:opacity-100 hover:bg-white/5 hover:text-foreground"
-          )}
-          aria-label={hasNote ? "Edit note" : "Add note"}
-        >
-          <StickyNote className="size-3.5" />
-        </button>
-        <button
-          onClick={remove}
-          disabled={busy}
-          className="rounded-md p-1 text-muted-foreground/60 opacity-0 group-hover:opacity-100 hover:bg-destructive/15 hover:text-destructive transition-opacity"
-          aria-label="Delete set"
-        >
-          <Trash2 className="size-3.5" />
-        </button>
+    <div>
+      <div className="group relative">
+        <div className="grid grid-cols-[1.25rem_2rem_1fr_4rem] items-center gap-x-4 px-4 py-3 hover:bg-white/[.02] transition-colors">
+          <PrIcon isPr={set.is_pr} wasPr={set.was_pr} className="size-4" />
+          <span className="font-mono text-base font-semibold tabular-nums text-muted-foreground">
+            {index}
+          </span>
+          <span className="text-center text-xl font-semibold tabular-nums">
+            <span className="font-mono">{formatWeight(set.weight, unit)}</span>
+            <span className="ml-1 text-xs font-medium text-muted-foreground">{unit}</span>
+          </span>
+          <span className="text-right text-xl font-semibold tabular-nums">
+            <span className="font-mono">{set.reps}</span>
+          </span>
+        </div>
+        {hasNote && !noteOpen && (
+          <p className="ml-12 px-4 pb-2 whitespace-pre-wrap text-xs italic text-muted-foreground">
+            {set.note}
+          </p>
+        )}
+        <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
+          <button
+            onClick={() => setEditing(true)}
+            className="rounded-md bg-card/90 p-1.5 text-muted-foreground hover:bg-white/10 hover:text-foreground"
+            aria-label="Edit set"
+          >
+            <Pencil className="size-3.5" />
+          </button>
+          <button
+            onClick={() => {
+              setNoteDraft(set.note)
+              setNoteOpen((v) => !v)
+            }}
+            className={cn(
+              "rounded-md bg-card/90 p-1.5 hover:bg-white/10",
+              hasNote ? "text-primary" : "text-muted-foreground hover:text-foreground"
+            )}
+            aria-label={hasNote ? "Edit note" : "Add note"}
+          >
+            <StickyNote className="size-3.5" />
+          </button>
+          <button
+            onClick={remove}
+            disabled={busy}
+            className="rounded-md bg-card/90 p-1.5 text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
+            aria-label="Delete set"
+          >
+            <Trash2 className="size-3.5" />
+          </button>
+        </div>
       </div>
       {noteOpen && (
         <div className="border-t border-white/5 bg-white/[.015] px-4 py-2.5">
           <textarea
             value={noteDraft}
             onChange={(e) => setNoteDraft(e.target.value)}
-            onBlur={saveNote}
             placeholder="Add a note for this set…"
             rows={2}
+            autoFocus
             className="w-full resize-y rounded-md border border-white/10 bg-white/[.03] px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
           />
-          <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
-            <span>{noteSaving ? "Saving…" : "Auto-saves on blur"}</span>
-            {noteDraft && (
-              <button
-                onClick={() => {
-                  setNoteDraft("")
-                  api.updateSet(set.id, { note: "" }).then(() => {
-                    onChanged()
-                    setNoteOpen(false)
-                  })
-                }}
-                className="text-muted-foreground hover:text-destructive"
-              >
-                Clear
-              </button>
-            )}
+          <div className="mt-2 flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setNoteDraft(set.note)
+                setNoteOpen(false)
+              }}
+              disabled={noteSaving}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={saveNote}
+              disabled={noteSaving || noteDraft === set.note}
+            >
+              {noteSaving ? "Saving…" : "Save"}
+            </Button>
           </div>
         </div>
       )}

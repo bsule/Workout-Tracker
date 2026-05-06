@@ -53,7 +53,7 @@
 :root {
   --background: oklch(0.07 0 0);         /* #0a0a0a */
   --foreground: oklch(0.97 0 0);          /* #f5f5f5 */
-  --card: oklch(0.11 0 0);               /* #111111 */
+  --card: oklch(0.16 0 0);               /* lifted for contrast against background */
   --card-foreground: oklch(0.97 0 0);
   --popover: oklch(0.13 0 0);            /* ~#1a1a1a */
   --popover-foreground: oklch(0.97 0 0);
@@ -85,11 +85,55 @@
   --sidebar-ring: oklch(0.61 0.20 260);
 }
 
+/* Light theme — opt-in via .light on <html> */
+.light {
+  --background: oklch(0.99 0 0);
+  --foreground: oklch(0.15 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.15 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.15 0 0);
+  --primary: oklch(0.55 0.16 240);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.55 0.18 158);
+  --secondary-foreground: oklch(0.99 0 0);
+  --muted: oklch(0.96 0 0);
+  --muted-foreground: oklch(0.45 0 0);
+  --accent: oklch(0.94 0 0);
+  --accent-foreground: oklch(0.15 0 0);
+  --destructive: oklch(0.55 0.22 25);
+  --border: oklch(0 0 0 / 12%);
+  --input: oklch(0 0 0 / 8%);
+  --ring: oklch(0.55 0.16 240);
+  --chart-1: oklch(0.55 0.16 240);
+  --chart-2: oklch(0.55 0.16 150);
+  --chart-3: oklch(0.65 0.18 60);
+  --chart-4: oklch(0.55 0.20 310);
+  --chart-5: oklch(0.55 0.20 180);
+  --sidebar: oklch(0.97 0 0);
+  --sidebar-foreground: oklch(0.15 0 0);
+  --sidebar-primary: oklch(0.55 0.16 240);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.94 0 0);
+  --sidebar-accent-foreground: oklch(0.15 0 0);
+  --sidebar-border: oklch(0 0 0 / 10%);
+  --sidebar-ring: oklch(0.55 0.16 240);
+
+  --cat-abs: oklch(0.65 0.18 80);
+  --cat-back: oklch(0.50 0.18 250);
+  --cat-biceps: oklch(0.55 0.20 25);
+  --cat-cardio: oklch(0.55 0.18 158);
+  --cat-chest: oklch(0.55 0.20 30);
+  --cat-legs: oklch(0.50 0.20 310);
+  --cat-shoulders: oklch(0.60 0.18 60);
+  --cat-triceps: oklch(0.50 0.20 200);
+}
+
 /* Keep .dark identical so shadcn dark: variants work */
 .dark {
   --background: oklch(0.07 0 0);
   --foreground: oklch(0.97 0 0);
-  --card: oklch(0.11 0 0);
+  --card: oklch(0.16 0 0);
   --card-foreground: oklch(0.97 0 0);
   --popover: oklch(0.13 0 0);
   --popover-foreground: oklch(0.97 0 0);

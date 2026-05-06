@@ -1,14 +1,11 @@
-export type Category =
-  | "abs"
-  | "back"
-  | "biceps"
-  | "cardio"
-  | "chest"
-  | "legs"
-  | "shoulders"
-  | "triceps"
+/**
+ * A category slug — lowercase letters/digits/hyphens. Built-in categories use
+ * fixed slugs (e.g. "chest"), and users may add custom categories with
+ * arbitrary slugs derived from a label.
+ */
+export type Category = string
 
-export const CATEGORIES: Category[] = [
+export const DEFAULT_CATEGORIES: Category[] = [
   "abs",
   "back",
   "biceps",
@@ -19,10 +16,20 @@ export const CATEGORIES: Category[] = [
   "triceps",
 ]
 
+/** @deprecated Prefer `useCategoryStyles().categories` so custom categories appear. */
+export const CATEGORIES = DEFAULT_CATEGORIES
+
+export type ExerciseKind =
+  | "weight_reps"
+  | "distance_time"
+  | "bodyweight_reps"
+  | "time_only"
+
 export interface Exercise {
   id: number
   name: string
   category: Category
+  kind: ExerciseKind
   is_custom: boolean
   workouts_count?: number
   last_performed_days_ago?: number | null
@@ -30,13 +37,19 @@ export interface Exercise {
 
 export interface WorkoutSet {
   id: number
-  weight: number
-  reps: number
+  weight: number | null
+  reps: number | null
+  distance_m: number | null
+  distance_unit_display: string
+  time_seconds: number | null
   is_pr: boolean
   was_pr: boolean
   note: string
   order: number
+  is_planned?: boolean
 }
+
+export type WorkoutStatus = "planned" | "active" | "done"
 
 export interface WorkoutExercise {
   id: number
@@ -48,20 +61,28 @@ export interface WorkoutExercise {
 export interface Workout {
   id: number
   date: string
+  status?: WorkoutStatus
   started_at: string | null
   finished_at: string | null
   duration_seconds: number | null
+  gym: string
   notes: string
   exercises: WorkoutExercise[]
   created_at: string
+  /** Server-only flag set on POST /workouts/ when the response reuses an
+   *  already-finished workout for the same date (two-a-day cap). */
+  merged_into_finished?: boolean
 }
 
 export type CalendarMap = Record<string, Category[]>
 
 export interface HistorySet {
   id: number
-  weight: number
-  reps: number
+  weight: number | null
+  reps: number | null
+  distance_m: number | null
+  distance_unit_display: string
+  time_seconds: number | null
   is_pr: boolean
   was_pr: boolean
   note: string
@@ -74,36 +95,23 @@ export interface ExerciseHistoryDay {
   sets: HistorySet[]
 }
 
+export interface UserSettings {
+  weight_unit: "kg" | "lb"
+  first_day_of_week: 0 | 1
+}
+
 export interface User {
   id: number
   username: string
   email: string
 }
 
+export interface Gym {
+  id: number | null
+  name: string
+}
+
 export interface AuthResponse {
   token: string
   user: User
-}
-
-export interface CsvPreviewResponse {
-  headers: string[]
-  rows: Record<string, string>[]
-  row_count: number
-  inferred_date_format: string | null
-}
-
-export interface CsvImportResponse {
-  imported: number
-  exercises_created: string[]
-  errors: { row: number; message: string }[]
-}
-
-export interface CsvMapping {
-  date_col: string
-  exercise_col: string
-  weight_col: string
-  reps_col: string
-  category_col?: string
-  default_category?: Category
-  date_format?: string
 }

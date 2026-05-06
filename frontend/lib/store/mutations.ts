@@ -1,0 +1,494 @@
+import type { Category, ExerciseKind, UserSettings, WorkoutStatus } from "@/types"
+import { applyMutation, getState } from "./store"
+import { nextId } from "./ids"
+import { recordPending } from "./persist"
+import type {
+  ExerciseRow,
+  GymRow,
+  SetRow,
+  Snapshot,
+  WorkoutExerciseRow,
+  WorkoutRow,
+} from "./schema"
+import { FIRST_CUSTOM_ID } from "./seed"
+
+// All mutations follow the same shape:
+// 1. Compute next snapshot (immutable update).
+// 2. applyMutation -> rebuild indexes, emit, mark dirty.
+// 3. recordPending(op) for crash recovery + future R2 sync.
+
+function todayString(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+function pad(n: number) {
+  return String(n).padStart(2, "0")
+}
+function nowIso() {
+  return new Date().toISOString()
+}
+
+function inferStatus(date: string): WorkoutStatus {
+  const today = todayString()
+  if (date < today) return "done"
+  if (date === today) return "active"
+  return "planned"
+}
+
+// ---- settings -----------------------------------------------------
+
+export function updateSettings(patch: Partial<UserSettings>): UserSettings {
+  let result: UserSettings = { weight_unit: "lb", first_day_of_week: 0 }
+  applyMutation((snap) => {
+    const next = { ...snap.settings, ...patch }
+    result = next
+    return { ...snap, settings: next }
+  })
+  recordPending({ op: "update_settings", patch })
+  return result
+}
+
+// ---- exercises ----------------------------------------------------
+
+export function createExercise(input: {
+  name: string
+  category: Category
+  kind?: ExerciseKind
+}): ExerciseRow {
+  const id = Math.max(nextId(), FIRST_CUSTOM_ID)
+  const row: ExerciseRow = {
+    id,
+    name: input.name.trim(),
+    category: input.category,
+    kind: input.kind ?? "weight_reps",
+    is_custom: true,
+  }
+  applyMutation((snap) => ({ ...snap, exercises: [...snap.exercises, row] }))
+  recordPending({ op: "create_exercise", row })
+  return row
+}
+
+export function deleteExercise(id: number): void {
+  if (id < FIRST_CUSTOM_ID) return // can't delete a seed exercise
+  applyMutation((snap) => {
+    const referenced = snap.workout_exercises.some((we) => we.exercise_id === id)
+    if (referenced) {
+      // Soft-delete by removing only if no history. Otherwise leave it alone
+      // so existing sets keep resolving (visible in history).
+      return snap
+    }
+    return {
+      ...snap,
+      exercises: snap.exercises.filter((e) => e.id !== id),
+    }
+  })
+  recordPending({ op: "delete_exercise", id })
+}
+
+// ---- workouts -----------------------------------------------------
+
+export interface CreateWorkoutResult {
+  row: WorkoutRow
+  /** True if we returned an existing workout that was already finished
+   *  (two-a-day cap — caller should warn before proceeding). */
+  merged_into_finished: boolean
+}
+
+export function createWorkout(date: string): CreateWorkoutResult {
+  const existing = getState().snapshot.workouts.find((w) => w.date === date)
+  if (existing) {
+    return {
+      row: existing,
+      merged_into_finished: existing.finished_at != null,
+    }
+  }
+  const status = inferStatus(date)
+  const now = nowIso()
+  const row: WorkoutRow = {
+    id: nextId(),
+    date,
+    status,
+    started_at: status === "active" ? now : null,
+    finished_at: null,
+    gym: "",
+    notes: "",
+    created_at: now,
+  }
+  applyMutation((snap) => {
+    const dup = snap.workouts.find((w) => w.date === date)
+    if (dup) return snap
+    return { ...snap, workouts: [...snap.workouts, row] }
+  })
+  recordPending({ op: "create_workout", row })
+  return { row, merged_into_finished: false }
+}
+
+export function deleteWorkout(id: number): void {
+  applyMutation((snap) => {
+    const wes = snap.workout_exercises.filter((we) => we.workout_id === id)
+    const weIds = new Set(wes.map((we) => we.id))
+    return {
+      ...snap,
+      workouts: snap.workouts.filter((w) => w.id !== id),
+      workout_exercises: snap.workout_exercises.filter(
+        (we) => we.workout_id !== id
+      ),
+      sets: snap.sets.filter((s) => !weIds.has(s.workout_exercise_id)),
+    }
+  })
+  recordPending({ op: "delete_workout", id })
+}
+
+export function patchWorkout(
+  id: number,
+  patch: Partial<
+    Pick<WorkoutRow, "notes" | "started_at" | "finished_at" | "gym" | "status">
+  >
+): WorkoutRow | null {
+  let result: WorkoutRow | null = null
+  applyMutation((snap) => {
+    const idx = snap.workouts.findIndex((w) => w.id === id)
+    if (idx < 0) return snap
+    const next = { ...snap.workouts[idx], ...patch }
+    result = next
+    const workouts = snap.workouts.slice()
+    workouts[idx] = next
+    let gyms = snap.gyms
+    if (typeof patch.gym === "string" && patch.gym.trim()) {
+      const name = patch.gym.trim()
+      if (!gyms.some((g) => g.name === name)) {
+        gyms = [...gyms, { id: nextId(), name }]
+      }
+    }
+    return { ...snap, workouts, gyms }
+  })
+  recordPending({ op: "patch_workout", id, patch })
+  return result
+}
+
+export function startPlannedWorkout(id: number): WorkoutRow | null {
+  return patchWorkout(id, { status: "active", started_at: nowIso() })
+}
+
+export function finishWorkout(id: number): WorkoutRow | null {
+  return patchWorkout(id, { status: "done", finished_at: nowIso() })
+}
+
+// ---- workout exercises -------------------------------------------
+
+export function addExerciseToWorkout(
+  workoutId: number,
+  exerciseId: number
+): WorkoutExerciseRow {
+  const existing = getState().snapshot.workout_exercises.find(
+    (we) => we.workout_id === workoutId && we.exercise_id === exerciseId
+  )
+  if (existing) return existing
+  const row: WorkoutExerciseRow = {
+    id: nextId(),
+    workout_id: workoutId,
+    exercise_id: exerciseId,
+    order: 0,
+  }
+  applyMutation((snap) => {
+    const dup = snap.workout_exercises.find(
+      (we) => we.workout_id === workoutId && we.exercise_id === exerciseId
+    )
+    if (dup) return snap
+    const siblings = snap.workout_exercises.filter(
+      (we) => we.workout_id === workoutId
+    )
+    row.order = siblings.length
+    return {
+      ...snap,
+      workout_exercises: [...snap.workout_exercises, row],
+    }
+  })
+  recordPending({ op: "add_exercise", row })
+  return row
+}
+
+export function removeExerciseFromWorkout(
+  workoutId: number,
+  weId: number
+): void {
+  applyMutation((snap) => ({
+    ...snap,
+    workout_exercises: snap.workout_exercises.filter((we) => we.id !== weId),
+    sets: snap.sets.filter((s) => s.workout_exercise_id !== weId),
+  }))
+  recordPending({ op: "remove_exercise", workoutId, weId })
+}
+
+// ---- sets ---------------------------------------------------------
+
+export interface AddSetInput {
+  weight?: number | null
+  reps?: number | null
+  distance_m?: number | null
+  distance_unit_display?: string
+  time_seconds?: number | null
+  note?: string
+  is_planned?: boolean
+}
+
+export function addSet(weId: number, input: AddSetInput): SetRow {
+  const row: SetRow = {
+    id: nextId(),
+    workout_exercise_id: weId,
+    weight: input.weight ?? null,
+    reps: input.reps ?? null,
+    distance_m: input.distance_m ?? null,
+    distance_unit_display: input.distance_unit_display ?? "",
+    time_seconds: input.time_seconds ?? null,
+    is_planned: !!input.is_planned,
+    is_pr: false,
+    was_pr: false,
+    note: input.note ?? "",
+    order: 0,
+    created_at: nowIso(),
+  }
+  applyMutation((snap) => {
+    const siblings = snap.sets.filter((s) => s.workout_exercise_id === weId)
+    row.order = siblings.length
+    let next = { ...snap, sets: [...snap.sets, row] }
+    if (!row.is_planned) next = recomputePrsForWe(next, weId)
+    return next
+  })
+  recordPending({ op: "add_set", row })
+  return row
+}
+
+export function logPlannedSet(
+  setId: number,
+  patch: { weight?: number; reps?: number; note?: string }
+): SetRow | null {
+  let updated: SetRow | null = null
+  applyMutation((snap) => {
+    const idx = snap.sets.findIndex((s) => s.id === setId)
+    if (idx < 0) return snap
+    const cur = snap.sets[idx]
+    const next: SetRow = {
+      ...cur,
+      weight: patch.weight ?? cur.weight,
+      reps: patch.reps ?? cur.reps,
+      note: patch.note ?? cur.note,
+      is_planned: false,
+      created_at: nowIso(),
+    }
+    updated = next
+    const sets = snap.sets.slice()
+    sets[idx] = next
+    return recomputePrsForWe({ ...snap, sets }, cur.workout_exercise_id)
+  })
+  recordPending({ op: "log_planned_set", setId, patch })
+  return updated
+}
+
+export function updateSet(
+  setId: number,
+  patch: { weight?: number; reps?: number; note?: string }
+): SetRow | null {
+  let updated: SetRow | null = null
+  applyMutation((snap) => {
+    const idx = snap.sets.findIndex((s) => s.id === setId)
+    if (idx < 0) return snap
+    const cur = snap.sets[idx]
+    const next: SetRow = {
+      ...cur,
+      weight: patch.weight ?? cur.weight,
+      reps: patch.reps ?? cur.reps,
+      note: patch.note ?? cur.note,
+    }
+    updated = next
+    const sets = snap.sets.slice()
+    sets[idx] = next
+    return recomputePrsForWe({ ...snap, sets }, cur.workout_exercise_id)
+  })
+  recordPending({ op: "update_set", setId, patch })
+  return updated
+}
+
+export function deleteSet(setId: number): void {
+  applyMutation((snap) => {
+    const target = snap.sets.find((s) => s.id === setId)
+    if (!target) return snap
+    const next = { ...snap, sets: snap.sets.filter((s) => s.id !== setId) }
+    return recomputePrsForWe(next, target.workout_exercise_id)
+  })
+  recordPending({ op: "delete_set", setId })
+}
+
+// ---- gyms ---------------------------------------------------------
+
+export function createGym(name: string): GymRow {
+  const row: GymRow = { id: nextId(), name: name.trim() }
+  applyMutation((snap) => {
+    if (snap.gyms.some((g) => g.name === row.name)) return snap
+    return { ...snap, gyms: [...snap.gyms, row] }
+  })
+  recordPending({ op: "create_gym", row })
+  return row
+}
+
+export function deleteGym(id: number): void {
+  applyMutation((snap) => ({
+    ...snap,
+    gyms: snap.gyms.filter((g) => g.id !== id),
+  }))
+  recordPending({ op: "delete_gym", id })
+}
+
+// ---- copy from previous ------------------------------------------
+
+export function copyFromWorkout(
+  targetId: number,
+  sourceId: number,
+  withSets = false
+): void {
+  applyMutation((snap) => {
+    const sourceWes = snap.workout_exercises.filter(
+      (we) => we.workout_id === sourceId
+    )
+    if (sourceWes.length === 0) return snap
+    const newWes: WorkoutExerciseRow[] = []
+    const newSets: SetRow[] = []
+    let order = snap.workout_exercises.filter(
+      (we) => we.workout_id === targetId
+    ).length
+    for (const swe of sourceWes) {
+      const newWe: WorkoutExerciseRow = {
+        id: nextId(),
+        workout_id: targetId,
+        exercise_id: swe.exercise_id,
+        order: order++,
+      }
+      newWes.push(newWe)
+      if (withSets) {
+        const sourceSets = snap.sets
+          .filter((s) => s.workout_exercise_id === swe.id)
+          .sort((a, b) => a.order - b.order)
+        for (const ss of sourceSets) {
+          newSets.push({
+            id: nextId(),
+            workout_exercise_id: newWe.id,
+            weight: ss.weight,
+            reps: ss.reps,
+            distance_m: ss.distance_m,
+            distance_unit_display: ss.distance_unit_display,
+            time_seconds: ss.time_seconds,
+            is_planned: ss.is_planned,
+            is_pr: false,
+            was_pr: false,
+            note: ss.note,
+            order: ss.order,
+            created_at: nowIso(),
+          })
+        }
+      }
+    }
+    return {
+      ...snap,
+      workout_exercises: [...snap.workout_exercises, ...newWes],
+      sets: [...snap.sets, ...newSets],
+    }
+  })
+  recordPending({ op: "copy_from", targetId, sourceId, withSets })
+}
+
+// ---- PRs ----------------------------------------------------------
+
+function recomputePrsForWe(snap: Snapshot, weId: number): Snapshot {
+  const we = snap.workout_exercises.find((x) => x.id === weId)
+  if (!we) return snap
+  return recomputePrsForExercise(snap, we.exercise_id)
+}
+
+function recomputePrsForExercise(snap: Snapshot, exerciseId: number): Snapshot {
+  // PR logic only applies to weight×reps exercises. Cardio / time-only sets
+  // are skipped — their is_pr stays false.
+  const ex = snap.exercises.find((e) => e.id === exerciseId)
+  if (ex && ex.kind !== "weight_reps") return snap
+
+  const weIds = new Set(
+    snap.workout_exercises
+      .filter((we) => we.exercise_id === exerciseId)
+      .map((we) => we.id)
+  )
+  // A set is PR iff no *other* set dominates it — past or future. Once a
+  // later set beats it the gold star moves; the dethroned set keeps was_pr
+  // (sticky) and renders as the muted "historical PR" star.
+  const weToDate = new Map<number, string>()
+  for (const we of snap.workout_exercises) {
+    if (!weIds.has(we.id)) continue
+    const w = snap.workouts.find((w) => w.id === we.workout_id)
+    if (w) weToDate.set(we.id, w.date)
+  }
+  const candidates = snap.sets.filter(
+    (s) =>
+      weIds.has(s.workout_exercise_id) &&
+      !s.is_planned &&
+      s.weight != null &&
+      s.reps != null
+  ) as Array<SetRow & { weight: number; reps: number }>
+  const ts = (s: SetRow) => Date.parse(s.created_at) || 0
+  const dateOf = (s: SetRow) => weToDate.get(s.workout_exercise_id) ?? ""
+  const isPriorTo = (o: SetRow, s: SetRow) => {
+    const od = dateOf(o)
+    const sd = dateOf(s)
+    if (od !== sd) return od < sd
+    const ot = ts(o)
+    const st = ts(s)
+    if (ot !== st) return ot < st
+    return o.id < s.id
+  }
+  const prIds = new Set<number>()
+  for (const s of candidates) {
+    let dominated = false
+    for (const o of candidates) {
+      if (o.id === s.id) continue
+      if (o.weight > s.weight && o.reps >= s.reps) {
+        dominated = true
+        break
+      }
+      if (o.weight === s.weight && o.reps > s.reps) {
+        dominated = true
+        break
+      }
+      // Exact tie — earliest wins.
+      if (o.weight === s.weight && o.reps === s.reps && isPriorTo(o, s)) {
+        dominated = true
+        break
+      }
+    }
+    if (!dominated) prIds.add(s.id)
+  }
+
+  const sets = snap.sets.map((s) => {
+    if (!weIds.has(s.workout_exercise_id) || s.is_planned) {
+      return s.is_pr ? { ...s, is_pr: false } : s
+    }
+    const isPr = prIds.has(s.id)
+    if (s.is_pr === isPr && (isPr ? s.was_pr : true)) return s
+    return { ...s, is_pr: isPr, was_pr: s.was_pr || isPr }
+  })
+  return { ...snap, sets }
+}
+
+export function recomputeAllPrs(): { recomputed: number } {
+  let count = 0
+  applyMutation((snap) => {
+    let next = snap
+    const exerciseIds = new Set(
+      snap.workout_exercises.map((we) => we.exercise_id)
+    )
+    for (const id of exerciseIds) {
+      next = recomputePrsForExercise(next, id)
+    }
+    count = exerciseIds.size
+    return next
+  })
+  recordPending({ op: "recompute_prs" })
+  return { recomputed: count }
+}
+
