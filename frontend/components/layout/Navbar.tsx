@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
-import { Dumbbell } from "lucide-react"
+import { Dumbbell, Settings } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/components/auth/AuthProvider"
 
@@ -11,7 +11,6 @@ const navLinks = [
   { href: "/workouts", label: "Workout" },
   { href: "/calendar", label: "Calendar" },
   { href: "/exercises", label: "Exercises" },
-  { href: "/import", label: "Import" },
   { href: "/calculator", label: "Calculator" },
 ]
 
@@ -62,9 +61,14 @@ export function Navbar() {
         <div className="flex items-center gap-2" suppressHydrationWarning>
           {!mounted || loading ? null : user ? (
             <>
-              <span className="hidden sm:inline text-sm text-muted-foreground">
-                {user.username}
-              </span>
+              <Link
+                href="/settings"
+                className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
+                title="Settings"
+              >
+                <Settings className="size-4" />
+                <span className="hidden sm:inline">{user.username}</span>
+              </Link>
               <button
                 onClick={handleLogout}
                 className="inline-flex rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"

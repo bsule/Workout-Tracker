@@ -49,3 +49,30 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid username or password.")
         attrs["user"] = user
         return attrs
+
+
+class ProfileUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ("username", "email")
+        extra_kwargs = {
+            "username": {"required": False},
+            "email": {"required": False},
+        }
+
+    def validate_username(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("Username cannot be blank.")
+        qs = User.objects.filter(username__iexact=value).exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("Username already taken.")
+        return value
+
+    def validate_email(self, value):
+        if not value:
+            raise serializers.ValidationError("Email cannot be blank.")
+        qs = User.objects.filter(email__iexact=value).exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("Email already in use.")
+        return value

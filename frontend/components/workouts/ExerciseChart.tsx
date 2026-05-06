@@ -3,37 +3,41 @@
 import { useMemo, useRef, useState } from "react"
 import type { ExerciseHistoryDay } from "@/types"
 import { cn, parseLocalDate } from "@/lib/utils"
+import { fromKg } from "@/lib/units"
+import { useWeightUnit } from "@/components/settings/SettingsProvider"
 
 type Metric = "one_rm" | "heaviest" | "avg_weight" | "volume"
 
 const METRIC_OPTIONS: {
   id: Metric
   label: string
-  unit: string
   description: string
 }[] = [
-  { id: "one_rm", label: "Max 1RM", unit: "lb", description: "Best estimated 1-rep max" },
-  { id: "heaviest", label: "Heaviest", unit: "lb", description: "Heaviest single set" },
-  { id: "avg_weight", label: "Avg Weight", unit: "lb", description: "Average weight per set" },
-  { id: "volume", label: "Volume", unit: "lb", description: "Sum of weight × reps" },
+  { id: "one_rm", label: "Max 1RM", description: "Best estimated 1-rep max" },
+  { id: "heaviest", label: "Heaviest", description: "Heaviest single set" },
+  { id: "avg_weight", label: "Avg Weight", description: "Average weight per set" },
+  { id: "volume", label: "Volume", description: "Sum of weight × reps" },
 ]
 
-function dayValue(day: ExerciseHistoryDay, metric: Metric): number {
-  if (!day.sets.length) return 0
+function dayValueKg(day: ExerciseHistoryDay, metric: Metric): number {
+  // Filter out cardio rows (no weight/reps) — chart is weight-based.
+  const sets = day.sets.filter(
+    (s): s is typeof s & { weight: number; reps: number } =>
+      s.weight != null && s.reps != null
+  )
+  if (!sets.length) return 0
   switch (metric) {
     case "one_rm":
-      return day.sets.reduce(
+      return sets.reduce(
         (m, s) => (s.estimated_one_rm > m ? s.estimated_one_rm : m),
         0
       )
     case "heaviest":
-      return day.sets.reduce((m, s) => (s.weight > m ? s.weight : m), 0)
+      return sets.reduce((m, s) => (s.weight > m ? s.weight : m), 0)
     case "avg_weight":
-      return (
-        day.sets.reduce((sum, s) => sum + s.weight, 0) / day.sets.length
-      )
+      return sets.reduce((sum, s) => sum + s.weight, 0) / sets.length
     case "volume":
-      return day.sets.reduce((sum, s) => sum + s.weight * s.reps, 0)
+      return sets.reduce((sum, s) => sum + s.weight * s.reps, 0)
   }
 }
 
@@ -42,15 +46,16 @@ interface Props {
 }
 
 export function ExerciseChart({ history }: Props) {
+  const unit = useWeightUnit()
   const [metric, setMetric] = useState<Metric>("one_rm")
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
 
   const points = useMemo(() => {
     return history
-      .map((d) => ({ date: d.date, value: dayValue(d, metric) }))
+      .map((d) => ({ date: d.date, value: fromKg(dayValueKg(d, metric), unit) }))
       .filter((p) => p.value > 0)
-  }, [history, metric])
+  }, [history, metric, unit])
 
   const opt = METRIC_OPTIONS.find((m) => m.id === metric)!
 
@@ -174,7 +179,7 @@ export function ExerciseChart({ history }: Props) {
               <span className="font-mono text-3xl font-semibold tabular-nums">
                 {fmt(display.value)}
               </span>
-              <span className="text-xs text-muted-foreground">{opt.unit}</span>
+              <span className="text-xs text-muted-foreground">{unit}</span>
               {hoverIdx == null && points.length > 1 && (
                 <span
                   className={
@@ -327,7 +332,7 @@ export function ExerciseChart({ history }: Props) {
               "en-US",
               { month: "short", day: "numeric" }
             )
-            const tipText = `${fmt(p.value)} ${opt.unit} · ${dateLabel}`
+            const tipText = `${fmt(p.value)} ${unit} · ${dateLabel}`
             const charW = 6.2
             const tipW = tipText.length * charW + 16
             const tipH = 22
@@ -388,12 +393,12 @@ export function ExerciseChart({ history }: Props) {
         </svg>
 
         <div className="mt-4 grid grid-cols-3 gap-2 border-t border-white/5 pt-3">
-          <Stat label="Peak" value={fmt(peak)} unit={opt.unit} accent="amber" />
-          <Stat label="Average" value={fmt(avg)} unit={opt.unit} accent="green" />
+          <Stat label="Peak" value={fmt(peak)} unit={unit} accent="amber" />
+          <Stat label="Average" value={fmt(avg)} unit={unit} accent="green" />
           <Stat
             label="Latest"
             value={fmt(last.value)}
-            unit={opt.unit}
+            unit={unit}
             accent="primary"
           />
         </div>

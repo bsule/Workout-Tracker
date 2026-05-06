@@ -32,7 +32,6 @@ INSTALLED_APPS = [
     "corsheaders",
 
     "accounts",
-    "workouts",
 ]
 
 MIDDLEWARE = [

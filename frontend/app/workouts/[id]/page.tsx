@@ -2,7 +2,7 @@
 
 import { use, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { api } from "@/lib/api"
+import { localApi as api } from "@/lib/store"
 import { DayView } from "@/components/workouts/DayView"
 import { useAuth } from "@/components/auth/AuthProvider"
 

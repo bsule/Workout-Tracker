@@ -3,10 +3,11 @@
 import Link from "next/link"
 import { Search, Plus } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import { api } from "@/lib/api"
-import { CATEGORIES, type Category, type Exercise } from "@/types"
-import { CATEGORY_LABELS, categoryVar, cn } from "@/lib/utils"
+import { localApi as api } from "@/lib/store"
+import { type Category, type Exercise } from "@/types"
+import { categoryVar, cn } from "@/lib/utils"
 import { CategoryDot } from "./CategoryBadge"
+import { useCategoryStyles } from "@/components/categories/CategoryStylesProvider"
 
 interface Props {
   mode?: "browse" | "pick"
@@ -14,6 +15,7 @@ interface Props {
 }
 
 export function ExercisePicker({ mode = "browse", onPick }: Props) {
+  const { labels, categories } = useCategoryStyles()
   const [exercises, setExercises] = useState<Exercise[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
@@ -75,7 +77,7 @@ export function ExercisePicker({ mode = "browse", onPick }: Props) {
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {CATEGORIES.map((c) => {
+        {categories.map((c) => {
           const active = activeCats.has(c)
           return (
             <button
@@ -92,7 +94,7 @@ export function ExercisePicker({ mode = "browse", onPick }: Props) {
                 className="inline-block size-2 rounded-full"
                 style={{ backgroundColor: categoryVar(c) }}
               />
-              {CATEGORY_LABELS[c]}
+              {labels[c]}
             </button>
           )
         })}
