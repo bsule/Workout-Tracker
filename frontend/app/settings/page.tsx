@@ -211,6 +211,15 @@ function DisplaySection() {
     } finally { setBusy(null) }
   }
 
+  async function changeOneRm(v: string) {
+    setBusy("onerm"); setError(null)
+    try {
+      await update({ show_one_rm: v === "1" })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed.")
+    } finally { setBusy(null) }
+  }
+
   return (
     <Section title="Display" description="Affects how weights, the calendar, and colors look across the app.">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -251,6 +260,18 @@ function DisplaySection() {
             )}
           </button>
           <p className="mt-1 text-[11px] text-muted-foreground/70">Defaults to dark.</p>
+        </div>
+        <div>
+          <FieldLabel>Show 1RM</FieldLabel>
+          <Dropdown
+            value={(settings.show_one_rm ?? true) ? "1" : "0"}
+            onChange={changeOneRm}
+            options={[
+              { value: "1", label: "Show under each set" },
+              { value: "0", label: "Hide" },
+            ]}
+          />
+          {busy === "onerm" && <p className="mt-1 text-xs text-muted-foreground">Saving…</p>}
         </div>
       </div>
       {error && <StatusLine kind="error" msg={error} />}

@@ -53,7 +53,7 @@ export default function HomePage() {
           {/* Eyebrow */}
           <div className="mb-8 flex items-center gap-3 font-mono text-xs font-bold uppercase tracking-[0.25em] text-primary">
             <span className="inline-block h-px w-8 bg-primary" />
-            <span>// Workout Tracker · v1</span>
+            <span>{"// Workout Tracker · v1"}</span>
           </div>
 
           {/* Display headline */}
@@ -89,7 +89,7 @@ export default function HomePage() {
           <div className="mb-16 flex flex-wrap items-end justify-between gap-6">
             <div>
               <div className="mb-4 font-mono text-xs font-bold uppercase tracking-[0.25em] text-secondary">
-                // What it does
+                {"// What it does"}
               </div>
               <h2 className="font-display text-5xl uppercase leading-[0.95] tracking-tight text-foreground sm:text-6xl">
                 Built for the
@@ -170,7 +170,7 @@ export default function HomePage() {
           <div>
             <div className="mb-4 flex items-center gap-3 font-mono text-xs font-bold uppercase tracking-[0.25em] text-primary-foreground/70">
               <Flame className="size-3.5" />
-              <span>// No excuses</span>
+              <span>{"// No excuses"}</span>
             </div>
             <h2 className="font-display text-5xl uppercase leading-[0.95] tracking-tight sm:text-6xl">
               Your next PR
@@ -200,7 +200,7 @@ export default function HomePage() {
           <span className="flex items-center gap-2">
             <TrendingUp className="size-3.5" /> 1RM tracking
           </span>
-          <span className="text-primary">// LIFT</span>
+          <span className="text-primary">{"// LIFT"}</span>
         </div>
       </section>
     </PageWrapper>

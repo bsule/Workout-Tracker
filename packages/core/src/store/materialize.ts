@@ -4,7 +4,7 @@ import type {
   Workout,
   WorkoutExercise,
   WorkoutSet,
-} from "@/types"
+} from "../types"
 import type { Indexes } from "./indexes"
 import type {
   ExerciseRow,
@@ -65,6 +65,7 @@ export function setFromRow(s: SetRow): WorkoutSet {
     note: s.note,
     order: s.order,
     is_planned: s.is_planned,
+    created_at: s.created_at,
   }
 }
 

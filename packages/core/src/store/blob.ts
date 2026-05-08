@@ -1,17 +1,17 @@
+import { gzipSync, gunzipSync } from "fflate"
 import { SCHEMA_VERSION, type Snapshot } from "./schema"
 
-async function gzip(input: Uint8Array): Promise<Uint8Array> {
-  const blob = new Blob([new Uint8Array(input)])
-  const stream = blob.stream().pipeThrough(new CompressionStream("gzip"))
-  const buf = await new Response(stream).arrayBuffer()
-  return new Uint8Array(buf)
+// Use fflate's *synchronous* API on purpose — the async variants spin up a
+// Web Worker, which doesn't exist in React Native, and the platform
+// CompressionStream / `new Blob([Uint8Array])` path also fails on RN.
+// gzipSync runs on the JS thread; snapshots are small enough that this
+// hasn't been a perf problem in practice.
+function gzip(input: Uint8Array): Promise<Uint8Array> {
+  return Promise.resolve(gzipSync(input))
 }
 
-async function gunzip(input: Uint8Array): Promise<Uint8Array> {
-  const blob = new Blob([new Uint8Array(input)])
-  const stream = blob.stream().pipeThrough(new DecompressionStream("gzip"))
-  const buf = await new Response(stream).arrayBuffer()
-  return new Uint8Array(buf)
+function gunzip(input: Uint8Array): Promise<Uint8Array> {
+  return Promise.resolve(gunzipSync(input))
 }
 
 export async function serialize(snap: Snapshot): Promise<Uint8Array> {

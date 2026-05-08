@@ -40,3 +40,11 @@ export function useSettings(): SettingsState {
 export function useWeightUnit() {
   return useSettings().settings.weight_unit
 }
+
+/** Whether to show estimated 1RM under each set in the logger. Defaults
+ *  to true when missing — this matches the on-by-default behavior the
+ *  web shipped with before the toggle existed. */
+export function useShowOneRm(): boolean {
+  const v = useSettings().settings.show_one_rm
+  return v == null ? true : v
+}

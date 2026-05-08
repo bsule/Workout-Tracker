@@ -7,16 +7,17 @@ import { PrIcon } from "@/components/workouts/PrIcon"
 import { useMemo, useState } from "react"
 import {
   localApi as api,
+  lastSetTimeOf,
   startPlannedWorkout,
   useHydrated,
   useStore,
   getWorkoutByDateQ,
   listGymsQ,
+  workoutDurationSeconds,
 } from "@/lib/store"
 import {
   cn,
   formatDuration,
-  isFutureDate,
   parseLocalDate,
 } from "@/lib/utils"
 import type { Workout, WorkoutExercise } from "@/types"
@@ -167,7 +168,13 @@ function SummaryStrip({
   workout: Workout
   lastGym: string | null
 }) {
-  const dur = formatDuration(workout.duration_seconds)
+  // Show start/end/duration whenever the workout has a real `started_at` —
+  // that's only set when the workout was originally created on its own day.
+  // Past workouts that were logged retroactively start with started_at=null
+  // and stay clean. Today's recorded times persist into future views forever.
+  const hasTime = !!workout.started_at
+  const lastTime = hasTime ? lastSetTimeOf(workout) : null
+  const dur = hasTime ? formatDuration(workoutDurationSeconds(workout)) : null
   const dt = parseLocalDate(workout.date)
   const niceDate = dt.toLocaleDateString("en-US", {
     weekday: "long",
@@ -196,10 +203,10 @@ function SummaryStrip({
               })}
             </span>
           )}
-          {workout.finished_at && (
+          {lastTime && (
             <span>
-              <span className="text-foreground/70">Finished </span>
-              {new Date(workout.finished_at).toLocaleTimeString("en-US", {
+              <span className="text-foreground/70">End </span>
+              {new Date(lastTime).toLocaleTimeString("en-US", {
                 hour: "numeric",
                 minute: "2-digit",
               })}
