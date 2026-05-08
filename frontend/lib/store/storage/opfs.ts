@@ -1,4 +1,4 @@
-import type { BlobStorage } from "./types"
+import type { BlobStorage } from "@lift/core/store/storage"
 
 const SNAPSHOT_NAME = "snapshot.json.gz"
 const PENDING_NAME = "pending.log"

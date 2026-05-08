@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "LIFT",
+    "slug": "lift-mobile",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0a0a0a"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.lift.mobile"
+    },
+    "android": {
+      "package": "com.lift.mobile"
+    },
+    "extra": {
+      "apiBaseUrl": "http://192.168.1.131:8007/api"
+    }
+  }
+}

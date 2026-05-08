@@ -1,0 +1,21 @@
+{
+  "name": "lift-monorepo",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "packages/*",
+    "frontend",
+    "mobile"
+  ],
+  "scripts": {
+    "dev:web": "npm --workspace lift-client run dev",
+    "build:web": "npm --workspace lift-client run build",
+    "dev:mobile": "npm --workspace lift-mobile run start",
+    "dev": "concurrently -n web,mobile -c cyan,magenta --kill-others --kill-signal SIGINT \"npm:dev:web\" \"npm:dev:mobile\""
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.4",
+    "concurrently": "^9.1.0",
+    "tailwindcss": "^4.2.4"
+  }
+}

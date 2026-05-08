@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   History as HistoryIcon,
   ListPlus,
+  Settings as SettingsIcon,
   Trophy,
 } from "lucide-react"
 import { useAuth } from "@/components/auth/AuthProvider"
@@ -23,7 +24,7 @@ import { getExerciseHistoryQ, listExercisesQ } from "@/lib/store/queries"
 import { cn } from "@/lib/utils"
 import type { Exercise, ExerciseHistoryDay } from "@/types"
 
-type Tab = "chart" | "records" | "history"
+type Tab = "chart" | "records" | "history" | "settings"
 
 export default function ExerciseDetailPage({
   params,
@@ -151,6 +152,8 @@ export default function ExerciseDetailPage({
             ) : (
               <ExerciseHistory history={allHistory} />
             ))}
+
+          {tab === "settings" && <ExerciseSettingsPanel />}
         </>
       )}
     </div>
@@ -175,9 +178,14 @@ function Tabs({
       icon: <HistoryIcon className="size-4" />,
       badge: priorCount > 0 ? String(priorCount) : undefined,
     },
+    {
+      id: "settings",
+      label: "Settings",
+      icon: <SettingsIcon className="size-4" />,
+    },
   ]
   return (
-    <div className="grid grid-cols-3 gap-1 rounded-xl border border-white/10 bg-white/[.02] p-1">
+    <div className="grid grid-cols-4 gap-1 rounded-xl border border-white/10 bg-white/[.02] p-1">
       {items.map((it) => {
         const isActive = active === it.id
         return (
@@ -208,6 +216,33 @@ function Tabs({
           </button>
         )
       })}
+    </div>
+  )
+}
+
+// Per-exercise settings panel — currently hosts the 1RM calculator link.
+// Mirrors the mobile SettingsPanel inside SetLoggerScreen.
+function ExerciseSettingsPanel() {
+  return (
+    <div className="space-y-3">
+      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+        Tools
+      </p>
+      <Link
+        href="/one-rep-max"
+        className="group flex items-start gap-3 rounded-xl border border-white/10 bg-white/[.02] p-4 hover:border-white/20 hover:bg-white/[.04] transition-colors"
+      >
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-foreground">
+            1 Rep Max Calculator
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Plug in any weight × reps to estimate your 1RM and a percentage
+            table.
+          </p>
+        </div>
+        <ChevronLeft className="size-4 rotate-180 text-muted-foreground group-hover:text-foreground transition-colors" />
+      </Link>
     </div>
   )
 }

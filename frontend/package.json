@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3215",
-    "dev:webpack": "next dev --webpack --port 3215",
+    "dev": "cross-env NEXT_IGNORE_INCORRECT_LOCKFILE=1 next dev --port 3215",
+    "dev:webpack": "cross-env NEXT_IGNORE_INCORRECT_LOCKFILE=1 next dev --webpack --port 3215",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -12,6 +12,7 @@
   "dependencies": {
     "@base-ui/react": "^1.4.1",
     "@hookform/resolvers": "^5.2.2",
+    "@lift/core": "*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "fflate": "^0.8.2",
@@ -33,6 +34,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/sql.js": "^1.4.11",
+    "cross-env": "^10.1.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",

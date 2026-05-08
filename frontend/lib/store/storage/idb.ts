@@ -1,4 +1,4 @@
-import type { BlobStorage } from "./types"
+import type { BlobStorage } from "@lift/core/store/storage"
 
 const DB_NAME = "lift-store"
 const DB_VERSION = 1
