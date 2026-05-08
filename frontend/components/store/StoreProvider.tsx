@@ -8,6 +8,7 @@ import {
   hydrateStore,
   useHydrated,
 } from "@/lib/store"
+import { installWebStore } from "@/lib/store/setupWebStore"
 
 interface Props {
   children: React.ReactNode
@@ -23,6 +24,7 @@ export function StoreProvider({ children }: Props) {
   useEffect(() => {
     if (loading) return
     let cancelled = false
+    installWebStore()
     configureStore(`users/${userKey}`)
     hydrateStore()
       .then(() => {
