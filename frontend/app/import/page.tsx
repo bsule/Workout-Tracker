@@ -9,13 +9,14 @@ import { FullPageLoader } from "@/components/ui/Spinner"
 import { cn } from "@/lib/utils"
 import {
   importFitnotesCsv,
-  previewCsv,
-  type FitNotesPreview,
+  importSnapshotJson,
+  previewFile,
+  type Preview,
   type ImportMode,
   type ImportResult,
 } from "@/lib/fitnotes/importCsv"
 
-type Step = "upload" | "fitnotes" | "unknown" | "result"
+type Step = "upload" | "fitnotes" | "snapshot" | "unknown" | "result"
 
 export default function ImportPage() {
   const router = useRouter()
@@ -23,7 +24,7 @@ export default function ImportPage() {
 
   const [step, setStep] = useState<Step>("upload")
   const [file, setFile] = useState<File | null>(null)
-  const [preview, setPreview] = useState<FitNotesPreview | null>(null)
+  const [preview, setPreview] = useState<Preview | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
@@ -37,29 +38,38 @@ export default function ImportPage() {
     setBusy(true)
     setError(null)
     try {
-      const data = await previewCsv(f)
+      const data = await previewFile(f)
       setFile(f)
       setPreview(data)
-      setStep(data.format === "fitnotes" ? "fitnotes" : "unknown")
+      setStep(
+        data.kind === "fitnotes"
+          ? "fitnotes"
+          : data.kind === "snapshot"
+            ? "snapshot"
+            : "unknown"
+      )
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to read CSV")
+      setError(e instanceof Error ? e.message : "Failed to read file")
     } finally {
       setBusy(false)
     }
   }
 
-  async function runFitNotesImport() {
-    if (!file) return
+  async function runImport() {
+    if (!file || !preview) return
     if (mode === "replace") {
       const ok = window.confirm(
-        "Replace everything?\n\nThis will permanently delete every workout, exercise, and set currently in the app, then load the CSV. Settings and gyms are kept.\n\nThis cannot be undone."
+        "Replace everything?\n\nThis will permanently delete every workout, exercise, and set currently in the app, then load the file. Settings are kept.\n\nThis cannot be undone."
       )
       if (!ok) return
     }
     setBusy(true)
     setError(null)
     try {
-      const data = await importFitnotesCsv(file, { mode })
+      const data =
+        preview.kind === "snapshot"
+          ? await importSnapshotJson(file, { mode })
+          : await importFitnotesCsv(file, { mode })
       setResult(data)
       setStep("result")
     } catch (e) {
@@ -93,19 +103,34 @@ export default function ImportPage() {
         <UploadStep busy={busy} onFile={uploadAndPreview} />
       )}
 
-      {step === "fitnotes" && preview && (
+      {step === "fitnotes" && preview?.kind === "fitnotes" && (
         <FitNotesConfirmStep
           rowCount={preview.rowCount}
           mode={mode}
           onModeChange={setMode}
           onBack={reset}
-          onSubmit={runFitNotesImport}
+          onSubmit={runImport}
           busy={busy}
         />
       )}
 
-      {step === "unknown" && preview && (
-        <UnknownFormatStep onBack={reset} />
+      {step === "snapshot" && preview?.kind === "snapshot" && (
+        <SnapshotConfirmStep
+          workoutCount={preview.workoutCount}
+          setCount={preview.setCount}
+          customExerciseCount={preview.customExerciseCount}
+          gymCount={preview.gymCount}
+          exportedAt={preview.exportedAt}
+          mode={mode}
+          onModeChange={setMode}
+          onBack={reset}
+          onSubmit={runImport}
+          busy={busy}
+        />
+      )}
+
+      {step === "unknown" && preview?.kind === "unknown" && (
+        <UnknownFormatStep onBack={reset} reason={preview.reason} />
       )}
 
       {step === "result" && result && <ResultStep result={result} onReset={reset} />}
@@ -114,11 +139,22 @@ export default function ImportPage() {
 }
 
 function StepIndicator({ step }: { step: Step }) {
+  const middleLabel =
+    step === "snapshot"
+      ? "2. Confirm backup"
+      : step === "unknown"
+        ? "2. Unrecognized"
+        : "2. Confirm"
   const items: { id: Step; label: string }[] = [
     { id: "upload", label: "1. Upload" },
     {
-      id: step === "unknown" ? "unknown" : "fitnotes",
-      label: step === "unknown" ? "2. Unrecognized" : "2. Confirm",
+      id:
+        step === "unknown"
+          ? "unknown"
+          : step === "snapshot"
+            ? "snapshot"
+            : "fitnotes",
+      label: middleLabel,
     },
     { id: "result", label: "3. Result" },
   ]
@@ -154,10 +190,9 @@ function UploadStep({
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Upload a FitNotes for Android CSV export. We&rsquo;ll detect the format
-        automatically and import all 11 columns into your local data — distance,
-        time, notes, exercise kind, everything. Imports run entirely in your
-        browser; nothing is uploaded to a server.
+        Upload a Lift JSON backup or a FitNotes for Android CSV export. We&rsquo;ll
+        detect the format automatically. Imports run entirely in your browser;
+        nothing is uploaded to a server.
       </p>
       <label
         className={cn(
@@ -167,14 +202,14 @@ function UploadStep({
       >
         <Upload className="size-10 text-primary" />
         <span className="text-base font-semibold">
-          {busy ? "Reading…" : "Click to choose a CSV file"}
+          {busy ? "Reading…" : "Click to choose a file"}
         </span>
         <span className="text-xs text-muted-foreground">
-          UTF-8 encoded · first row should contain column headers
+          .json (Lift backup) or .csv (FitNotes), UTF-8 encoded
         </span>
         <input
           type="file"
-          accept=".csv,text/csv"
+          accept=".csv,.json,text/csv,application/json"
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0]
@@ -222,27 +257,7 @@ function FitNotesConfirmStep({
         </p>
       </div>
 
-      <div className="space-y-2">
-        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Import mode
-        </div>
-        <ModeOption
-          checked={mode === "merge"}
-          onSelect={() => onModeChange("merge")}
-          title="Add to my existing data"
-          description="Keeps everything currently in the app. CSV sets are added; workouts on the same date and exercises with the same name are merged automatically."
-          accent="emerald"
-          disabled={busy}
-        />
-        <ModeOption
-          checked={mode === "replace"}
-          onSelect={() => onModeChange("replace")}
-          title="Replace everything"
-          description="Wipes all current workouts, exercises, sets, and PRs. The CSV becomes your only data. Settings and gyms are kept. This cannot be undone."
-          accent="amber"
-          disabled={busy}
-        />
-      </div>
+      <ImportModeChooser mode={mode} onModeChange={onModeChange} busy={busy} />
 
       <div className="flex justify-between gap-3">
         <Button variant="outline" onClick={onBack} disabled={busy}>
@@ -257,6 +272,116 @@ function FitNotesConfirmStep({
           {submitLabel}
         </Button>
       </div>
+    </div>
+  )
+}
+
+function SnapshotConfirmStep({
+  workoutCount,
+  setCount,
+  customExerciseCount,
+  gymCount,
+  exportedAt,
+  mode,
+  onModeChange,
+  onBack,
+  onSubmit,
+  busy,
+}: {
+  workoutCount: number
+  setCount: number
+  customExerciseCount: number
+  gymCount: number
+  exportedAt: string | null
+  mode: ImportMode
+  onModeChange: (m: ImportMode) => void
+  onBack: () => void
+  onSubmit: () => void
+  busy: boolean
+}) {
+  const submitLabel = busy
+    ? mode === "replace"
+      ? "Replacing…"
+      : "Importing…"
+    : mode === "replace"
+      ? `Replace with backup`
+      : `Import ${workoutCount.toLocaleString()} workouts`
+
+  const exportedNote =
+    exportedAt && !Number.isNaN(Date.parse(exportedAt))
+      ? new Date(exportedAt).toLocaleString()
+      : null
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm">
+        <div className="text-base font-semibold text-emerald-300">
+          Lift backup detected
+        </div>
+        <p className="mt-1 text-emerald-100/90">
+          {workoutCount.toLocaleString()} workouts · {setCount.toLocaleString()}{" "}
+          sets · {customExerciseCount.toLocaleString()} custom exercises ·{" "}
+          {gymCount.toLocaleString()} gyms.
+          {exportedNote && (
+            <>
+              {" "}
+              <span className="text-emerald-200/70">
+                Exported {exportedNote}.
+              </span>
+            </>
+          )}
+        </p>
+      </div>
+
+      <ImportModeChooser mode={mode} onModeChange={onModeChange} busy={busy} />
+
+      <div className="flex justify-between gap-3">
+        <Button variant="outline" onClick={onBack} disabled={busy}>
+          Back
+        </Button>
+        <Button
+          onClick={onSubmit}
+          disabled={busy}
+          size="lg"
+          variant={mode === "replace" ? "destructive" : "default"}
+        >
+          {submitLabel}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function ImportModeChooser({
+  mode,
+  onModeChange,
+  busy,
+}: {
+  mode: ImportMode
+  onModeChange: (m: ImportMode) => void
+  busy: boolean
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Import mode
+      </div>
+      <ModeOption
+        checked={mode === "merge"}
+        onSelect={() => onModeChange("merge")}
+        title="Add to my existing data"
+        description="Keeps everything currently in the app. New sets are added; workouts on the same date+gym and exercises with the same name are merged automatically."
+        accent="emerald"
+        disabled={busy}
+      />
+      <ModeOption
+        checked={mode === "replace"}
+        onSelect={() => onModeChange("replace")}
+        title="Replace everything"
+        description="Wipes all current workouts, exercises, sets, and PRs. The file becomes your only data. Settings are kept. This cannot be undone."
+        accent="amber"
+        disabled={busy}
+      />
     </div>
   )
 }
@@ -312,19 +437,25 @@ function ModeOption({
   )
 }
 
-function UnknownFormatStep({ onBack }: { onBack: () => void }) {
+function UnknownFormatStep({
+  onBack,
+  reason,
+}: {
+  onBack: () => void
+  reason: string
+}) {
   return (
     <div className="space-y-6">
       <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
         <div className="text-base font-semibold text-amber-200">
           Format not recognized
         </div>
-        <p className="mt-1 text-amber-100/80">
-          Right now only the FitNotes Android CSV format is supported (header
-          row should include <span className="font-mono">Date, Exercise,
-          Category, Weight (kg), Weight (lbs), Reps, Distance, Distance Unit,
-          Time, Notes, Kind</span>). If you&rsquo;re trying to import from a
-          different app, let me know what columns it has.
+        <p className="mt-1 text-amber-100/80">{reason}</p>
+        <p className="mt-2 text-amber-100/70">
+          Supported formats: a Lift JSON backup (exported from Settings) or a
+          FitNotes Android CSV export. Header row for FitNotes should include{" "}
+          <span className="font-mono">Date, Exercise, Category, Weight (kg),
+          Weight (lbs), Reps, Distance, Distance Unit, Time, Notes, Kind</span>.
         </p>
       </div>
       <div className="flex justify-end">

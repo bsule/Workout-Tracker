@@ -21,7 +21,8 @@
     "./store/indexes": "./src/store/indexes.ts",
     "./store/materialize": "./src/store/materialize.ts",
     "./sync": "./src/sync/index.ts",
-    "./import": "./src/import/index.ts"
+    "./import": "./src/import/index.ts",
+    "./export": "./src/export/index.ts"
   },
   "dependencies": {
     "fflate": "^0.8.2"

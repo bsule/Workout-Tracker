@@ -389,6 +389,39 @@ export function deleteGym(id: number): void {
   recordPending({ op: "delete_gym", id })
 }
 
+// Rename a gym and rewrite the `gym` field on every workout that
+// referenced the old name. Returns null on no-op (missing id, empty
+// name, or a name collision with another saved gym).
+export function renameGym(id: number, name: string): GymRow | null {
+  const trimmed = name.trim()
+  if (!trimmed) return null
+  let result: GymRow | null = null
+  let oldName: string | null = null
+  applyMutation((snap) => {
+    const idx = snap.gyms.findIndex((g) => g.id === id)
+    if (idx < 0) return snap
+    const current = snap.gyms[idx]
+    if (current.name === trimmed) {
+      result = current
+      return snap
+    }
+    if (snap.gyms.some((g, i) => i !== idx && g.name === trimmed)) return snap
+    oldName = current.name
+    const next: GymRow = { ...current, name: trimmed }
+    result = next
+    const gyms = snap.gyms.slice()
+    gyms[idx] = next
+    const workouts = snap.workouts.map((w) =>
+      w.gym === oldName ? { ...w, gym: trimmed } : w
+    )
+    return { ...snap, gyms, workouts }
+  })
+  if (result && oldName !== null) {
+    recordPending({ op: "rename_gym", id, oldName, newName: trimmed })
+  }
+  return result
+}
+
 // ---- copy from previous ------------------------------------------
 
 export function copyFromWorkout(

@@ -6,6 +6,7 @@ type Variant = "primary" | "secondary" | "ghost" | "destructive"
 interface Props {
   label: string
   onPress?: () => void
+  onPressIn?: () => void
   variant?: Variant
   loading?: boolean
   disabled?: boolean
@@ -15,13 +16,14 @@ interface Props {
   labelColor?: string
 }
 
-export function Button({ label, onPress, variant = "primary", loading, disabled, style, labelColor }: Props) {
+export function Button({ label, onPress, onPressIn, variant = "primary", loading, disabled, style, labelColor }: Props) {
   const palette = paletteFor(variant)
   const fg = labelColor ?? palette.fg
   const isDisabled = disabled || loading
   return (
     <Pressable
       onPress={onPress}
+      onPressIn={onPressIn}
       disabled={isDisabled}
       style={({ pressed }) => [
         styles.base,

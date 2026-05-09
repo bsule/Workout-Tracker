@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react"
 import {
   FlatList,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -11,6 +10,7 @@ import {
   TextInput,
   View,
 } from "react-native"
+import Modal from "react-native-modal"
 import { Ionicons } from "@expo/vector-icons"
 import { SafeAreaView } from "react-native-safe-area-context"
 import {
@@ -41,10 +41,16 @@ export function ExercisePickerSheet({ visible, onClose, onPick }: Props) {
 
   return (
     <Modal
-      visible={visible}
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={onClose}
+      isVisible={visible}
+      animationIn="slideInUp"
+      animationOut="slideOutDown"
+      animationInTiming={260}
+      animationOutTiming={220}
+      backdropOpacity={0}
+      onBackButtonPress={onClose}
+      useNativeDriver
+      hideModalContentWhileAnimating
+      style={styles.modal}
     >
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }} edges={["top"]}>
         {mode === "pick" ? (
@@ -277,6 +283,7 @@ function NewExerciseView({
 }
 
 const styles = StyleSheet.create({
+  modal: { margin: 0 },
   header: {
     flexDirection: "row",
     alignItems: "center",

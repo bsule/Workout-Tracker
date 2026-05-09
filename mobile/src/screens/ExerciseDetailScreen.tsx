@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import {
   Pressable,
   ScrollView,
@@ -68,6 +68,14 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
   const totalWorkouts = history.length
   const lastDate = history[0]?.date ?? null
 
+  const openCalendarAtDate = useCallback(
+    (date: string) => {
+      navigation.setOptions({ animation: "none" })
+      navigation.navigate("Main", { screen: "Calendar", params: { date } })
+    },
+    [navigation]
+  )
+
   return (
     <View style={styles.flex}>
       <View style={styles.fixedTop}>
@@ -76,12 +84,16 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
           <CategoryBadge slug={exercise.category} />
         </View>
 
-        <View style={styles.statsRow}>
-          <Stat label="Workouts" value={String(totalWorkouts)} />
-          <Stat label="Last" value={lastDate ? formatRelative(lastDate) : "—"} />
-        </View>
+        {tab === "history" && (
+          <>
+            <View style={styles.statsRow}>
+              <Stat label="Workouts" value={String(totalWorkouts)} />
+              <Stat label="Last" value={lastDate ? formatRelative(lastDate) : "—"} />
+            </View>
 
-        <Button label="Log a set" onPress={logToday} />
+            <Button label="Log a set" onPress={logToday} />
+          </>
+        )}
       </View>
 
       <ScrollView
@@ -92,8 +104,7 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
           <PastHistory
             days={history}
             currentDate={todayString()}
-            unit={unit}
-            showOneRm={showOneRm}
+            onPressDate={openCalendarAtDate}
           />
         )}
         {tab === "graph" && <GraphPanel days={history} unit={unit} />}

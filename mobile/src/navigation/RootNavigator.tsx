@@ -22,6 +22,8 @@ import { SettingsScreen } from "../screens/SettingsScreen"
 import { NewExerciseScreen } from "../screens/NewExerciseScreen"
 import { SetLoggerScreen } from "../screens/SetLoggerScreen"
 import { CategoryStylesScreen } from "../screens/CategoryStylesScreen"
+import { GymsScreen } from "../screens/GymsScreen"
+import { ImportExportScreen } from "../screens/ImportExportScreen"
 
 const Stack = createNativeStackNavigator()
 const Tabs = createBottomTabNavigator()
@@ -51,11 +53,15 @@ const screenOptions = {
 
 // Native-stack-only options. Forces the iOS back button to show only a
 // chevron, not the previous screen's title.
+// animationDuration shortens the iOS push from the ~350ms default so taps on
+// home-tab rows (Settings → CategoryStyles/Gyms/ImportExport, Exercises →
+// ExerciseDetail/EditExercise, etc.) feel near-instant.
 const stackScreenOptions = {
   ...screenOptions,
   headerBackButtonDisplayMode: "minimal" as const,
   headerBackTitle: "",
   headerBackTitleVisible: false,
+  animationDuration: 180,
 }
 
 const navigationRef = createNavigationContainerRef()
@@ -150,6 +156,11 @@ function MainTabs() {
               <Pressable
                 accessibilityRole="button"
                 onPress={() => (navigationRef as any).navigate("ExercisePicker")}
+                // Pressable's iOS default delays onPress until pressOut +
+                // a scroll-detection window (~130ms). The "+" tab button
+                // isn't inside a scrollable, so the delay is pure latency
+                // — drop it so the picker push starts on touch-up.
+                unstable_pressDelay={0}
                 style={[props.style, styles.fabBtn]}
               >
                 {props.children}
@@ -234,6 +245,16 @@ export function RootNavigator() {
               name="CategoryStyles"
               component={CategoryStylesScreen}
               options={{ title: "Categories" }}
+            />
+            <Stack.Screen
+              name="Gyms"
+              component={GymsScreen}
+              options={{ title: "Gyms" }}
+            />
+            <Stack.Screen
+              name="ImportExport"
+              component={ImportExportScreen}
+              options={{ title: "Import / Export" }}
             />
             <Stack.Screen
               name="SetLogger"

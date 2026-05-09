@@ -115,6 +115,16 @@ function PickView({
     const handle = InteractionManager.runAfterInteractions(() => setListReady(true))
     return () => handle.cancel()
   }, [])
+  // Gate the category chips and the FlatList shell off the very first commit
+  // so iOS native-stack can begin the picker's slide-in as soon as possible
+  // after the "+" tap. The header + search input are the only things visible
+  // during the slide; the chips + list shell mount one rAF later — invisible
+  // to the user since the slide hasn't finished yet.
+  const [chromeReady, setChromeReady] = useState(false)
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setChromeReady(true))
+    return () => cancelAnimationFrame(id)
+  }, [])
   const exercises = useMemo(
     () =>
       listReady
@@ -152,36 +162,42 @@ function PickView({
         />
       </View>
 
-      <View style={styles.chipsGrid}>
-        {categories.map((cat) => {
-          const active = category === cat
-          return (
-            <Pressable
-              key={cat}
-              onPress={() => setCategory(active ? null : cat)}
-              style={[styles.chip, active && styles.chipActive]}
-            >
-              <View style={[styles.chipDot, { backgroundColor: colorFor(cat) }]} />
-              <Text style={styles.chipText}>{labels[cat] ?? cat}</Text>
-            </Pressable>
-          )
-        })}
-      </View>
+      {/* Chips + list shell are off the first commit so iOS can start the
+       *  picker's slide as soon as possible. Both mount one rAF later. */}
+      {chromeReady && (
+        <View style={styles.chipsGrid}>
+          {categories.map((cat) => {
+            const active = category === cat
+            return (
+              <Pressable
+                key={cat}
+                onPress={() => setCategory(active ? null : cat)}
+                style={[styles.chip, active && styles.chipActive]}
+              >
+                <View style={[styles.chipDot, { backgroundColor: colorFor(cat) }]} />
+                <Text style={styles.chipText}>{labels[cat] ?? cat}</Text>
+              </Pressable>
+            )
+          })}
+        </View>
+      )}
 
-      <FlatList
-        data={exercises}
-        keyExtractor={(e) => String(e.id)}
-        contentContainerStyle={{ paddingBottom: 40 }}
-        renderItem={({ item }) => <ExerciseRow ex={item} onPress={() => onPick(item)} />}
-        ItemSeparatorComponent={() => <View style={styles.sep} />}
-        ListEmptyComponent={
-          listReady ? (
-            <Text style={{ color: theme.colors.muted, padding: theme.spacing[4] }}>
-              No exercises match.
-            </Text>
-          ) : null
-        }
-      />
+      {chromeReady && (
+        <FlatList
+          data={exercises}
+          keyExtractor={(e) => String(e.id)}
+          contentContainerStyle={{ paddingBottom: 40 }}
+          renderItem={({ item }) => <ExerciseRow ex={item} onPress={() => onPick(item)} />}
+          ItemSeparatorComponent={() => <View style={styles.sep} />}
+          ListEmptyComponent={
+            listReady ? (
+              <Text style={{ color: theme.colors.muted, padding: theme.spacing[4] }}>
+                No exercises match.
+              </Text>
+            ) : null
+          }
+        />
+      )}
     </>
   )
 }
