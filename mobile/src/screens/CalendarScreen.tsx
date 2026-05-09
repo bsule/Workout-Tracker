@@ -1,7 +1,12 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
-import { getCalendarQ, getPlannedDatesQ, useStore } from "@lift/core"
+import {
+  getCalendarQ,
+  getPlannedDatesQ,
+  getWorkoutByDateQ,
+  useStore,
+} from "@lift/core"
 import type { Category } from "@lift/core"
 import { DayWorkoutContent } from "../components/DayWorkoutContent"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
@@ -29,12 +34,35 @@ function ymd(y: number, m: number, d: number): string {
   return `${y}-${pad(m)}-${pad(d)}`
 }
 
-export function CalendarScreen({ navigation }: any) {
+export function CalendarScreen({ navigation, route }: any) {
   const today = new Date()
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth() + 1) // 1-indexed
   const [selectedDate, setSelectedDate] = useState<string>(todayString())
   const { setDate: setActiveDate } = useActiveDateAndSetter()
+
+  // When another screen navigates here with `{ date }`, jump to that month +
+  // select that day. This consumes the param via the "derived state" pattern
+  // (setState during render): the very first commit after the navigation
+  // already shows the correct month/date, so the user doesn't see the old
+  // month flash for a frame underneath the back-slide animation.
+  const incomingDate: string | undefined = route?.params?.date
+  const [consumedDate, setConsumedDate] = useState<string | undefined>(undefined)
+  if (incomingDate && incomingDate !== consumedDate) {
+    const y = Number(incomingDate.slice(0, 4))
+    const m = Number(incomingDate.slice(5, 7))
+    if (y && m) {
+      setYear(y)
+      setMonth(m)
+    }
+    setSelectedDate(incomingDate)
+    setConsumedDate(incomingDate)
+  }
+  useEffect(() => {
+    if (!incomingDate || incomingDate !== consumedDate) return
+    setActiveDate(incomingDate)
+    navigation.setParams({ date: undefined })
+  }, [incomingDate, consumedDate])
 
   const { firstDayOfWeek } = useSettings()
   const snapshot = useStore((s) => s.snapshot)
@@ -51,6 +79,10 @@ export function CalendarScreen({ navigation }: any) {
   const plannedDates = useMemo(
     () => new Set(getPlannedDatesQ(year, month)),
     [snapshot, year, month]
+  )
+  const selectedGym = useMemo(
+    () => getWorkoutByDateQ(selectedDate)?.gym?.trim() || null,
+    [snapshot, selectedDate]
   )
 
   const todayKey = todayString()
@@ -140,7 +172,14 @@ export function CalendarScreen({ navigation }: any) {
       >
         <View style={styles.detail}>
           <View style={styles.detailHeader}>
-            <Text style={styles.detailTitle}>{niceLongDate(selectedDate)}</Text>
+            <View style={styles.detailTitleCol}>
+              <Text style={styles.detailTitle}>{niceLongDate(selectedDate)}</Text>
+              {selectedGym && (
+                <Text style={styles.detailGym} numberOfLines={1}>
+                  📍 {selectedGym}
+                </Text>
+              )}
+            </View>
             <Pressable
               onPress={() => {
                 setActiveDate(selectedDate)
@@ -229,10 +268,11 @@ function DayCell({
   }
 
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.cell, pressedStyle(pressed)]}>
+    <Pressable onPress={onPress} style={styles.cell}>
       <View
         style={[
           styles.cellInner,
+          isToday && styles.cellToday,
           isSelected && styles.cellSelected,
         ]}
       >
@@ -320,11 +360,16 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start",
     paddingTop: 6,
     borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  cellToday: {
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderColor: "rgba(255,255,255,0.18)",
   },
   cellSelected: {
     backgroundColor: "rgba(255,255,255,0.10)",
     borderColor: theme.colors.navAccent,
-    borderWidth: 1,
   },
   dayNum: {
     color: theme.colors.foreground,
@@ -356,11 +401,18 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: theme.spacing[3],
   },
-  detailTitle: {
+  detailTitleCol: {
     flex: 1,
+    gap: 2,
+  },
+  detailTitle: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.md,
     fontWeight: "700",
+  },
+  detailGym: {
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.sm,
   },
   goToDateBtn: {
     flexDirection: "row",

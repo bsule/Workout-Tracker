@@ -1,4 +1,6 @@
 import {
+  memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -10,23 +12,19 @@ import {
   Animated,
   Dimensions,
   Easing,
-  InteractionManager,
-  Keyboard,
-  KeyboardAvoidingView,
+  FlatList,
   LayoutAnimation,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  TouchableWithoutFeedback,
   UIManager,
   View,
   Platform,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
-import { LineChart } from "react-native-gifted-charts"
+import Svg, { Circle, G, Line as SvgLine, Path as SvgPath, Text as SvgText } from "react-native-svg"
 // Use the legacy (non-Reanimated) Swipeable to avoid pulling in
 // react-native-reanimated native init at app boot — which is currently
 // throwing "Exception in HostFunction" inside Expo Go on this device.
@@ -56,7 +54,9 @@ import type {
   WorkoutSet,
 } from "@lift/core"
 import { Button } from "../components/Button"
+import { PopupModal } from "../components/PopupModal"
 import { PrIcon } from "../components/PrIcon"
+import { SetList as SharedSetList } from "../components/SetList"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
@@ -107,6 +107,19 @@ function animateNext() {
 }
 
 const EMPTY_HISTORY: ExerciseHistoryDay[] = []
+
+// First-frame placeholder for the editing form. See the use site for the
+// derivation of 254. Transparent so the empty card outline doesn't flash
+// during the slide; the real form swaps in one rAF later.
+// 260 ≈ card padding (40) + border (2) + 2× NumericField (70 each) +
+// button row (~44) + 2× inter-child gap (32). Slight overshoot is preferred —
+// the ScrollView below absorbs the slack when the real form (typically a
+// few px shorter) mounts, so nothing visible shifts.
+const FORM_PLACEHOLDER_STYLE = {
+  minHeight: 260,
+  opacity: 0,
+  borderColor: "transparent" as const,
+}
 
 // Per-row mount fade. Legacy `Animated` so we don't pull in Reanimated's
 // runtime (see import comment). The wrapper sits *outside* the Swipeable so
@@ -175,30 +188,42 @@ function SetRowFade({
     </Animated.View>
   )
 }
-type Metric = "one_rm" | "heaviest" | "avg_weight" | "volume"
+type Metric = "one_rm" | "heaviest" | "avg_weight" | "per_set"
 
 const METRIC_OPTIONS: {
   id: Metric
   label: string
 }[] = [
-  { id: "one_rm", label: "Max 1RM" },
+  { id: "per_set", label: "Per Set" },
   { id: "heaviest", label: "Heaviest" },
+  { id: "one_rm", label: "1RM" },
   { id: "avg_weight", label: "Avg Weight" },
-  { id: "volume", label: "Volume" },
+]
+
+const SET_INDEX_OPTIONS: { value: number; label: string }[] = [
+  { value: 1, label: "1st" },
+  { value: 2, label: "2nd" },
+  { value: 3, label: "3rd" },
+  { value: 4, label: "4th" },
 ]
 
 export function SetLoggerScreen({ route, navigation }: any) {
-  // The picker forwards `pendingCreate` instead of running the
-  // create-workout + add-exercise mutations itself, so the navigation
-  // message reaches native before any snapshot subscribers re-render.
-  // We then defer the actual mutations behind InteractionManager — the
-  // emit cascade (even with `freezeOnBlur` covering MainTabs) still costs
-  // ~50–100ms of JS work, so running it inside `runAfterInteractions`
-  // pushes it past the ~250ms native push animation. The screen slides in
-  // at 60fps unobstructed, then the workoutId/weId resolve and the SetList
-  // settles in. While unresolved we render a stub `we` synthesized from
-  // the route params (exerciseName / exerciseCategory) so the slide-in
-  // shows the populated header and form from the very first frame.
+  // `resolved` holds the real workoutId / weId once they exist in the
+  // snapshot. We avoid mutating on screen entry (which would force a
+  // post-slide buildIndexes + subscriber-emit + re-render hitch) by
+  // resolving in two ways without ever doing a mutation here:
+  //   1. Synchronously: if a workout already exists for `date` and
+  //      already contains this exercise, reuse those ids on the very
+  //      first render — read-only, no mutation, no index rebuild.
+  //   2. Lazily inside the first Save: the create + addExercise
+  //      mutations land in the same rAF callback that already defers
+  //      `addSet`, batched into one index rebuild. The user has paused
+  //      to type weight/reps when this runs, so the cost is off the
+  //      screen-entry critical path entirely. Backing out without saving
+  //      means no mutation ever happened — the beforeRemove cleanup
+  //      below naturally no-ops because workoutId stays -1.
+  // Until either path resolves, the stub UI synthesized from
+  // `pendingCreate` is what the user sees and interacts with.
   const [resolved, setResolved] = useState<{
     workoutId: number
     weId: number
@@ -207,36 +232,17 @@ export function SetLoggerScreen({ route, navigation }: any) {
     if (p?.workoutId != null && p?.weId != null) {
       return { workoutId: p.workoutId, weId: p.weId }
     }
+    if (p?.pendingCreate) {
+      const existing = getWorkoutByDateQ(p.pendingCreate.date)
+      if (existing) {
+        const we = existing.exercises.find(
+          (e: WorkoutExercise) => e.exercise.id === p.pendingCreate.exerciseId
+        )
+        if (we) return { workoutId: existing.id, weId: we.id }
+      }
+    }
     return null
   })
-  useEffect(() => {
-    if (resolved) return
-    const p = route.params
-    if (!p?.pendingCreate) return
-    const date: string = p.pendingCreate.date
-    const exerciseId: number = p.pendingCreate.exerciseId
-    const handle = InteractionManager.runAfterInteractions(() => {
-      // batchMutations coalesces the create-workout + add-exercise pair
-      // into a single index rebuild + subscriber emit.
-      const ids = batchMutations(() => {
-        const existing = getWorkoutByDateQ(date)
-        const wid = existing?.id ?? createWorkout(date).row.id
-        const we = addExerciseToWorkout(wid, exerciseId)
-        return { workoutId: wid, weId: we.id }
-      })
-      setResolved(ids)
-    })
-    // Also cancel on `beforeRemove` so we don't commit the create-workout
-    // mutation after the user has already chosen to leave — that would
-    // strand a workout + empty WE in the snapshot (the existing
-    // beforeRemove cleanup below sees workoutId=-1 and bails out).
-    const unsub = navigation.addListener("beforeRemove", () => handle.cancel())
-    return () => {
-      handle.cancel()
-      unsub()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
   // One-shot flag flipped on the first frame after mount. Used to keep
   // non-first-paint subtrees (e.g. the always-mounted NoteEditorSheet Modal)
   // out of the very first render, so native-stack can start the push
@@ -326,8 +332,12 @@ export function SetLoggerScreen({ route, navigation }: any) {
   const [reps, setReps] = useState<number>(initialReps)
   const [error, setError] = useState<string | null>(null)
   // When non-null, Save updates this set instead of adding a new one. Set
-  // by the row's swipe-Edit action.
+  // by the row's swipe-Edit action, or by "Not Hit" on a planned set.
   const [editingSetId, setEditingSetId] = useState<number | null>(null)
+  // When non-null, the planned-set actions modal is open for this set.
+  const [activePlannedSet, setActivePlannedSet] = useState<WorkoutSet | null>(
+    null
+  )
   // Multi-select state. A long-press on a logged set enters selection mode;
   // subsequent taps on other sets toggle their selection. The top of the
   // screen swaps from the form to a selection action bar while active.
@@ -382,6 +392,22 @@ export function SetLoggerScreen({ route, navigation }: any) {
     })
     return unsub
   }, [navigation, workoutId, weId])
+
+  // Stable identity so HistoryDayCard's `onPressDate` prop doesn't change on
+  // unrelated parent re-renders, keeping the memoized day cards from
+  // re-rendering during scroll.
+  const openCalendarAtDate = useCallback(
+    (date: string) => {
+      // Disable the back-slide animation just for this transition so the
+      // Calendar appears immediately. The screen is being popped, so this
+      // option change has no lingering effect — fresh pushes start a new
+      // SetLogger instance with default options.
+      navigation.setOptions({ animation: "none" })
+      navigation.navigate("Main", { screen: "Calendar", params: { date } })
+    },
+    [navigation]
+  )
+
   const [skipFadeIds, setSkipFadeIds] = useState<Set<number>>(() => new Set())
   useEffect(() => {
     if (!pendingAdd || !pendingAdd.baseIds) return
@@ -436,21 +462,16 @@ export function SetLoggerScreen({ route, navigation }: any) {
     setNoteDraft(s.note ?? "")
   }
   function closeNoteEditor() {
-    // Dismiss the keyboard a frame before the modal slides out so the two
-    // animations don't race — otherwise the modal slides down while the
-    // keyboard lingers, exposing an empty band underneath.
-    Keyboard.dismiss()
+    // Don't clear noteDraft here. Doing so empties the TextInput during
+    // the modal's fade-out and the user sees the text visibly vanish
+    // before the modal disappears — reads as a flicker. The draft gets
+    // overwritten on the next open by openNoteEditor.
     setNoteEditingSet(null)
-    setNoteDraft("")
   }
-  function saveNote() {
+  function persistNote() {
     if (!noteEditingSet) return
     const id = noteEditingSet.id
     const note = noteDraft.trim()
-    // Local store is synchronous, so close optimistically and animate the
-    // row's note line in/out on the same render that the store updates.
-    animateNext()
-    closeNoteEditor()
     api.updateSet(id, { note }).catch(() => {})
   }
 
@@ -532,18 +553,15 @@ export function SetLoggerScreen({ route, navigation }: any) {
 
   function save() {
     setError(null)
-    // While `resolved` is null we're still rendering the stub `we` from
-    // pendingCreate — the real workoutId/weId haven't landed yet, so any
-    // mutation would target id=-1. Saving is gated until the deferred
-    // mutations resolve (typically <300ms, well before the user has time
-    // to type weight/reps and tap Save).
-    if (!resolved) return
     if (weight <= 0 || reps <= 0) {
       setError("Weight and reps must be greater than zero.")
       return
     }
     try {
       if (editingSetId != null) {
+        // Editing requires `resolved` (you can't edit a set that doesn't
+        // exist yet). Bail otherwise.
+        if (!resolved) return
         // Flip the form back to add-mode FIRST so the editAnim effect kicks
         // off the border-color/scale transition. Defer the actual mutation
         // by one frame so the store update (which forces a full SetList
@@ -552,11 +570,20 @@ export function SetLoggerScreen({ route, navigation }: any) {
         const w = toKg(weight, unit)
         const r = reps
         const id = editingSetId
+        // Editing a planned set via "Not Hit" logs it (flips is_planned to
+        // false) with the new values in a single mutation.
+        const editingPlanned = sets.find((s) => s.id === id)?.is_planned === true
         setEditingSetId(null)
         requestAnimationFrame(() => {
-          api.updateSet(id, { weight: w, reps: r })
+          if (editingPlanned) {
+            logPlannedSet(id, { weight: w, reps: r })
+          } else {
+            api.updateSet(id, { weight: w, reps: r })
+          }
         })
       } else if (isPlanned) {
+        // isPlanned only true for an existing planned workout — already resolved.
+        if (!resolved) return
         // Same optimistic-placeholder flow for planned-set authoring so the
         // fade starts on click instead of after the mutation commits.
         const w = toKg(weight, unit)
@@ -591,8 +618,29 @@ export function SetLoggerScreen({ route, navigation }: any) {
             baseLen: sets.length,
             baseIds: new Set(sets.map((s) => s.id)),
           })
+          // Capture resolved at click time. If still null, this is the
+          // first save on a brand-new workout/exercise — lazy-create the
+          // workout + WE inside the same rAF as addSet so all three
+          // mutations coalesce into a single index rebuild + subscriber
+          // emit. The user already saw the placeholder fade-in start on
+          // the click frame, so the heavy work landing one frame later is
+          // invisible.
+          const wasResolved = resolved
+          const pending = route.params?.pendingCreate
           requestAnimationFrame(() => {
-            api.addSet(weId, { weight: w, reps: r })
+            if (wasResolved) {
+              api.addSet(wasResolved.weId, { weight: w, reps: r })
+              return
+            }
+            if (!pending) return
+            const ids = batchMutations(() => {
+              const existing = getWorkoutByDateQ(pending.date)
+              const wid = existing?.id ?? createWorkout(pending.date).row.id
+              const we = addExerciseToWorkout(wid, pending.exerciseId)
+              return { workoutId: wid, weId: we.id }
+            })
+            setResolved(ids)
+            api.addSet(ids.weId, { weight: w, reps: r })
           })
         }
       }
@@ -602,7 +650,6 @@ export function SetLoggerScreen({ route, navigation }: any) {
   }
 
   return (
-    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
     <StaticSafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }}>
       {/* In-screen back chevron — same look as the DayScreen date-nav arrows.
        *  The native stack header is hidden for this route because iOS adds
@@ -651,7 +698,18 @@ export function SetLoggerScreen({ route, navigation }: any) {
             </View>
           </View>
         )}
-        {tab === "workout" && !selectionMode && (
+        {tab === "workout" && !selectionMode && !firstPaintDone && (
+          // First-frame placeholder. Reserves the form's vertical space so the
+          // slide-in silhouette doesn't shift when the real form mounts one
+          // rAF later. iOS native-stack waits for the destination's first
+          // commit before starting the push animation; gating the form (two
+          // NumericFields + two PhaseButtons + the editAnim Animated.Value
+          // interpolations) behind firstPaintDone keeps the first commit
+          // trivial so the slide begins as soon as possible after the tap.
+          // Height derivation lives on FORM_PLACEHOLDER_STYLE.
+          <View style={[styles.card, FORM_PLACEHOLDER_STYLE]} />
+        )}
+        {tab === "workout" && !selectionMode && firstPaintDone && (
           <Animated.View
             style={[
               styles.card,
@@ -723,18 +781,25 @@ export function SetLoggerScreen({ route, navigation }: any) {
         )}
       </View>
 
-      <ScrollView
-        style={styles.contentScroll}
-        contentContainerStyle={styles.listScrollContent}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-      >
-        {tab === "workout" && firstPaintDone && (
-          <>
+      {tab === "history" ? (
+        <PastHistoryList
+          style={styles.contentScroll}
+          contentContainerStyle={styles.listScrollContent}
+          days={history}
+          currentDate={workout.date}
+          onPressDate={openCalendarAtDate}
+        />
+      ) : (
+        <ScrollView
+          style={styles.contentScroll}
+          contentContainerStyle={styles.listScrollContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
+          {tab === "workout" && firstPaintDone && (
             <SetList
               sets={sets}
               unit={unit}
-              canHit={!isPlanned}
               showOneRm={showOneRm}
               showPositionPrs={showPositionPrs}
               selectedIds={selectedIds}
@@ -746,31 +811,22 @@ export function SetLoggerScreen({ route, navigation }: any) {
                 if (!selectedIds.includes(s.id)) toggleSelected(s.id)
               }}
               onSelectToggle={toggleSelected}
-              onHit={(s) => {
-                if (s.weight == null || s.reps == null) return
-                logPlannedSet(s.id, { weight: s.weight, reps: s.reps })
-              }}
+              onPlannedTap={(s) => setActivePlannedSet(s)}
               onEdit={startEdit}
               onAddNote={openNoteEditor}
               onDelete={(s) => startDelete(s.id)}
             />
-          </>
-        )}
-        {tab === "history" && (
-          <PastHistory
-            days={history}
-            currentDate={workout.date}
-            unit={unit}
-            showOneRm={showOneRm}
-            showPositionPrs={showPositionPrs}
-          />
-        )}
-        {tab === "graph" && <GraphPanel days={history} unit={unit} />}
-        {tab === "records" && <RecordsPanel days={history} unit={unit} />}
-        {tab === "settings" && <SettingsPanel navigation={navigation} />}
-      </ScrollView>
+          )}
+          {tab === "graph" && <GraphPanel days={history} unit={unit} />}
+          {tab === "records" && <RecordsPanel days={history} unit={unit} />}
+          {tab === "settings" && <SettingsPanel navigation={navigation} />}
+        </ScrollView>
+      )}
 
-      <SubTabBar tab={tab} onChange={setTab} />
+      {/* Gated on firstPaintDone so the bar's 5 Pressables + Ionicons aren't
+       *  on the first commit. The bar is at the bottom edge — the last pixels
+       *  to slide into view — so mounting it one rAF later is invisible. */}
+      {firstPaintDone && <SubTabBar tab={tab} onChange={setTab} />}
       {/* Gated on firstPaintDone so the Modal's host-view allocation isn't on
        *  the critical path of the slide-in. The Modal is invisible during the
        *  push animation anyway; mounting it one frame later is imperceptible. */}
@@ -780,12 +836,116 @@ export function SetLoggerScreen({ route, navigation }: any) {
           original={noteEditingSet?.note ?? ""}
           draft={noteDraft}
           onChangeDraft={setNoteDraft}
-          onCancel={closeNoteEditor}
-          onSave={saveNote}
+          onClose={closeNoteEditor}
+          onSave={persistNote}
         />
       )}
+      <PlannedSetActionsModal
+        set={activePlannedSet}
+        unit={unit}
+        onClose={() => setActivePlannedSet(null)}
+        onHit={(s) => {
+          setActivePlannedSet(null)
+          const w = s.weight
+          const r = s.reps
+          if (w == null || r == null) return
+          requestAnimationFrame(() => {
+            logPlannedSet(s.id, { weight: w, reps: r })
+          })
+        }}
+        onNotHit={(s) => {
+          setActivePlannedSet(null)
+          requestAnimationFrame(() => startEdit(s))
+        }}
+        onDelete={(s) => {
+          setActivePlannedSet(null)
+          requestAnimationFrame(() => startDelete(s.id))
+        }}
+      />
     </StaticSafeAreaView>
-    </TouchableWithoutFeedback>
+  )
+}
+
+// Tap-to-act menu for a planned set. Hit logs at planned values, Not Hit
+// drops the top form into edit mode for the planned set, Delete removes it.
+function PlannedSetActionsModal({
+  set,
+  unit,
+  onClose,
+  onHit,
+  onNotHit,
+  onDelete,
+}: {
+  set: WorkoutSet | null
+  unit: "kg" | "lb"
+  onClose: () => void
+  onHit: (s: WorkoutSet) => void
+  onNotHit: (s: WorkoutSet) => void
+  onDelete: (s: WorkoutSet) => void
+}) {
+  const title =
+    set != null
+      ? `${formatWeight(set.weight ?? undefined, unit)} ${unit} × ${set.reps ?? "—"}`
+      : ""
+  return (
+    <PopupModal
+      visible={set != null}
+      title={title}
+      onClose={onClose}
+      animationType="fade"
+    >
+      <Pressable
+        onPress={() => set && onHit(set)}
+        style={({ pressed }) => [
+          styles.plannedActionBtn,
+          styles.plannedActionHit,
+          pressed && { opacity: 0.85 },
+        ]}
+      >
+        <Ionicons
+          name="checkmark"
+          size={16}
+          color={theme.colors.secondary}
+        />
+        <Text style={[styles.plannedActionLabel, { color: theme.colors.secondary }]}>
+          Hit
+        </Text>
+      </Pressable>
+      <Pressable
+        onPress={() => set && onNotHit(set)}
+        style={({ pressed }) => [
+          styles.plannedActionBtn,
+          styles.plannedActionNotHit,
+          pressed && { opacity: 0.85 },
+        ]}
+      >
+        <Ionicons
+          name="create-outline"
+          size={16}
+          color={theme.colors.foreground}
+        />
+        <Text style={[styles.plannedActionLabel, { color: theme.colors.foreground }]}>
+          Not hit
+        </Text>
+      </Pressable>
+      <Pressable
+        onPress={() => set && onDelete(set)}
+        style={({ pressed }) => [
+          styles.plannedActionBtn,
+          styles.plannedActionDelete,
+          pressed && { opacity: 0.85 },
+        ]}
+      >
+        <Ionicons
+          name="trash-outline"
+          size={16}
+          color={theme.colors.destructive}
+        />
+        <Text style={[styles.plannedActionLabel, { color: theme.colors.destructive }]}>
+          Delete
+        </Text>
+      </Pressable>
+    </PopupModal>
   )
 }
 
@@ -894,20 +1054,68 @@ function SubTabBar({ tab, onChange }: { tab: SubTab; onChange: (t: SubTab) => vo
   )
 }
 
+const HistoryDayCard = memo(function HistoryDayCard({
+  day,
+  onPressDate,
+}: {
+  day: ExerciseHistoryDay
+  onPressDate?: (date: string) => void
+}) {
+  return (
+    <View style={styles.dayCard}>
+      <View style={styles.dayCardHeader}>
+        <Text style={styles.dayDate}>{niceDate(day.date)}</Text>
+        {onPressDate && (
+          <Pressable
+            onPress={() => onPressDate(day.date)}
+            hitSlop={10}
+            unstable_pressDelay={0}
+            style={({ pressed }) => [
+              styles.dayCardCalBtn,
+              pressedStyle(pressed),
+            ]}
+          >
+            <Ionicons
+              name="calendar-outline"
+              size={16}
+              color={theme.colors.muted}
+            />
+          </Pressable>
+        )}
+      </View>
+      <SharedSetList sets={day.sets} />
+    </View>
+  )
+})
+
+const HistoryListHeader = () => (
+  <Text style={[styles.section, { marginBottom: theme.spacing[3] }]}>
+    Past sessions
+  </Text>
+)
+
+const HistoryItemSeparator = () => (
+  <View style={{ height: theme.spacing[3] }} />
+)
+
+/**
+ * Used by ExerciseDetailScreen, where this component sits *inside* a parent
+ * ScrollView and virtualization isn't practical. SetLoggerScreen renders
+ * `PastHistoryList` directly instead so the FlatList can be the scroll host.
+ */
 export function PastHistory({
   days,
   currentDate,
-  unit,
-  showOneRm,
-  showPositionPrs,
+  onPressDate,
 }: {
   days: ExerciseHistoryDay[]
   currentDate: string
-  unit: "kg" | "lb"
-  showOneRm: boolean
-  showPositionPrs: boolean
+  onPressDate?: (date: string) => void
 }) {
-  const past = days.filter((d) => d.date <= currentDate)
+  const past = useMemo(
+    () => days.filter((d) => d.date <= currentDate),
+    [days, currentDate]
+  )
   if (past.length === 0) {
     return (
       <View style={[styles.empty, { marginTop: theme.spacing[2] }]}>
@@ -919,87 +1127,150 @@ export function PastHistory({
     <View style={{ paddingVertical: theme.spacing[3], gap: theme.spacing[3] }}>
       <Text style={styles.section}>Past sessions</Text>
       {past.map((day) => (
-        <View key={day.date} style={styles.dayCard}>
-          <Text style={styles.dayDate}>{niceDate(day.date)}</Text>
-          {day.sets.map((s, i) => (
-            <View key={s.id} style={styles.pastSetRow}>
-              <View style={{ width: 28, alignItems: "flex-start" }}>
-                {s.is_pr || s.was_pr ? (
-                  <PrIcon historical={!s.is_pr && s.was_pr} />
-                ) : showPositionPrs && (s.is_position_pr || s.was_position_pr) ? (
-                  <PrIcon
-                    variant="position"
-                    position={i + 1}
-                    historical={!s.is_position_pr && s.was_position_pr}
-                  />
-                ) : null}
-              </View>
-              <Text style={styles.setIndex}>{i + 1}</Text>
-              <Text style={styles.setWeight}>
-                {formatWeight(s.weight, unit)}{" "}
-                <Text style={styles.setUnit}>{unit}</Text>
-              </Text>
-              <Text style={styles.setReps}>{s.reps ?? "—"}</Text>
-              {showOneRm && (
-                <Text style={styles.oneRm}>
-                  {formatWeight(s.estimated_one_rm, unit)} 1RM
-                </Text>
-              )}
-            </View>
-          ))}
-        </View>
+        <HistoryDayCard key={day.date} day={day} onPressDate={onPressDate} />
       ))}
     </View>
   )
 }
 
-function dayValueKg(day: ExerciseHistoryDay, metric: Metric): number {
+/**
+ * Virtualized variant of PastHistory. Acts as its own scroll host (FlatList)
+ * so off-screen day cards stay unmounted — keeps scrolling responsive on
+ * exercises with hundreds of past sessions.
+ */
+export function PastHistoryList({
+  days,
+  currentDate,
+  onPressDate,
+  contentContainerStyle,
+  style,
+}: {
+  days: ExerciseHistoryDay[]
+  currentDate: string
+  onPressDate?: (date: string) => void
+  contentContainerStyle?: any
+  style?: any
+}) {
+  const past = useMemo(
+    () => days.filter((d) => d.date <= currentDate),
+    [days, currentDate]
+  )
+  const renderItem = useCallback(
+    ({ item }: { item: ExerciseHistoryDay }) => (
+      <HistoryDayCard day={item} onPressDate={onPressDate} />
+    ),
+    [onPressDate]
+  )
+  const keyExtractor = useCallback(
+    (item: ExerciseHistoryDay) => item.date,
+    []
+  )
+  if (past.length === 0) {
+    return (
+      <View style={[styles.empty, { marginTop: theme.spacing[2] }]}>
+        <Text style={styles.emptyText}>No past workouts for this exercise yet.</Text>
+      </View>
+    )
+  }
+  return (
+    <FlatList
+      style={style}
+      contentContainerStyle={contentContainerStyle}
+      data={past}
+      keyExtractor={keyExtractor}
+      renderItem={renderItem}
+      ListHeaderComponent={HistoryListHeader}
+      ItemSeparatorComponent={HistoryItemSeparator}
+      initialNumToRender={8}
+      maxToRenderPerBatch={6}
+      windowSize={7}
+      removeClippedSubviews
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
+    />
+  )
+}
+
+function dayValueKg(
+  day: ExerciseHistoryDay,
+  metric: Metric,
+  setIndex: number
+): { value: number; reps: number } {
   const sets = day.sets.filter(
     (s): s is typeof s & { weight: number; reps: number } =>
       s.weight != null && s.reps != null
   )
-  if (!sets.length) return 0
+  if (!sets.length) return { value: 0, reps: 0 }
   switch (metric) {
-    case "one_rm":
-      return sets.reduce(
-        (m, s) => (s.estimated_one_rm > m ? s.estimated_one_rm : m),
-        0
+    case "one_rm": {
+      const best = sets.reduce((b, s) =>
+        s.estimated_one_rm > b.estimated_one_rm ? s : b
       )
-    case "heaviest":
-      return sets.reduce((m, s) => (s.weight > m ? s.weight : m), 0)
-    case "avg_weight":
-      return sets.reduce((sum, s) => sum + s.weight, 0) / sets.length
-    case "volume":
-      return sets.reduce((sum, s) => sum + s.weight * s.reps, 0)
+      return { value: best.estimated_one_rm, reps: best.reps }
+    }
+    case "heaviest": {
+      const best = sets.reduce((b, s) => (s.weight > b.weight ? s : b))
+      return { value: best.weight, reps: best.reps }
+    }
+    case "avg_weight": {
+      const totalReps = sets.reduce((sum, s) => sum + s.reps, 0)
+      return {
+        value: sets.reduce((sum, s) => sum + s.weight, 0) / sets.length,
+        reps: totalReps,
+      }
+    }
+    case "per_set": {
+      const target = sets[setIndex - 1]
+      if (!target) return { value: 0, reps: 0 }
+      return { value: target.weight, reps: target.reps }
+    }
   }
 }
 
 export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "kg" | "lb" }) {
-  const [metric, setMetric] = useState<Metric>("one_rm")
+  const [metric, setMetric] = useState<Metric>("per_set")
+  const [setIndex, setSetIndex] = useState<number>(1)
   const points = useMemo(
     () =>
       days
-        .map((d) => ({
-          date: d.date,
-          value: roundForDisplay(fromKg(dayValueKg(d, metric), unit), unit),
-        }))
+        .map((d) => {
+          const dv = dayValueKg(d, metric, setIndex)
+          return {
+            date: d.date,
+            value: roundForDisplay(fromKg(dv.value, unit), unit),
+            reps: dv.reps,
+          }
+        })
         .filter((p) => p.value > 0)
         .sort(
           (a, b) =>
             new Date(a.date + "T00:00:00").getTime() -
             new Date(b.date + "T00:00:00").getTime()
         ),
-    [days, metric, unit]
+    [days, metric, setIndex, unit]
   )
 
   const opt = METRIC_OPTIONS.find((m) => m.id === metric)!
+  const headerLabel =
+    metric === "heaviest"
+      ? "Heaviest set"
+      : metric === "per_set"
+        ? `${SET_INDEX_OPTIONS.find((s) => s.value === setIndex)!.label} set`
+        : opt.label
 
   if (points.length === 0) {
     return (
       <View style={styles.graphWrap}>
         <MetricSwitcher metric={metric} onChange={setMetric} />
+        {metric === "per_set" && (
+          <SetIndexSwitcher setIndex={setIndex} onChange={setSetIndex} />
+        )}
         <View style={[styles.empty, { marginTop: theme.spacing[2] }]}>
-          <Text style={styles.emptyText}>No data yet. Log a few sets and the chart will fill in.</Text>
+          <Text style={styles.emptyText}>
+            {metric === "per_set"
+              ? `No ${SET_INDEX_OPTIONS.find((s) => s.value === setIndex)!.label} sets logged yet.`
+              : "No data yet. Log a few sets and the chart will fill in."}
+          </Text>
         </View>
       </View>
     )
@@ -1011,27 +1282,13 @@ export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "
   const peak = Math.max(...values)
   const avg = values.reduce((sum, v) => sum + v, 0) / values.length
   const delta = latest.value - first.value
-  const screenWidth = Dimensions.get("window").width
-  const chartWidth = Math.max(screenWidth - theme.spacing[8], points.length * 58)
-  const chartData = points.map((p, i) => ({
-    value: p.value,
-    label: xLabelForPoint(p.date, i, points.length),
-    date: p.date,
-    labelTextStyle: {
-      color: theme.colors.muted,
-      fontSize: 10,
-      fontWeight: "600" as const,
-    },
-    dataPointColor: p.value === peak ? theme.colors.secondary : theme.colors.primary,
-    dataPointRadius: p.value === peak ? 4 : 3,
-  }))
 
   return (
     <View style={styles.graphWrap}>
       <View style={styles.chartCard}>
         <View style={styles.chartHeader}>
           <View>
-            <Text style={styles.chartEyebrow}>{opt.label}</Text>
+            <Text style={styles.chartEyebrow}>{headerLabel}</Text>
             <View style={styles.chartValueRow}>
               <Text style={styles.chartValue}>{fmtMetric(latest.value, metric)}</Text>
               <Text style={styles.chartUnit}>{unit}</Text>
@@ -1065,60 +1322,12 @@ export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "
           <Text style={styles.chartLegendText}>{niceDate(latest.date)}</Text>
         </View>
 
-        <LineChart
-          areaChart
-          curved
-          data={chartData}
-          width={chartWidth}
-          height={220}
-          spacing={58}
-          initialSpacing={18}
-          endSpacing={18}
-          thickness={2}
-          color={theme.colors.primary}
-          startFillColor={theme.colors.primary}
-          endFillColor={theme.colors.primary}
-          startOpacity={0.32}
-          endOpacity={0.02}
-          noOfSections={4}
-          yAxisColor="transparent"
-          xAxisColor="rgba(255,255,255,0.10)"
-          rulesColor="rgba(255,255,255,0.06)"
-          rulesType="solid"
-          yAxisTextStyle={{
-            color: theme.colors.muted,
-            fontSize: 10,
-            fontWeight: "600",
-          }}
-          hideDataPoints={false}
-          dataPointsColor={theme.colors.primary}
-          dataPointsRadius={3}
-          xAxisLabelsVerticalShift={4}
-          yAxisLabelWidth={42}
-          adjustToWidth={points.length <= 5}
-          scrollToEnd={points.length > 5}
-          pointerConfig={{
-            pointerStripColor: "rgba(255,255,255,0.22)",
-            pointerStripWidth: 1,
-            pointerColor: theme.colors.foreground,
-            radius: 5,
-            activatePointersInstantlyOnTouch: true,
-            persistPointer: true,
-            pointerLabelWidth: 110,
-            pointerLabelHeight: 48,
-            pointerLabelComponent: (items: any[]) => {
-              const item = items?.[0]
-              if (!item) return null
-              return (
-                <View style={styles.pointerLabel}>
-                  <Text style={styles.pointerValue}>
-                    {fmtMetric(item.value, metric)} {unit}
-                  </Text>
-                  <Text style={styles.pointerDate}>{niceDate(item.date)}</Text>
-                </View>
-              )
-            },
-          }}
+        <SvgLineChart
+          key={`${metric}-${setIndex}`}
+          points={points}
+          unit={unit}
+          metric={metric}
+          peak={peak}
         />
 
         <View style={styles.chartStats}>
@@ -1131,7 +1340,290 @@ export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "
       <View style={styles.metricPanel}>
         <Text style={styles.metricPanelLabel}>Metric</Text>
         <MetricSwitcher metric={metric} onChange={setMetric} />
+        {metric === "per_set" && (
+          <SetIndexSwitcher setIndex={setIndex} onChange={setSetIndex} />
+        )}
       </View>
+    </View>
+  )
+}
+
+type ChartPoint = { date: string; value: number; reps: number }
+
+function SvgLineChart({
+  points,
+  unit,
+  metric,
+  peak,
+}: {
+  points: ChartPoint[]
+  unit: "kg" | "lb"
+  metric: Metric
+  peak: number
+}) {
+  const POINT_SPACING = 58
+  const INITIAL = 18
+  const END = 18
+  const Y_AXIS_W = 42
+  const CANVAS_H = 220
+  const TOP_PAD = 12
+  const BOT_PAD = 24
+  const DRAW_H = CANVAS_H - TOP_PAD - BOT_PAD
+  const SECTIONS = 4
+
+  const screenWidth = Dimensions.get("window").width
+  const visibleW = screenWidth - theme.spacing[4] * 4 - Y_AXIS_W
+  const naturalW = INITIAL + Math.max(0, points.length - 1) * POINT_SPACING + END
+  const contentW = Math.max(visibleW, naturalW)
+
+  const values = points.map((p) => p.value)
+  const minVal = Math.min(...values)
+  const maxVal = Math.max(...values)
+  const rawSpan = Math.max(1, maxVal - minVal)
+  const roughStep = rawSpan / SECTIONS
+  const niceStep =
+    roughStep <= 5
+      ? 5
+      : roughStep <= 10
+        ? 10
+        : roughStep <= 25
+          ? 25
+          : roughStep <= 50
+            ? 50
+            : Math.ceil(roughStep / 100) * 100
+  const yMin = Math.max(0, Math.floor(minVal / niceStep) * niceStep)
+  const yMax = Math.ceil(maxVal / niceStep) * niceStep + (maxVal === minVal ? niceStep : 0)
+  const ySections = Math.max(1, Math.round((yMax - yMin) / niceStep))
+
+  const xFor = (i: number) => {
+    if (points.length === 1) return contentW / 2
+    return INITIAL + (i * (contentW - INITIAL - END)) / (points.length - 1)
+  }
+  const yFor = (v: number) =>
+    TOP_PAD + (1 - (v - yMin) / (yMax - yMin)) * DRAW_H
+
+  let linePath = ""
+  let areaPath = ""
+  points.forEach((p, i) => {
+    const x = xFor(i)
+    const y = yFor(p.value)
+    linePath += i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`
+    if (i === 0) areaPath += `M ${x} ${TOP_PAD + DRAW_H} L ${x} ${y}`
+    else areaPath += ` L ${x} ${y}`
+    if (i === points.length - 1) areaPath += ` L ${x} ${TOP_PAD + DRAW_H} Z`
+  })
+
+  const yTickValues: number[] = []
+  for (let s = 0; s <= ySections; s++) {
+    yTickValues.push(yMax - s * niceStep)
+  }
+
+  const labelIndices: number[] = []
+  const labelCount = Math.min(5, points.length)
+  for (let k = 0; k < labelCount; k++) {
+    const denom = Math.max(1, labelCount - 1)
+    labelIndices.push(Math.round((k * (points.length - 1)) / denom))
+  }
+  const [activeIdx, setActiveIdx] = useState<number | null>(
+    points.length > 0 ? points.length - 1 : null
+  )
+  const active = activeIdx != null ? points[activeIdx] : null
+  const initialScrollX = Math.max(0, contentW - visibleW)
+  const scrollRef = useRef<ScrollView>(null)
+  const userDraggingRef = useRef(false)
+  useEffect(() => {
+    const t = requestAnimationFrame(() => {
+      scrollRef.current?.scrollToEnd({ animated: false })
+    })
+    return () => cancelAnimationFrame(t)
+  }, [])
+
+  return (
+    <View style={{ flexDirection: "row" }}>
+      <View style={{ width: Y_AXIS_W, height: CANVAS_H }}>
+        <Svg width={Y_AXIS_W} height={CANVAS_H}>
+          {yTickValues.map((v, i) => (
+            <SvgText
+              key={i}
+              x={Y_AXIS_W - 6}
+              y={yFor(v) + 3}
+              fontSize={10}
+              fontWeight="600"
+              textAnchor="end"
+              fill={theme.colors.muted}
+            >
+              {fmtMetric(v, metric)}
+            </SvgText>
+          ))}
+        </Svg>
+      </View>
+
+      <ScrollView
+        ref={scrollRef}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ width: visibleW }}
+        contentOffset={{ x: initialScrollX, y: 0 }}
+        scrollEventThrottle={32}
+        onScrollBeginDrag={() => {
+          userDraggingRef.current = true
+        }}
+        onMomentumScrollEnd={() => {
+          userDraggingRef.current = false
+        }}
+        onScrollEndDrag={() => {
+          // If no momentum follows, ensure flag clears after a tick.
+          setTimeout(() => {
+            userDraggingRef.current = false
+          }, 50)
+        }}
+        onScroll={(e) => {
+          if (!userDraggingRef.current) return
+          const offsetX = e.nativeEvent.contentOffset.x
+          const centerX = offsetX + visibleW / 2
+          let closest = 0
+          let minDist = Infinity
+          for (let i = 0; i < points.length; i++) {
+            const d = Math.abs(xFor(i) - centerX)
+            if (d < minDist) {
+              minDist = d
+              closest = i
+            }
+          }
+          if (closest !== activeIdx) setActiveIdx(closest)
+        }}
+      >
+        <Pressable
+          onPress={() => setActiveIdx(null)}
+          style={{ width: contentW, height: CANVAS_H }}
+        >
+          <Svg width={contentW} height={CANVAS_H}>
+            <G>
+              {yTickValues.map((v, i) => (
+                <SvgLine
+                  key={i}
+                  x1={0}
+                  x2={contentW}
+                  y1={yFor(v)}
+                  y2={yFor(v)}
+                  stroke="rgba(255,255,255,0.06)"
+                  strokeWidth={1}
+                />
+              ))}
+            </G>
+            <SvgPath
+              d={areaPath}
+              fill={theme.colors.primary}
+              fillOpacity={0.18}
+            />
+            <SvgPath
+              d={linePath}
+              stroke={theme.colors.primary}
+              strokeWidth={2}
+              fill="none"
+            />
+            {points.map((p, i) => {
+              const isPeak = p.value === peak
+              const isActive = activeIdx === i
+              return (
+                <G key={i}>
+                  <Circle
+                    cx={xFor(i)}
+                    cy={yFor(p.value)}
+                    r={isActive ? 5 : isPeak ? 4 : 3}
+                    fill={isPeak ? theme.colors.secondary : theme.colors.primary}
+                  />
+                  <Circle
+                    cx={xFor(i)}
+                    cy={yFor(p.value)}
+                    r={22}
+                    fill="transparent"
+                    onPress={() => setActiveIdx(i)}
+                  />
+                </G>
+              )
+            })}
+            {labelIndices.map((i) => (
+              <SvgText
+                key={`xl-${i}`}
+                x={xFor(i)}
+                y={CANVAS_H - 6}
+                fontSize={10}
+                fontWeight="600"
+                textAnchor="middle"
+                fill={theme.colors.muted}
+              >
+                {shortDate(points[i].date)}
+              </SvgText>
+            ))}
+            {active && activeIdx != null && (
+              <SvgLine
+                x1={xFor(activeIdx)}
+                x2={xFor(activeIdx)}
+                y1={TOP_PAD}
+                y2={TOP_PAD + DRAW_H}
+                stroke="rgba(255,255,255,0.22)"
+                strokeWidth={1}
+              />
+            )}
+          </Svg>
+
+          {active && activeIdx != null && (
+            <View
+              pointerEvents="none"
+              style={[
+                styles.pointerLabel,
+                {
+                  position: "absolute",
+                  left: Math.min(
+                    Math.max(xFor(activeIdx) - 55, 4),
+                    contentW - 114
+                  ),
+                  top: Math.max(yFor(active.value) - 56, 4),
+                },
+              ]}
+            >
+              <Text style={styles.pointerValue}>
+                {fmtMetric(active.value, metric)} {unit}
+              </Text>
+              {active.reps > 0 && (
+                <Text style={styles.pointerDate}>× {active.reps} reps</Text>
+              )}
+            </View>
+          )}
+        </Pressable>
+      </ScrollView>
+    </View>
+  )
+}
+
+function SetIndexSwitcher({
+  setIndex,
+  onChange,
+}: {
+  setIndex: number
+  onChange: (n: number) => void
+}) {
+  return (
+    <View style={[styles.metricSwitcher, { marginTop: 8 }]}>
+      {SET_INDEX_OPTIONS.map((s) => {
+        const active = setIndex === s.value
+        return (
+          <Pressable
+            key={s.value}
+            onPress={() => onChange(s.value)}
+            style={({ pressed }) => [
+              styles.metricButton,
+              active && styles.metricButtonActive,
+              pressed && styles.metricButtonPressed,
+            ]}
+          >
+            <Text style={[styles.metricButtonText, active && styles.metricButtonTextActive]}>
+              {s.label}
+            </Text>
+          </Pressable>
+        )
+      })}
     </View>
   )
 }
@@ -1198,19 +1690,16 @@ function Stat({
   )
 }
 
-function fmtMetric(value: number, metric: Metric): string {
-  if (metric === "volume") return value.toFixed(0)
+function fmtMetric(value: number | undefined, _metric: Metric): string {
+  if (value == null || !Number.isFinite(value)) return "—"
   return value.toFixed(value % 1 === 0 ? 0 : 1)
 }
 
-function xLabelForPoint(date: string, index: number, count: number): string {
-  if (count === 1 || index === 0 || index === count - 1 || index === Math.floor(count / 2)) {
-    return new Date(date + "T00:00:00").toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-    })
-  }
-  return ""
+function shortDate(date: string): string {
+  return new Date(date + "T00:00:00").toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  })
 }
 
 export function SettingsPanel({ navigation }: { navigation: any }) {
@@ -1251,14 +1740,13 @@ const RECORD_COLORS = {
   sessionVolume: "#8b5cf6", // violet — total session
 } as const
 
-export function RecordsPanel({
+export const RecordsPanel = memo(function RecordsPanel({
   days,
   unit,
 }: {
   days: ExerciseHistoryDay[]
   unit: "kg" | "lb"
 }) {
-  // Compute records across all logged (non-planned) sets in history.
   const records = useMemo<RecordCard[]>(() => {
     let bestOneRmKg = 0
     let bestOneRmReps = 0
@@ -1332,6 +1820,36 @@ export function RecordsPanel({
     ]
   }, [days, unit])
 
+  // Best weight at each exact rep count 1..15. A row is "dominated" if some
+  // higher rep count has weight >= this row's weight (strictly better lift).
+  const repRecords = useMemo(() => {
+    const bestByReps = new Map<number, number>()
+    for (const day of days) {
+      for (const s of day.sets) {
+        if (s.weight == null || s.reps == null) continue
+        if (s.reps < 1 || s.reps > 15) continue
+        const cur = bestByReps.get(s.reps) ?? 0
+        if (s.weight > cur) bestByReps.set(s.reps, s.weight)
+      }
+    }
+    const rows: { reps: number; weightKg: number | null; dominated: boolean }[] = []
+    for (let r = 1; r <= 15; r++) {
+      const w = bestByReps.get(r) ?? null
+      let dominated = false
+      if (w != null) {
+        for (let r2 = r + 1; r2 <= 15; r2++) {
+          const w2 = bestByReps.get(r2)
+          if (w2 != null && w2 >= w) {
+            dominated = true
+            break
+          }
+        }
+      }
+      rows.push({ reps: r, weightKg: w, dominated })
+    }
+    return rows
+  }, [days])
+
   if (records.length === 0) {
     return (
       <View style={[styles.empty, { marginTop: theme.spacing[3] }]}>
@@ -1375,9 +1893,37 @@ export function RecordsPanel({
           </View>
         </View>
       ))}
+
+      <Text style={[styles.section, { marginTop: theme.spacing[2] }]}>
+        Best by reps
+      </Text>
+      <View style={styles.repPrTable}>
+        {repRecords.map((row, i) => {
+          const muted = row.weightKg == null || row.dominated
+          return (
+            <View
+              key={row.reps}
+              style={[
+                styles.repPrRow,
+                i < repRecords.length - 1 && styles.repPrRowDivider,
+                muted && styles.repPrRowMuted,
+              ]}
+            >
+              <Text style={[styles.repPrReps, muted && styles.repPrTextMuted]}>
+                {row.reps} {row.reps === 1 ? "rep" : "reps"}
+              </Text>
+              <Text style={[styles.repPrWeight, muted && styles.repPrTextMuted]}>
+                {row.weightKg != null
+                  ? `${formatWeight(row.weightKg, unit)} ${unit}`
+                  : "—"}
+              </Text>
+            </View>
+          )
+        })}
+      </View>
     </View>
   )
-}
+})
 
 function todayString(): string {
   const d = new Date()
@@ -1443,7 +1989,6 @@ function NumericField({
 function SetList({
   sets,
   unit,
-  canHit,
   showOneRm,
   showPositionPrs,
   selectedIds,
@@ -1452,14 +1997,13 @@ function SetList({
   skipFadeIds,
   onLongPress,
   onSelectToggle,
-  onHit,
+  onPlannedTap,
   onEdit,
   onAddNote,
   onDelete,
 }: {
   sets: WorkoutSet[]
   unit: "kg" | "lb"
-  canHit: boolean
   showOneRm: boolean
   showPositionPrs: boolean
   selectedIds: number[]
@@ -1474,7 +2018,7 @@ function SetList({
   skipFadeIds: Set<number>
   onLongPress: (s: WorkoutSet) => void
   onSelectToggle: (id: number) => void
-  onHit: (s: WorkoutSet) => void
+  onPlannedTap: (s: WorkoutSet) => void
   onEdit: (s: WorkoutSet) => void
   onAddNote: (s: WorkoutSet) => void
   onDelete: (s: WorkoutSet) => void
@@ -1565,7 +2109,11 @@ function SetList({
           <Pressable
             onLongPress={() => onLongPress(s)}
             onPress={() => {
-              if (selectionMode && !s.is_planned) onSelectToggle(s.id)
+              if (s.is_planned) {
+                onPlannedTap(s)
+                return
+              }
+              if (selectionMode) onSelectToggle(s.id)
             }}
             delayLongPress={350}
             // Cache the row's content as a hardware-backed texture so
@@ -1638,33 +2186,6 @@ function SetList({
               </View>
             )}
 
-            {canHit && s.is_planned && (
-              <View style={styles.plannedActionsRow}>
-                <Pressable
-                  onPress={() => onHit(s)}
-                  style={({ pressed }) => [
-                    styles.hitBtn,
-                    pressed && styles.actionPressed,
-                  ]}
-                >
-                  <Ionicons
-                    name="checkmark"
-                    size={14}
-                    color={theme.colors.secondary}
-                  />
-                  <Text style={styles.hitBtnText}>Hit</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => onDelete(s)}
-                  style={({ pressed }) => [
-                    styles.skipBtn,
-                    pressed && styles.actionPressed,
-                  ]}
-                >
-                  <Text style={styles.skipBtnText}>Skip</Text>
-                </Pressable>
-              </View>
-            )}
           </Pressable>
         )
 
@@ -1862,67 +2383,102 @@ function SetList({
   )
 }
 
-// Fixed centered popup for editing a set's note. No slide/fade animation —
-// the Modal opens and closes instantly so re-opens feel snappy. Save is
-// disabled when the trimmed draft equals the original (no-op).
+// Plain Animated.View overlay for editing a set's note. We stopped using
+// react-native-modal here because its keyboard handling caused the modal
+// to visibly track the keyboard for a frame on close. This is just an
+// absolute-positioned card with a tap-to-dismiss backdrop and a single
+// native-driven opacity animation — keyboard handling is whatever RN does
+// for any focused TextInput in normal layout, no library quirks.
+const NOTE_FADE_MS = 180
 function NoteEditorSheet({
   visible,
   original,
   draft,
   onChangeDraft,
-  onCancel,
+  onClose,
   onSave,
 }: {
   visible: boolean
   original: string
   draft: string
   onChangeDraft: (s: string) => void
-  onCancel: () => void
+  onClose: () => void
   onSave: () => void
 }) {
   const dirty = draft.trim() !== (original ?? "").trim()
+  const inputRef = useRef<TextInput | null>(null)
+  const opacity = useRef(new Animated.Value(0)).current
+  const [mounted, setMounted] = useState(visible)
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true)
+      // Focus after one frame so the keyboard rises against an already
+      // visible card (no focus-during-fade-in flash).
+      const f = requestAnimationFrame(() => inputRef.current?.focus())
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: NOTE_FADE_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start()
+      return () => cancelAnimationFrame(f)
+    }
+    Animated.timing(opacity, {
+      toValue: 0,
+      duration: NOTE_FADE_MS,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setMounted(false)
+    })
+  }, [visible, opacity])
+
+  function handleSave() {
+    if (!dirty) return
+    // Close first; the snapshot mutation is deferred past the fade so the
+    // set list behind doesn't re-render mid-animation when the new note
+    // bubble appears.
+    const save = onSave
+    onClose()
+    setTimeout(save, NOTE_FADE_MS + 40)
+  }
+
+  if (!mounted) return null
+
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onCancel}
+    <Animated.View
+      pointerEvents={visible ? "auto" : "none"}
+      style={[styles.noteOverlay, { opacity }]}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.notePopupRoot}
-      >
-        <Pressable style={styles.notePopupBackdrop} onPress={onCancel}>
-          {/* Stop the inner card from forwarding presses to the backdrop. */}
-          <Pressable onPress={() => {}} style={styles.notePopupCard}>
-            <Text style={styles.noteSheetTitle}>Note</Text>
-            <TextInput
-              value={draft}
-              onChangeText={onChangeDraft}
-              placeholder="Add a note for this set…"
-              placeholderTextColor={theme.colors.muted}
-              multiline
-              autoFocus
-              style={styles.noteSheetInput}
-            />
-            <View style={styles.noteSheetActions}>
-              <Button
-                label="Cancel"
-                variant="secondary"
-                onPress={onCancel}
-                style={{ flex: 1 }}
-              />
-              <Button
-                label="Save"
-                onPress={onSave}
-                disabled={!dirty}
-                style={{ flex: 1 }}
-              />
-            </View>
-          </Pressable>
-        </Pressable>
-      </KeyboardAvoidingView>
-    </Modal>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      <View style={styles.noteOverlayCard} pointerEvents="box-none">
+        <Text style={styles.noteOverlayTitle}>Note</Text>
+        <TextInput
+          ref={inputRef}
+          value={draft}
+          onChangeText={onChangeDraft}
+          placeholder="Add a note for this set…"
+          placeholderTextColor={theme.colors.muted}
+          multiline
+          style={styles.noteSheetInput}
+        />
+        <View style={styles.noteSheetActions}>
+          <Button
+            label="Cancel"
+            variant="secondary"
+            onPress={onClose}
+            style={{ flex: 1 }}
+          />
+          <Button
+            label="Save"
+            onPress={handleSave}
+            disabled={!dirty}
+            style={{ flex: 1 }}
+          />
+        </View>
+      </View>
+    </Animated.View>
   )
 }
 
@@ -2065,11 +2621,30 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: theme.colors.primary,
   },
-  plannedActionsRow: {
+  plannedActionBtn: {
     flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: 8,
-    marginTop: 6,
-    marginLeft: 40,
+    paddingVertical: 12,
+    borderRadius: theme.radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  plannedActionLabel: {
+    fontSize: theme.fontSize.md,
+    fontWeight: "700",
+  },
+  plannedActionHit: {
+    backgroundColor: "rgba(62,230,192,0.18)",
+    borderColor: "rgba(62,230,192,0.35)",
+  },
+  plannedActionNotHit: {
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  plannedActionDelete: {
+    backgroundColor: "rgba(239,68,68,0.14)",
+    borderColor: "rgba(239,68,68,0.32)",
   },
   setSwipeContainer: {
     backgroundColor: "transparent",
@@ -2114,27 +2689,6 @@ const styles = StyleSheet.create({
   setWeight: { flex: 1, color: theme.colors.foreground, fontSize: theme.fontSize.lg, fontWeight: "700", textAlign: "center" },
   setUnit: { color: theme.colors.muted, fontSize: 11, fontWeight: "400" },
   setReps: { width: 50, color: theme.colors.foreground, fontSize: theme.fontSize.lg, fontWeight: "700", textAlign: "right" },
-  hitBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: "rgba(62,230,192,0.18)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(62,230,192,0.35)",
-  },
-  hitBtnText: { color: theme.colors.secondary, fontWeight: "700", fontSize: theme.fontSize.xs },
-  skipBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: "rgba(255,255,255,0.05)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.08)",
-  },
-  skipBtnText: { color: theme.colors.muted, fontWeight: "700", fontSize: theme.fontSize.xs },
   setNoteLine: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -2150,28 +2704,23 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
     lineHeight: 16,
   },
-  notePopupRoot: {
-    flex: 1,
-  },
-  notePopupBackdrop: {
-    flex: 1,
+  noteOverlay: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.55)",
-    alignItems: "center",
-    justifyContent: "flex-start",
+    paddingTop: 80,
     paddingHorizontal: theme.spacing[4],
-    paddingTop: theme.spacing[10],
+    zIndex: 50,
+    elevation: 50,
   },
-  notePopupCard: {
-    width: "90%",
-    maxWidth: 360,
+  noteOverlayCard: {
     backgroundColor: theme.colors.card,
     borderRadius: theme.radius.lg,
-    borderWidth: 1,
     borderColor: theme.colors.border,
+    borderWidth: 1,
     padding: theme.spacing[4],
     gap: theme.spacing[3],
   },
-  noteSheetTitle: {
+  noteOverlayTitle: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.md,
     fontWeight: "800",
@@ -2201,7 +2750,6 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.md,
     fontWeight: "700",
   },
-  actionPressed: { opacity: 0.78 },
   // Sub-tab bar at the bottom of the SetLogger screen.
   subTabBar: {
     flexDirection: "row",
@@ -2243,17 +2791,27 @@ const styles = StyleSheet.create({
   },
   emptyText: { color: theme.colors.muted, fontSize: theme.fontSize.sm },
   dayCard: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.background,
+    borderColor: "rgba(255,255,255,0.18)",
+    borderWidth: 1,
     borderRadius: theme.radius.lg,
-    padding: theme.spacing[3],
-    gap: 4,
+    overflow: "hidden",
   },
-  dayDate: { color: theme.colors.foreground, fontWeight: "700", fontSize: theme.fontSize.sm },
-  pastSetRow: {
+  dayCardHeader: {
+    padding: theme.spacing[3],
+    borderBottomColor: "rgba(255,255,255,0.18)",
+    borderBottomWidth: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[3],
-    paddingVertical: 4,
+    justifyContent: "space-between",
+  },
+  dayDate: { color: theme.colors.foreground, fontWeight: "700", fontSize: theme.fontSize.base },
+  dayCardCalBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
   },
   oneRm: {
     color: theme.colors.muted,
@@ -2312,7 +2870,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     padding: theme.spacing[4],
-    overflow: "hidden",
   },
   chartHeader: {
     flexDirection: "row",
@@ -2375,6 +2932,17 @@ const styles = StyleSheet.create({
     color: theme.colors.muted,
     fontSize: 10,
     fontWeight: "700",
+  },
+  xAxisRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingTop: 6,
+    paddingHorizontal: 4,
+  },
+  xAxisLabel: {
+    color: theme.colors.muted,
+    fontSize: 10,
+    fontWeight: "600",
   },
   graphAxisLabel: {
     color: theme.colors.muted,
@@ -2520,6 +3088,43 @@ const styles = StyleSheet.create({
     color: theme.colors.muted,
     fontSize: theme.fontSize.sm,
     marginTop: 2,
+  },
+  repPrTable: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.radius.lg,
+    borderColor: "rgba(255,255,255,0.05)",
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  repPrRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+  },
+  repPrRowDivider: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.border,
+  },
+  repPrRowMuted: {
+    opacity: 0.4,
+  },
+  repPrReps: {
+    width: 72,
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  repPrWeight: {
+    flex: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.md,
+    fontWeight: "700",
+  },
+  repPrTextMuted: {
+    color: theme.colors.muted,
   },
   swipeDeleteText: {
     color: "#fff",

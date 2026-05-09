@@ -1,9 +1,6 @@
 import { useState } from "react"
 import {
   Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,6 +11,7 @@ import {
 import { Ionicons } from "@expo/vector-icons"
 import type { Category } from "@lift/core"
 import { Button } from "../components/Button"
+import { PopupModal } from "../components/PopupModal"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { theme } from "../theme/theme"
 import {
@@ -225,85 +223,70 @@ function CategoryEditorModal({
   const title = editor?.mode === "create" ? "New category" : "Edit category"
   const canSave = label.trim().length > 0
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onCancel}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
-      >
-        <Pressable style={styles.modalBackdrop} onPress={onCancel}>
-          <Pressable onPress={() => {}} style={styles.modalCard}>
-            <Text style={styles.modalTitle}>{title}</Text>
-            <TextInput
-              value={label}
-              onChangeText={setLabelDraft}
-              placeholder="Label"
-              placeholderTextColor={theme.colors.muted}
-              autoCapitalize="words"
-              autoCorrect={false}
-              autoFocus
-              style={styles.modalInput}
+    <PopupModal visible={visible} title={title} onClose={onCancel}>
+      <TextInput
+        value={label}
+        onChangeText={setLabelDraft}
+        placeholder="Label"
+        placeholderTextColor={theme.colors.muted}
+        autoCapitalize="words"
+        autoCorrect={false}
+        autoFocus
+        style={styles.modalInput}
+      />
+      <Text style={styles.paletteLabel}>Color</Text>
+      <View style={styles.palette}>
+        {COLOR_PALETTE.map((c) => {
+          const selected = c.toLowerCase() === color.toLowerCase()
+          return (
+            <Pressable
+              key={c}
+              onPress={() => setColorDraft(c)}
+              style={[
+                styles.paletteSwatch,
+                { backgroundColor: c },
+                selected && styles.paletteSwatchSelected,
+              ]}
             />
-            <Text style={styles.paletteLabel}>Color</Text>
-            <View style={styles.palette}>
-              {COLOR_PALETTE.map((c) => {
-                const selected = c.toLowerCase() === color.toLowerCase()
-                return (
-                  <Pressable
-                    key={c}
-                    onPress={() => setColorDraft(c)}
-                    style={[
-                      styles.paletteSwatch,
-                      { backgroundColor: c },
-                      selected && styles.paletteSwatchSelected,
-                    ]}
-                  />
-                )
-              })}
-            </View>
+          )
+        })}
+      </View>
 
-            <View style={styles.modalActions}>
-              <Button
-                label="Cancel"
-                variant="secondary"
-                onPress={onCancel}
-                style={{ flex: 1 }}
-              />
-              <Button
-                label="Save"
-                onPress={() => onSave(label, color)}
-                disabled={!canSave}
-                style={{ flex: 1 }}
-              />
-            </View>
-            {(canReset || canDelete) && (
-              <View style={styles.modalSecondaryActions}>
-                {canReset && (
-                  <Button
-                    label="Reset to default"
-                    variant="secondary"
-                    onPress={onReset}
-                    style={{ flex: 1 }}
-                  />
-                )}
-                {canDelete && (
-                  <Button
-                    label="Delete"
-                    variant="destructive"
-                    onPress={onDelete}
-                    style={{ flex: 1 }}
-                  />
-                )}
-              </View>
-            )}
-          </Pressable>
-        </Pressable>
-      </KeyboardAvoidingView>
-    </Modal>
+      <View style={styles.modalActions}>
+        <Button
+          label="Cancel"
+          variant="secondary"
+          onPress={onCancel}
+          style={{ flex: 1 }}
+        />
+        <Button
+          label="Save"
+          onPress={() => onSave(label, color)}
+          disabled={!canSave}
+          style={{ flex: 1 }}
+        />
+      </View>
+      {(canReset || canDelete) && (
+        <View style={styles.modalSecondaryActions}>
+          {canReset && (
+            <Button
+              label="Reset to default"
+              variant="secondary"
+              onPress={onReset}
+              style={{ flex: 1 }}
+            />
+          )}
+          {canDelete && (
+            <Button
+              label="Delete"
+              variant="destructive"
+              onPress={onDelete}
+              style={{ flex: 1 }}
+            />
+          )}
+        </View>
+      )}
+    </PopupModal>
   )
 }
 
@@ -363,27 +346,6 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     borderWidth: 1,
     borderColor: theme.colors.border,
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    justifyContent: "flex-start",
-    alignItems: "stretch",
-    paddingHorizontal: theme.spacing[4],
-    paddingTop: theme.spacing[10],
-  },
-  modalCard: {
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: theme.spacing[4],
-    gap: theme.spacing[3],
-  },
-  modalTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.md,
-    fontWeight: "800",
   },
   modalInput: {
     color: theme.colors.foreground,

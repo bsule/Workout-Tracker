@@ -207,6 +207,10 @@ export const localApi = {
     M.deleteGym(id)
     return Promise.resolve()
   },
+  renameGym(id: number, name: string): Promise<Gym | null> {
+    const row = M.renameGym(id, name)
+    return Promise.resolve(row ? { id: row.id, name: row.name } : null)
+  },
 
   // calendar
   getCalendar(year: number, month: number): Promise<CalendarMap> {
