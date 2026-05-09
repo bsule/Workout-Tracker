@@ -49,6 +49,7 @@ interface RawJsonSet {
   was_pr?: boolean
   note?: string | null
   order?: number
+  created_at?: string | null
 }
 
 interface RawJsonExerciseRef {
@@ -396,7 +397,10 @@ export async function importSnapshotJson(
           was_position_pr: false,
           note: (s.note ?? "").toString(),
           order,
-          created_at: nowIso(),
+          created_at:
+            typeof s.created_at === "string" && s.created_at
+              ? s.created_at
+              : nowIso(),
         })
         imported++
       }

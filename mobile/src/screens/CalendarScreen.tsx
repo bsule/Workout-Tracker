@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react"
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { InteractionManager, Pressable, ScrollView, StyleSheet, Text, View } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
+import { useFocusEffect } from "@react-navigation/native"
 import {
   getCalendarQ,
   getPlannedDatesQ,
@@ -66,6 +67,19 @@ export function CalendarScreen({ navigation, route }: any) {
 
   const { firstDayOfWeek } = useSettings()
   const snapshot = useStore((s) => s.snapshot)
+  // Defer the snapshot-walking queries (and DayWorkoutContent's own subscription)
+  // until the navigation animation into Calendar has settled. Without this, the
+  // back-pop from ExerciseDetail + MainTabs unfreezing + three heavy queries all
+  // land on one JS frame and the user perceives a freeze. Re-arm on every focus
+  // because Calendar is `lazy: false` and stays mounted for the app's lifetime.
+  const [dataReady, setDataReady] = useState(false)
+  useFocusEffect(
+    useCallback(() => {
+      setDataReady(false)
+      const handle = InteractionManager.runAfterInteractions(() => setDataReady(true))
+      return () => handle.cancel()
+    }, [])
+  )
   const cells = useMemo(
     () => buildMonthGrid(year, month, firstDayOfWeek),
     [year, month, firstDayOfWeek]
@@ -73,16 +87,16 @@ export function CalendarScreen({ navigation, route }: any) {
   const weekdayLabels =
     firstDayOfWeek === 1 ? WEEKDAY_LABELS_MONDAY : WEEKDAY_LABELS_SUNDAY
   const calendar = useMemo(
-    () => getCalendarQ(year, month),
-    [snapshot, year, month]
+    () => (dataReady ? getCalendarQ(year, month) : {}),
+    [snapshot, year, month, dataReady]
   )
   const plannedDates = useMemo(
-    () => new Set(getPlannedDatesQ(year, month)),
-    [snapshot, year, month]
+    () => (dataReady ? new Set(getPlannedDatesQ(year, month)) : new Set<string>()),
+    [snapshot, year, month, dataReady]
   )
   const selectedGym = useMemo(
-    () => getWorkoutByDateQ(selectedDate)?.gym?.trim() || null,
-    [snapshot, selectedDate]
+    () => (dataReady ? getWorkoutByDateQ(selectedDate)?.gym?.trim() || null : null),
+    [snapshot, selectedDate, dataReady]
   )
 
   const todayKey = todayString()
@@ -196,10 +210,12 @@ export function CalendarScreen({ navigation, route }: any) {
               />
             </Pressable>
           </View>
-          <DayWorkoutContent
-            date={selectedDate}
-            onPressExercise={openSetLogger}
-          />
+          {dataReady && (
+            <DayWorkoutContent
+              date={selectedDate}
+              onPressExercise={openSetLogger}
+            />
+          )}
         </View>
       </ScrollView>
     </StaticSafeAreaView>

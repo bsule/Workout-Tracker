@@ -64,6 +64,16 @@ import { useSettings, useWeightUnit } from "../settings/SettingsProvider"
 
 type SubTab = "workout" | "history" | "graph" | "records" | "settings"
 
+function formatRest(prevIso: string | null | undefined, curIso: string): string | null {
+  if (!prevIso) return null
+  const diff = (Date.parse(curIso) - Date.parse(prevIso)) / 1000
+  if (!Number.isFinite(diff) || diff <= 30) return null
+  if (diff < 60) return `${Math.round(diff)}s`
+  const m = Math.floor(diff / 60)
+  const s = Math.round(diff % 60)
+  return s === 0 ? `${m}m` : `${m}m ${s}s`
+}
+
 // Enable LayoutAnimation on Android (iOS has it on by default).
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true)
@@ -132,6 +142,67 @@ const FORM_PLACEHOLDER_STYLE = {
 // `skipFade`: mounts at full opacity instead of fading in. Used when a real
 //   row is replacing an optimistic placeholder — the placeholder already
 //   showed the fade, so the real row should appear seamlessly.
+function IndexCol({
+  display,
+  isPr,
+  restLabel,
+}: {
+  display: string | number
+  isPr: boolean
+  restLabel: string | null
+}) {
+  const hasLabel = !!restLabel
+  const progress = useRef(new Animated.Value(hasLabel ? 0 : 1)).current
+  // Mount-once animation: when the rest label is present at first paint,
+  // ease the index up and fade the label in beneath it. Re-runs only if a
+  // row that started without a label gains one (rare, but cheap to handle).
+  useEffect(() => {
+    if (!hasLabel) {
+      progress.setValue(1)
+      return
+    }
+    progress.setValue(0)
+    Animated.timing(progress, {
+      toValue: 1,
+      duration: 260,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start()
+  }, [hasLabel, progress])
+  if (!hasLabel) {
+    return (
+      <View style={styles.setIndexCol}>
+        <Text style={[styles.setIndex, isPr && { color: "#e0c050" }]}>
+          {display}
+        </Text>
+      </View>
+    )
+  }
+  const indexY = progress.interpolate({ inputRange: [0, 1], outputRange: [6, 0] })
+  const labelY = progress.interpolate({ inputRange: [0, 1], outputRange: [-3, 0] })
+  return (
+    <View style={styles.setIndexCol}>
+      <Animated.Text
+        style={[
+          styles.setIndex,
+          isPr && { color: "#e0c050" },
+          { transform: [{ translateY: indexY }] },
+        ]}
+      >
+        {display}
+      </Animated.Text>
+      <Animated.Text
+        style={[
+          styles.setRestLabel,
+          { opacity: progress, transform: [{ translateY: labelY }] },
+        ]}
+      >
+        {restLabel}
+      </Animated.Text>
+    </View>
+  )
+}
+
 function SetRowFade({
   children,
   leaving,
@@ -256,7 +327,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
   const weId = resolved?.weId ?? -1
   const unit = useWeightUnit()
   const step = defaultStep(unit)
-  const { showOneRm, showPositionPrs } = useSettings()
+  const { showOneRm, showPositionPrs, showRestTime } = useSettings()
   const [tab, setTab] = useState<SubTab>("workout")
 
   const snapshot = useStore((s) => s.snapshot)
@@ -322,6 +393,21 @@ export function SetLoggerScreen({ route, navigation }: any) {
     return getExerciseHistoryQ(exerciseId)
   }, [snapshot, exerciseId, needsHistory])
 
+  const prevWorkoutLastSetIso = useMemo<string | null>(() => {
+    if (!showRestTime || !workout || we == null) return null
+    let latest: string | null = null
+    for (const otherWe of workout.exercises) {
+      if (otherWe.id === we.id) continue
+      for (const s of otherWe.sets) {
+        if (s.is_planned) continue
+        if (latest === null || Date.parse(s.created_at) > Date.parse(latest)) {
+          latest = s.created_at
+        }
+      }
+    }
+    return latest
+  }, [workout, we, showRestTime])
+
   const nextPlanned = !isPlanned ? sets.find((s) => s.is_planned) ?? null : null
   const lastSet = sets.length ? sets[sets.length - 1] : null
   const seed = nextPlanned ?? lastSet
@@ -334,6 +420,15 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // When non-null, Save updates this set instead of adding a new one. Set
   // by the row's swipe-Edit action, or by "Not Hit" on a planned set.
   const [editingSetId, setEditingSetId] = useState<number | null>(null)
+  // Rest-time editing (only meaningful while editingSetId is set and the
+  // user has rest-time display enabled). `editingRestAnchorIso` is the
+  // previous-anchor used to compute rest; null means there's nothing to
+  // anchor on (set 1 of the first exercise of the day) and the field is
+  // hidden. `editingOriginalRestSec` lets save() skip the timestamp patch
+  // when the user didn't touch the field.
+  const [restSec, setRestSec] = useState<number>(0)
+  const [editingRestAnchorIso, setEditingRestAnchorIso] = useState<string | null>(null)
+  const [editingOriginalRestSec, setEditingOriginalRestSec] = useState<number>(0)
   // When non-null, the planned-set actions modal is open for this set.
   const [activePlannedSet, setActivePlannedSet] = useState<WorkoutSet | null>(
     null
@@ -500,12 +595,26 @@ export function SetLoggerScreen({ route, navigation }: any) {
     setEditingSetId(s.id)
     setWeight(roundForDisplay(fromKg(s.weight ?? 0, unit), unit))
     setReps(s.reps ?? 0)
+    // Rest anchor: the most recent non-planned set before this one in the
+    // current exercise, falling back to the prior-exercise iso passed in.
+    let anchor: string | null = prevWorkoutLastSetIso
+    for (const other of sets) {
+      if (other.id === s.id) break
+      if (!other.is_planned) anchor = other.created_at
+    }
+    setEditingRestAnchorIso(anchor)
+    const computed = anchor
+      ? Math.max(0, Math.round((Date.parse(s.created_at) - Date.parse(anchor)) / 1000))
+      : 0
+    setRestSec(computed)
+    setEditingOriginalRestSec(computed)
     setError(null)
     setTab("workout")
   }
 
   function cancelEdit() {
     setEditingSetId(null)
+    setEditingRestAnchorIso(null)
     setError(null)
   }
 
@@ -553,8 +662,12 @@ export function SetLoggerScreen({ route, navigation }: any) {
 
   function save() {
     setError(null)
-    if (weight <= 0 || reps <= 0) {
-      setError("Weight and reps must be greater than zero.")
+    if (reps <= 0) {
+      setError("Add at least 1 rep to log this set.")
+      return
+    }
+    if (weight < 0) {
+      setError("Weight can’t be negative.")
       return
     }
     try {
@@ -573,12 +686,25 @@ export function SetLoggerScreen({ route, navigation }: any) {
         // Editing a planned set via "Not Hit" logs it (flips is_planned to
         // false) with the new values in a single mutation.
         const editingPlanned = sets.find((s) => s.id === id)?.is_planned === true
+        // If the user changed the rest field, recompute this set's
+        // created_at as anchor + restSec. Skipped when there's no anchor or
+        // the value is unchanged.
+        const anchor = editingRestAnchorIso
+        const restChanged = anchor != null && restSec !== editingOriginalRestSec
+        const newCreatedAt = restChanged && anchor
+          ? new Date(Date.parse(anchor) + restSec * 1000).toISOString()
+          : null
         setEditingSetId(null)
+        setEditingRestAnchorIso(null)
         requestAnimationFrame(() => {
           if (editingPlanned) {
             logPlannedSet(id, { weight: w, reps: r })
           } else {
-            api.updateSet(id, { weight: w, reps: r })
+            api.updateSet(id, {
+              weight: w,
+              reps: r,
+              ...(newCreatedAt ? { created_at: newCreatedAt } : {}),
+            })
           }
         })
       } else if (isPlanned) {
@@ -743,6 +869,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
               step={step}
               min={0}
               onChange={setWeight}
+              allowDecimal
             />
             <NumericField
               label="Reps"
@@ -751,6 +878,15 @@ export function SetLoggerScreen({ route, navigation }: any) {
               min={0}
               onChange={setReps}
             />
+            {editingSetId != null && showRestTime && editingRestAnchorIso != null && (
+              <NumericField
+                label="Rest (sec)"
+                value={restSec}
+                step={5}
+                min={0}
+                onChange={setRestSec}
+              />
+            )}
             {error && <Text style={styles.error}>{error}</Text>}
             <View style={{ flexDirection: "row", gap: 12 }}>
               <PhaseButton
@@ -802,6 +938,8 @@ export function SetLoggerScreen({ route, navigation }: any) {
               unit={unit}
               showOneRm={showOneRm}
               showPositionPrs={showPositionPrs}
+              showRestTime={showRestTime}
+              prevWorkoutLastSetIso={prevWorkoutLastSetIso}
               selectedIds={selectedIds}
               pendingAdd={pendingAdd}
               leavingIds={leavingIds}
@@ -1947,6 +2085,7 @@ function NumericField({
   step,
   min,
   onChange,
+  allowDecimal = false,
 }: {
   label: string
   unit?: string
@@ -1954,7 +2093,20 @@ function NumericField({
   step: number
   min: number
   onChange: (v: number) => void
+  allowDecimal?: boolean
 }) {
+  // Local text state so intermediate input like "1." doesn't get clobbered
+  // by a re-render (which would format value back to "1" and drop the dot).
+  // We only resync from `value` when it differs from what the current text
+  // parses to — that's the "external change" path (+/-, edit-mode load).
+  const [text, setText] = useState<string>(String(value))
+  useEffect(() => {
+    const parsed = Number(text)
+    if (!Number.isFinite(parsed) || parsed !== value) {
+      setText(String(value))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value])
   return (
     <View style={{ gap: 8 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -1969,12 +2121,14 @@ function NumericField({
           <Text style={styles.stepBtnText}>−</Text>
         </Pressable>
         <TextInput
-          value={String(value)}
+          value={text}
           onChangeText={(t) => {
-            const n = Number(t.replace(/[^0-9.\-]/g, ""))
-            onChange(Number.isFinite(n) ? n : 0)
+            const cleaned = t.replace(allowDecimal ? /[^0-9.]/g : /[^0-9]/g, "")
+            setText(cleaned)
+            const n = Number(cleaned)
+            if (Number.isFinite(n)) onChange(n)
           }}
-          keyboardType="numeric"
+          keyboardType={allowDecimal ? "decimal-pad" : "number-pad"}
           selectTextOnFocus
           style={styles.numericInput}
         />
@@ -1991,6 +2145,8 @@ function SetList({
   unit,
   showOneRm,
   showPositionPrs,
+  showRestTime,
+  prevWorkoutLastSetIso,
   selectedIds,
   pendingAdd,
   leavingIds,
@@ -2006,6 +2162,8 @@ function SetList({
   unit: "kg" | "lb"
   showOneRm: boolean
   showPositionPrs: boolean
+  showRestTime: boolean
+  prevWorkoutLastSetIso: string | null
   selectedIds: number[]
   pendingAdd: {
     weight: number
@@ -2049,13 +2207,21 @@ function SetList({
       </View>
     )
   }
-  // Compute the heaviest 1RM among logged sets so we can subtly highlight
-  // the row whose effort was the strongest of the session.
-  const sessionTopOneRm = sets.reduce(
-    (m, s) =>
-      !s.is_planned ? Math.max(m, estimateOneRm(s.weight, s.reps)) : m,
-    0
-  )
+// Per-row rest labels. Anchor on the most recent prior *logged* set:
+  // planned rows have synthetic created_at and shouldn't anchor real rest.
+  // Set 1's rest comes from the last set of the previous workout.
+  const restLabels: (string | null)[] = []
+  {
+    let lastRealIso: string | null = prevWorkoutLastSetIso
+    for (const s of sets) {
+      if (s.is_planned) {
+        restLabels.push(null)
+      } else {
+        restLabels.push(formatRest(lastRealIso, s.created_at))
+        lastRealIso = s.created_at
+      }
+    }
+  }
 
   // Keep the placeholder visible the entire time `pendingAdd` is set —
   // including the held-open window (~240ms) after the real row arrives.
@@ -2094,8 +2260,6 @@ function SetList({
         const isPosPr = !s.is_pr && !s.was_pr && !!s.is_position_pr
         const wasPosPr =
           !s.is_pr && !s.was_pr && !s.is_position_pr && !!s.was_position_pr
-        const isTopOfSession =
-          !s.is_planned && oneRm > 0 && oneRm === sessionTopOneRm
         const isLast = i === sets.length - 1
         const leaving = leavingIds?.has(s.id) ?? false
         // `isNewlyAdded` (computed above) means the placeholder was just
@@ -2141,18 +2305,15 @@ function SetList({
                   <PrIcon historical={wasPr} />
                 ) : !s.is_planned && showPositionPrs && (isPosPr || wasPosPr) ? (
                   <PrIcon variant="position" position={i + 1} historical={wasPosPr} />
-                ) : !s.is_planned && isTopOfSession ? (
-                  <View style={styles.topDot} />
                 ) : null}
               </View>
-              <Text
-                style={[
-                  styles.setIndex,
-                  isPr && { color: "#e0c050" },
-                ]}
-              >
-                {isSelected ? "✓" : i + 1}
-              </Text>
+              <IndexCol
+                display={isSelected ? "✓" : i + 1}
+                isPr={isPr}
+                restLabel={
+                  showRestTime && !s.is_planned ? restLabels[i] : null
+                }
+              />
               <Text
                 style={[styles.setWeight, s.is_planned && styles.dimText]}
               >
@@ -2360,7 +2521,9 @@ function SetList({
           <Pressable style={styles.setRow} disabled>
             <View style={styles.setRowContent}>
               <View style={{ width: 28, alignItems: "flex-start" }} />
-              <Text style={styles.setIndex}>{pendingAdd.baseLen + 1}</Text>
+              <View style={styles.setIndexCol}>
+                <Text style={styles.setIndex}>{pendingAdd.baseLen + 1}</Text>
+              </View>
               <Text style={styles.setWeight}>
                 {formatWeight(pendingAdd.weight, unit)}{" "}
                 <Text style={styles.setUnit}>{unit}</Text>
@@ -2615,12 +2778,6 @@ const styles = StyleSheet.create({
     color: theme.colors.muted,
     fontStyle: "italic",
   },
-  topDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: theme.colors.primary,
-  },
   plannedActionBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -2686,6 +2843,8 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.92 }],
   },
   setIndex: { width: 24, color: theme.colors.muted, fontSize: theme.fontSize.base, fontWeight: "700" },
+  setIndexCol: { width: 36, alignItems: "flex-start", justifyContent: "center" },
+  setRestLabel: { color: theme.colors.muted, fontSize: 9, fontWeight: "500", marginTop: 1 },
   setWeight: { flex: 1, color: theme.colors.foreground, fontSize: theme.fontSize.lg, fontWeight: "700", textAlign: "center" },
   setUnit: { color: theme.colors.muted, fontSize: 11, fontWeight: "400" },
   setReps: { width: 50, color: theme.colors.foreground, fontSize: theme.fontSize.lg, fontWeight: "700", textAlign: "right" },
