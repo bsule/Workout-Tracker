@@ -184,7 +184,7 @@ export const localApi = {
   },
   updateSet(
     setId: number,
-    patch: { weight?: number; reps?: number; note?: string }
+    patch: { weight?: number; reps?: number; note?: string; created_at?: string }
   ): Promise<WorkoutSet> {
     const row = M.updateSet(setId, patch)
     if (!row) return Promise.reject(new Error("Set not found"))

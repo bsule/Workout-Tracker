@@ -7,6 +7,7 @@ interface SettingsValue {
   firstDayOfWeek: 0 | 1
   showOneRm: boolean
   showPositionPrs: boolean
+  showRestTime: boolean
 }
 
 const Ctx = createContext<SettingsValue | null>(null)
@@ -19,12 +20,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       firstDayOfWeek: settings.first_day_of_week,
       showOneRm: !!settings.show_one_rm,
       showPositionPrs: settings.show_position_prs ?? true,
+      showRestTime: settings.show_rest_time ?? true,
     }),
     [
       settings.weight_unit,
       settings.first_day_of_week,
       settings.show_one_rm,
       settings.show_position_prs,
+      settings.show_rest_time,
     ]
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

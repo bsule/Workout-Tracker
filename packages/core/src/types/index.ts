@@ -112,6 +112,9 @@ export interface UserSettings {
    *  for sets that are PRs at their set position. When false, only overall
    *  exercise PRs render. */
   show_position_prs?: boolean
+  /** Optional UI flag: when true (default), the log-set page shows time
+   *  rested between sets next to each set number. */
+  show_rest_time?: boolean
 }
 
 export interface User {

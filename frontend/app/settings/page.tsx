@@ -229,6 +229,15 @@ function DisplaySection() {
     } finally { setBusy(null) }
   }
 
+  async function changeRestTime(v: string) {
+    setBusy("rest"); setError(null)
+    try {
+      await update({ show_rest_time: v === "1" })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed.")
+    } finally { setBusy(null) }
+  }
+
   return (
     <Section title="Display" description="Affects how weights, the calendar, and colors look across the app.">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -293,6 +302,18 @@ function DisplaySection() {
             ]}
           />
           {busy === "posprs" && <p className="mt-1 text-xs text-muted-foreground">Saving…</p>}
+        </div>
+        <div>
+          <FieldLabel>Rest time between sets</FieldLabel>
+          <Dropdown
+            value={(settings.show_rest_time ?? true) ? "1" : "0"}
+            onChange={changeRestTime}
+            options={[
+              { value: "1", label: "Show next to set number" },
+              { value: "0", label: "Hide" },
+            ]}
+          />
+          {busy === "rest" && <p className="mt-1 text-xs text-muted-foreground">Saving…</p>}
         </div>
       </div>
       {error && <StatusLine kind="error" msg={error} />}
