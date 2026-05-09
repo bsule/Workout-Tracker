@@ -187,7 +187,20 @@ export function RootNavigator() {
       <Stack.Navigator screenOptions={stackScreenOptions}>
         {user ? (
           <>
-            <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
+            <Stack.Screen
+              name="Main"
+              component={MainTabs}
+              // freezeOnBlur suspends the entire MainTabs subtree (every
+              // pre-mounted bottom tab — DayScreen, ExercisesScreen,
+              // CalendarScreen, SettingsScreen) while a pushed stack screen
+              // like SetLogger is on top. Without this, every snapshot
+              // mutation made on SetLogger fans out to listExercisesQ in
+              // ExercisesScreen, getCalendarQ in CalendarScreen, etc., even
+              // though none of them are visible — adding noticeable lag to
+              // SetLogger's first-paint settle. Frozen tabs unfreeze and
+              // re-render once when the user navigates back.
+              options={{ headerShown: false, freezeOnBlur: true }}
+            />
             <Stack.Screen
               name="ExerciseDetail"
               component={ExerciseDetailScreen}
@@ -201,9 +214,10 @@ export function RootNavigator() {
             <Stack.Screen
               name="ExercisePicker"
               component={ExercisePickerScreen}
-              // Pushed (not modal) so the picker → SetLogger transition is
-              // a single right-to-left slide via navigation.replace, instead
-              // of the modal-dismiss + push double animation that flickered.
+              // Standard right-to-left push. Using the native default keeps the
+              // picker → SetLogger transition (via navigation.replace) as a
+              // single continuous slide, and avoids the slower bottom-sheet
+              // feel of `slide_from_bottom`.
               options={{ headerShown: false }}
             />
             <Stack.Screen

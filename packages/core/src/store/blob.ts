@@ -25,14 +25,19 @@ export async function serialize(snap: Snapshot): Promise<Uint8Array> {
   return gzip(bytes)
 }
 
-export async function parse(bytes: Uint8Array): Promise<Snapshot> {
+export interface ParseResult {
+  snapshot: Snapshot
+  migrated: boolean
+}
+
+export async function parse(bytes: Uint8Array): Promise<ParseResult> {
   const raw = await gunzip(bytes)
   const json = new TextDecoder().decode(raw)
   const obj = JSON.parse(json) as Snapshot
   return migrate(obj)
 }
 
-function migrate(snap: Snapshot): Snapshot {
+function migrate(snap: Snapshot): ParseResult {
   const v = snap.schema_version ?? 0
   if (v > SCHEMA_VERSION) {
     throw new Error(
@@ -59,5 +64,18 @@ function migrate(snap: Snapshot): Snapshot {
       })),
     }
   }
-  return { ...s, schema_version: SCHEMA_VERSION }
+  if (v < 4) {
+    s = {
+      ...s,
+      sets: s.sets.map((row) => ({
+        ...row,
+        is_position_pr: row.is_position_pr ?? false,
+        was_position_pr: row.was_position_pr ?? false,
+      })),
+    }
+  }
+  return {
+    snapshot: { ...s, schema_version: SCHEMA_VERSION },
+    migrated: v < SCHEMA_VERSION,
+  }
 }

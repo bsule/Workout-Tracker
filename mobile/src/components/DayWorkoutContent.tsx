@@ -1,7 +1,6 @@
 import { useMemo } from "react"
 import { Pressable, StyleSheet, Text, View } from "react-native"
 import {
-  formatWeight,
   getWorkoutByDateQ,
   startPlannedWorkout,
   useStore,
@@ -9,10 +8,9 @@ import {
 import type { WorkoutExercise } from "@lift/core"
 import { Button } from "./Button"
 import { CategoryBadge } from "./CategoryBadge"
-import { PrIcon } from "./PrIcon"
+import { SetList } from "./SetList"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
-import { useWeightUnit } from "../settings/SettingsProvider"
 
 function todayString(): string {
   const d = new Date()
@@ -25,11 +23,9 @@ function pad(n: number) {
 interface Props {
   date: string
   onPressExercise: (workoutId: number, weId: number) => void
-  /** When true, render a more compact layout (used inside the Calendar tab). */
-  compact?: boolean
 }
 
-export function DayWorkoutContent({ date, onPressExercise, compact }: Props) {
+export function DayWorkoutContent({ date, onPressExercise }: Props) {
   const snapshot = useStore((s) => s.snapshot)
   const workout = useMemo(() => getWorkoutByDateQ(date), [snapshot, date])
 
@@ -73,7 +69,6 @@ export function DayWorkoutContent({ date, onPressExercise, compact }: Props) {
             <ExerciseRow
               key={we.id}
               we={we}
-              compact={compact}
               onPress={() => onPressExercise(workout.id, we.id)}
             />
           ))}
@@ -86,13 +81,10 @@ export function DayWorkoutContent({ date, onPressExercise, compact }: Props) {
 function ExerciseRow({
   we,
   onPress,
-  compact,
 }: {
   we: WorkoutExercise
   onPress: () => void
-  compact?: boolean
 }) {
-  const unit = useWeightUnit()
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.exerciseCard, pressedStyle(pressed)]}>
       <View style={styles.exerciseHeader}>
@@ -102,36 +94,7 @@ function ExerciseRow({
       {we.sets.length === 0 ? (
         <Text style={styles.addFirst}>+ Add first set</Text>
       ) : (
-        <View style={{ gap: 4, paddingVertical: compact ? 4 : 8 }}>
-          {we.sets.map((s, i) => (
-            <View key={s.id} style={[styles.setRow, s.is_planned && { opacity: 0.6 }]}>
-              <View style={styles.setIcon}>
-                {s.is_planned ? (
-                  <View style={styles.plannedDot} />
-                ) : s.is_pr || s.was_pr ? (
-                  <PrIcon historical={!s.is_pr && s.was_pr} />
-                ) : null}
-              </View>
-              <Text style={styles.setIndex}>{i + 1}</Text>
-              <Text
-                style={[
-                  styles.setWeight,
-                  s.is_planned && { fontStyle: "italic", color: theme.colors.muted },
-                ]}
-              >
-                {formatWeight(s.weight, unit)} <Text style={styles.setUnit}>{unit}</Text>
-              </Text>
-              <Text
-                style={[
-                  styles.setReps,
-                  s.is_planned && { fontStyle: "italic", color: theme.colors.muted },
-                ]}
-              >
-                {s.reps ?? "—"}
-              </Text>
-            </View>
-          ))}
-        </View>
+        <SetList sets={we.sets} />
       )}
     </Pressable>
   )
@@ -166,8 +129,8 @@ const styles = StyleSheet.create({
   bannerTitle: { color: theme.colors.foreground, fontWeight: "700", fontSize: theme.fontSize.sm },
   bannerSub: { color: theme.colors.muted, fontSize: theme.fontSize.xs },
   exerciseCard: {
-    backgroundColor: theme.colors.card,
-    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    borderColor: "rgba(255,255,255,0.25)",
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     overflow: "hidden",
@@ -177,49 +140,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: theme.spacing[2],
     padding: theme.spacing[3],
-    backgroundColor: "rgba(255,255,255,0.02)",
-    borderBottomColor: theme.colors.border,
+    backgroundColor: "transparent",
+    borderBottomColor: "rgba(255,255,255,0.25)",
     borderBottomWidth: 1,
   },
   exerciseName: { color: theme.colors.foreground, fontSize: theme.fontSize.base, fontWeight: "700" },
   addFirst: { color: theme.colors.primary, padding: theme.spacing[4], fontSize: theme.fontSize.sm },
-  setRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: 8,
-    gap: theme.spacing[3],
-    borderBottomColor: "rgba(255,255,255,0.05)",
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  setIcon: { width: 28, alignItems: "flex-start" },
-  plannedDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    borderColor: theme.colors.primary,
-    borderStyle: "dashed",
-    borderWidth: 1.5,
-  },
-  setIndex: {
-    width: 24,
-    color: theme.colors.muted,
-    fontSize: theme.fontSize.sm,
-    fontWeight: "600",
-  },
-  setWeight: {
-    flex: 1,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  setUnit: { color: theme.colors.muted, fontSize: 11, fontWeight: "400" },
-  setReps: {
-    width: 50,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: "700",
-    textAlign: "right",
-  },
 })

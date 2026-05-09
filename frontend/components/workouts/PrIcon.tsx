@@ -4,16 +4,48 @@ import { cn } from "@/lib/utils"
 interface Props {
   isPr: boolean
   wasPr: boolean
+  variant?: "overall" | "position"
+  position?: number
   className?: string
 }
 
-/**
- * Renders the right star for a set:
- *  - is_pr=true              → bright filled primary star (current PR)
- *  - was_pr=true && !is_pr   → muted amber filled star (historical PR — "fav")
- *  - otherwise               → faint outline placeholder
- */
-export function PrIcon({ isPr, wasPr, className }: Props) {
+export function PrIcon({
+  isPr,
+  wasPr,
+  variant = "overall",
+  position,
+  className,
+}: Props) {
+  if (variant === "position") {
+    if (!isPr && !wasPr) {
+      return (
+        <Star
+          className={cn("size-4 shrink-0 text-white/10", className)}
+          aria-hidden="true"
+        />
+      )
+    }
+    const label = position != null ? `${position}PR` : "PR"
+    const tone = isPr
+      ? "bg-blue-500 text-white"
+      : "bg-blue-500/40 text-blue-100 opacity-80"
+    return (
+      <span
+        className={cn(
+          "inline-flex shrink-0 items-center rounded-sm px-1 py-0 text-[9px] font-extrabold leading-none tracking-wide tabular-nums",
+          tone,
+          className
+        )}
+        aria-label={
+          isPr
+            ? "Set-position personal record"
+            : "Historical set-position personal record"
+        }
+      >
+        {label}
+      </span>
+    )
+  }
   if (isPr) {
     return (
       <Star

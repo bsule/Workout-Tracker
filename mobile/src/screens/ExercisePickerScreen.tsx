@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   FlatList,
+  InteractionManager,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -13,7 +14,6 @@ import {
 import { Ionicons } from "@expo/vector-icons"
 import { SafeAreaView } from "react-native-safe-area-context"
 import {
-  getWorkoutByDateQ,
   listExercisesQ,
   localApi as api,
   useStore,
@@ -21,6 +21,7 @@ import {
 import type { Exercise } from "@lift/core"
 import { Button } from "../components/Button"
 import { useActiveDate } from "../state/activeDate"
+import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
 import { useCategoryStyles } from "../categories/CategoryStylesProvider"
 
@@ -44,16 +45,24 @@ export function ExercisePickerScreen({ navigation }: any) {
   const [mode, setMode] = useState<Mode>("pick")
   const activeDate = useActiveDate()
 
-  async function gotoLogger(ex: Exercise) {
-    const date = activeDate
-    const existing = getWorkoutByDateQ(date)
-    let workoutId = existing?.id
-    if (!workoutId) {
-      const w = await api.createWorkout(date)
-      workoutId = w.id
-    }
-    const we = await api.addExerciseToWorkout(workoutId, ex.id)
-    navigation.replace("SetLogger", { workoutId, weId: we.id })
+  // Hand off the create-workout + add-exercise work to SetLogger itself.
+  // Doing the mutations here would re-render every snapshot subscriber on
+  // the JS thread BEFORE the navigation message reaches native, blocking the
+  // push animation. Forwarding only `pendingCreate` keeps this handler a
+  // no-op: native gets the nav command immediately, the push animation
+  // starts, and SetLogger commits the mutations once the animation has
+  // settled. We pass the exercise name + category too so SetLogger can
+  // render its full UI shell from the very first frame, before the actual
+  // workoutId/weId are resolved.
+  function gotoLogger(ex: Exercise) {
+    navigation.replace("SetLogger", {
+      pendingCreate: {
+        date: activeDate,
+        exerciseId: ex.id,
+        exerciseName: ex.name,
+        exerciseCategory: ex.category,
+      },
+    })
   }
 
   return (
@@ -93,14 +102,29 @@ function PickView({
     return catColors[c] ?? theme.colors.cat[c] ?? theme.colors.muted
   }
   const snapshot = useStore((s) => s.snapshot)
+  // Defer the exercise-list query + FlatList until the picker's slide-in
+  // animation has fully settled. listExercisesQ iterates every exercise and
+  // annotates each with workouts_count + last_performed by joining through
+  // workout_exercises × sets — heavy enough to stutter the push animation if
+  // it runs on the same JS frames. `InteractionManager.runAfterInteractions`
+  // waits for the navigation transition to finish, so the chrome paints on
+  // the first frame, the slide stays smooth, and the list lands the moment
+  // the animation completes.
+  const [listReady, setListReady] = useState(false)
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => setListReady(true))
+    return () => handle.cancel()
+  }, [])
   const exercises = useMemo(
     () =>
-      listExercisesQ({
-        q: search || undefined,
-        category: category ?? undefined,
-        sort: "last_performed",
-      }),
-    [snapshot, search, category]
+      listReady
+        ? listExercisesQ({
+            q: search || undefined,
+            category: category ?? undefined,
+            sort: "last_performed",
+          })
+        : [],
+    [snapshot, search, category, listReady]
   )
 
   return (
@@ -151,9 +175,11 @@ function PickView({
         renderItem={({ item }) => <ExerciseRow ex={item} onPress={() => onPick(item)} />}
         ItemSeparatorComponent={() => <View style={styles.sep} />}
         ListEmptyComponent={
-          <Text style={{ color: theme.colors.muted, padding: theme.spacing[4] }}>
-            No exercises match.
-          </Text>
+          listReady ? (
+            <Text style={{ color: theme.colors.muted, padding: theme.spacing[4] }}>
+              No exercises match.
+            </Text>
+          ) : null
         }
       />
     </>
@@ -166,7 +192,10 @@ function ExerciseRow({ ex, onPress }: { ex: Exercise; onPress: () => void }) {
     catColors[ex.category] ?? theme.colors.cat[ex.category] ?? theme.colors.muted
   const subtitle = formatSubtitle(ex)
   return (
-    <Pressable onPress={onPress} style={styles.row}>
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.row, pressedStyle(pressed)]}
+    >
       <View style={[styles.rowDot, { backgroundColor: dotColor }]} />
       <View style={{ flex: 1 }}>
         <Text style={styles.rowName}>{ex.name}</Text>
