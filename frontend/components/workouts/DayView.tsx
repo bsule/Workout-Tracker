@@ -26,7 +26,10 @@ import { DateNav } from "@/components/layout/DateNav"
 import { GymEditor } from "@/components/workouts/GymEditor"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { LoadingBlock } from "@/components/ui/Spinner"
-import { useWeightUnit } from "@/components/settings/SettingsProvider"
+import {
+  useShowPositionPrs,
+  useWeightUnit,
+} from "@/components/settings/SettingsProvider"
 import { formatWeight } from "@/lib/units"
 
 interface Props {
@@ -42,10 +45,32 @@ export function DayView({ date }: Props) {
   // object each call, so calling it directly inside a useStore selector trips
   // React's getSnapshot cache check.
   const snapshot = useStore((s) => s.snapshot)
-  const workout = useMemo(
+  const rawWorkout = useMemo(
     () => (hydrated ? getWorkoutByDateQ(date) : undefined),
     [hydrated, date, snapshot]
   )
+  // Hide WEs that have no sets yet — they're transient placeholders the
+  // exercise picker creates before the user has saved their first set.
+  // The cleanup hook in the SetLogger page still purges them from the
+  // store; this just gates visibility so we don't flash an empty card on
+  // navigation. If filtering empties the workout AND it has no other
+  // state (gym, started_at, planned), treat it as not-yet-existing.
+  const workout = useMemo(() => {
+    if (!rawWorkout) return rawWorkout
+    const visibleExercises = rawWorkout.exercises.filter(
+      (we) => we.sets.length > 0
+    )
+    if (
+      visibleExercises.length === 0 &&
+      !rawWorkout.started_at &&
+      !rawWorkout.gym &&
+      !rawWorkout.notes &&
+      rawWorkout.status !== "planned"
+    ) {
+      return null
+    }
+    return { ...rawWorkout, exercises: visibleExercises }
+  }, [rawWorkout])
   const lastGym = useMemo(
     () => (hydrated ? listGymsQ()[0]?.name ?? null : null),
     [hydrated, snapshot]
@@ -235,6 +260,7 @@ function ExerciseCard({
 }) {
   const router = useRouter()
   const unit = useWeightUnit()
+  const showPositionPrs = useShowPositionPrs()
   const href = `/workouts/${workoutId}/exercises/${we.id}`
 
   function handleRemove(e: React.MouseEvent) {
@@ -295,12 +321,21 @@ function ExerciseCard({
                     className="size-2 rounded-full border border-dashed border-primary/60"
                     aria-label="Target set"
                   />
-                ) : (
+                ) : s.is_pr || s.was_pr ? (
                   <PrIcon
                     isPr={s.is_pr}
                     wasPr={s.was_pr}
                     className="size-4"
                   />
+                ) : showPositionPrs ? (
+                  <PrIcon
+                    isPr={s.is_position_pr}
+                    wasPr={s.was_position_pr}
+                    variant="position"
+                    position={i + 1}
+                  />
+                ) : (
+                  <PrIcon isPr={false} wasPr={false} className="size-4" />
                 )}
                 <span className="text-sm font-medium tabular-nums text-foreground/80">
                   {i + 1}

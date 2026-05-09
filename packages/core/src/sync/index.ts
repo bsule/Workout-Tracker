@@ -39,6 +39,6 @@ export async function pullNow(): Promise<{ snapshot: Snapshot; etag: string } | 
   if (!transport) throw new Error("sync transport not configured")
   const result = await transport.pullSnapshot()
   if (!result) return null
-  const snapshot = await parse(result.bytes)
+  const { snapshot } = await parse(result.bytes)
   return { snapshot, etag: result.etag }
 }

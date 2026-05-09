@@ -51,8 +51,26 @@ export function setSnapshot(next: Snapshot, opts: { dirty?: boolean } = {}) {
   emit()
 }
 
+// Inside a `batch(fn)` we defer the (relatively expensive) index rebuild
+// and subscriber emit until the batch unwinds — so a sequence of mutations
+// causes one re-render across the app instead of N. Mutations that read
+// `state.snapshot` directly still see fresh data within the batch; mutations
+// that read `state.indexes` would see stale indexes, so callers must avoid
+// mid-batch index queries (today only `addExerciseToWorkout` is used inside
+// a batch, and it reads from snapshot).
+let batchDepth = 0
+
 export function applyMutation(mutator: (snap: Snapshot) => Snapshot) {
   const next = mutator(state.snapshot)
+  if (batchDepth > 0) {
+    state = {
+      snapshot: next,
+      indexes: state.indexes,
+      hydrated: true,
+      local_dirty_since: new Date().toISOString(),
+    }
+    return
+  }
   state = {
     snapshot: next,
     indexes: buildIndexes(next),
@@ -60,6 +78,21 @@ export function applyMutation(mutator: (snap: Snapshot) => Snapshot) {
     local_dirty_since: new Date().toISOString(),
   }
   emit()
+}
+
+export function batchMutations<T>(fn: () => T): T {
+  if (batchDepth > 0) return fn()
+  batchDepth++
+  const startSnap = state.snapshot
+  try {
+    return fn()
+  } finally {
+    batchDepth--
+    if (state.snapshot !== startSnap) {
+      state = { ...state, indexes: buildIndexes(state.snapshot) }
+      emit()
+    }
+  }
 }
 
 export function markHydrated(snap: Snapshot) {

@@ -154,10 +154,19 @@ function ExerciseRow({
   return (
     <Swipeable
       ref={swipeableRef}
-      friction={1}
-      rightThreshold={48}
+      useNativeAnimations
+      friction={1.4}
+      rightThreshold={10}
+      dragOffsetFromRightEdge={5}
+      activeOffsetX={[-5, 5]}
+      failOffsetY={[-30, 30]}
       overshootLeft={false}
       overshootRight={false}
+      animationOptions={{
+        overshootClamping: true,
+        bounciness: 0,
+        speed: 14,
+      }}
       containerStyle={styles.swipeContainer}
       childrenContainerStyle={styles.swipeChild}
       onSwipeableWillOpen={() => {
@@ -173,26 +182,47 @@ function ExerciseRow({
           openSwipeableRef.current = null
         }
       }}
-      renderRightActions={(_progress, dragX) => {
-        // Two stacked actions: Edit (neutral) + Delete (destructive). Track
-        // the row drag so closing pulls them off-screen smoothly.
+      renderRightActions={(progress, dragX) => {
+        // Two 36-wide circular buttons + 8px gap + 8px padding = ~96px reveal.
+        // Buttons sit on a transparent track so they read as row tools.
         const translateX = dragX.interpolate({
-          inputRange: [-128, 0],
-          outputRange: [0, 128],
+          inputRange: [-96, 0],
+          outputRange: [0, 96],
           extrapolate: "clamp",
+        })
+        const groupOpacity = progress.interpolate({
+          inputRange: [0, 0.05, 0.25, 1],
+          outputRange: [0, 0, 1, 1],
+          extrapolate: "clamp" as const,
         })
         return (
           <Animated.View
             style={[
               styles.swipeActions,
-              { transform: [{ translateX }] },
+              { transform: [{ translateX }], opacity: groupOpacity },
             ]}
           >
-            <Pressable onPress={() => closeThen(onEdit)} style={({ pressed }) => [styles.editAction, pressed && styles.actionPressed]}>
-              <Ionicons name="pencil" size={18} color="#fff" />
+            <Pressable
+              onPress={() => closeThen(onEdit)}
+              style={({ pressed }) => [
+                styles.swipeAction,
+                styles.swipeActionEdit,
+                pressed && styles.swipeActionPressed,
+              ]}
+              hitSlop={4}
+            >
+              <Ionicons name="create-outline" size={18} color={theme.colors.primary} />
             </Pressable>
-            <Pressable onPress={() => closeThen(onDelete)} style={({ pressed }) => [styles.deleteAction, pressed && styles.actionPressed]}>
-              <Ionicons name="trash-outline" size={18} color="#fff" />
+            <Pressable
+              onPress={() => closeThen(onDelete)}
+              style={({ pressed }) => [
+                styles.swipeAction,
+                styles.swipeActionDelete,
+                pressed && styles.swipeActionPressed,
+              ]}
+              hitSlop={4}
+            >
+              <Ionicons name="trash-outline" size={18} color={theme.colors.destructive} />
             </Pressable>
           </Animated.View>
         )
@@ -298,8 +328,31 @@ const styles = StyleSheet.create({
   },
   swipeActions: {
     flexDirection: "row",
+    alignItems: "center",
     alignSelf: "stretch",
+    paddingHorizontal: 8,
+    gap: 8,
     backgroundColor: theme.colors.background,
+  },
+  swipeAction: {
+    width: 36,
+    height: 36,
+    borderRadius: theme.radius.md,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  swipeActionEdit: {
+    backgroundColor: "rgba(0,119,188,0.14)",
+    borderColor: "rgba(0,119,188,0.32)",
+  },
+  swipeActionDelete: {
+    backgroundColor: "rgba(239,68,68,0.14)",
+    borderColor: "rgba(239,68,68,0.32)",
+  },
+  swipeActionPressed: {
+    opacity: 0.6,
+    transform: [{ scale: 0.92 }],
   },
   dot: { width: 12, height: 12, borderRadius: 6 },
   name: { color: theme.colors.foreground, fontSize: theme.fontSize.lg, fontWeight: "600" },
@@ -309,17 +362,4 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.border,
     marginHorizontal: theme.spacing[4],
   },
-  editAction: {
-    width: 64,
-    backgroundColor: theme.colors.muted,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  deleteAction: {
-    width: 64,
-    backgroundColor: theme.colors.destructive,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  actionPressed: { opacity: 0.78 },
 })

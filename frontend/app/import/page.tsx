@@ -11,6 +11,7 @@ import {
   importFitnotesCsv,
   previewCsv,
   type FitNotesPreview,
+  type ImportMode,
   type ImportResult,
 } from "@/lib/fitnotes/importCsv"
 
@@ -26,6 +27,7 @@ export default function ImportPage() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
+  const [mode, setMode] = useState<ImportMode>("merge")
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login")
@@ -48,10 +50,16 @@ export default function ImportPage() {
 
   async function runFitNotesImport() {
     if (!file) return
+    if (mode === "replace") {
+      const ok = window.confirm(
+        "Replace everything?\n\nThis will permanently delete every workout, exercise, and set currently in the app, then load the CSV. Settings and gyms are kept.\n\nThis cannot be undone."
+      )
+      if (!ok) return
+    }
     setBusy(true)
     setError(null)
     try {
-      const data = await importFitnotesCsv(file)
+      const data = await importFitnotesCsv(file, { mode })
       setResult(data)
       setStep("result")
     } catch (e) {
@@ -67,6 +75,7 @@ export default function ImportPage() {
     setResult(null)
     setError(null)
     setStep("upload")
+    setMode("merge")
   }
 
   if (loading || !user) {
@@ -87,6 +96,8 @@ export default function ImportPage() {
       {step === "fitnotes" && preview && (
         <FitNotesConfirmStep
           rowCount={preview.rowCount}
+          mode={mode}
+          onModeChange={setMode}
           onBack={reset}
           onSubmit={runFitNotesImport}
           busy={busy}
@@ -177,15 +188,27 @@ function UploadStep({
 
 function FitNotesConfirmStep({
   rowCount,
+  mode,
+  onModeChange,
   onBack,
   onSubmit,
   busy,
 }: {
   rowCount: number
+  mode: ImportMode
+  onModeChange: (m: ImportMode) => void
   onBack: () => void
   onSubmit: () => void
   busy: boolean
 }) {
+  const submitLabel = busy
+    ? mode === "replace"
+      ? "Replacing…"
+      : "Importing…"
+    : mode === "replace"
+      ? `Replace with ${rowCount.toLocaleString()} sets`
+      : `Import ${rowCount.toLocaleString()} sets`
+
   return (
     <div className="space-y-6">
       <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm">
@@ -198,15 +221,94 @@ function FitNotesConfirmStep({
           mapping needed.
         </p>
       </div>
+
+      <div className="space-y-2">
+        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Import mode
+        </div>
+        <ModeOption
+          checked={mode === "merge"}
+          onSelect={() => onModeChange("merge")}
+          title="Add to my existing data"
+          description="Keeps everything currently in the app. CSV sets are added; workouts on the same date and exercises with the same name are merged automatically."
+          accent="emerald"
+          disabled={busy}
+        />
+        <ModeOption
+          checked={mode === "replace"}
+          onSelect={() => onModeChange("replace")}
+          title="Replace everything"
+          description="Wipes all current workouts, exercises, sets, and PRs. The CSV becomes your only data. Settings and gyms are kept. This cannot be undone."
+          accent="amber"
+          disabled={busy}
+        />
+      </div>
+
       <div className="flex justify-between gap-3">
         <Button variant="outline" onClick={onBack} disabled={busy}>
           Back
         </Button>
-        <Button onClick={onSubmit} disabled={busy} size="lg">
-          {busy ? "Importing…" : `Import ${rowCount.toLocaleString()} sets`}
+        <Button
+          onClick={onSubmit}
+          disabled={busy}
+          size="lg"
+          variant={mode === "replace" ? "destructive" : "default"}
+        >
+          {submitLabel}
         </Button>
       </div>
     </div>
+  )
+}
+
+function ModeOption({
+  checked,
+  onSelect,
+  title,
+  description,
+  accent,
+  disabled,
+}: {
+  checked: boolean
+  onSelect: () => void
+  title: string
+  description: string
+  accent: "emerald" | "amber"
+  disabled: boolean
+}) {
+  const accentBorder =
+    accent === "amber"
+      ? "border-amber-500/50 bg-amber-500/10"
+      : "border-emerald-500/40 bg-emerald-500/10"
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      disabled={disabled}
+      className={cn(
+        "w-full rounded-md border p-3 text-left text-sm transition",
+        checked
+          ? accentBorder
+          : "border-white/10 bg-white/[.02] hover:bg-white/[.04]",
+        disabled && "pointer-events-none opacity-60"
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <span
+          className={cn(
+            "mt-1 inline-block size-3.5 shrink-0 rounded-full border",
+            checked
+              ? "border-foreground bg-foreground"
+              : "border-white/30 bg-transparent"
+          )}
+          aria-hidden
+        />
+        <div>
+          <div className="font-semibold">{title}</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+        </div>
+      </div>
+    </button>
   )
 }
 

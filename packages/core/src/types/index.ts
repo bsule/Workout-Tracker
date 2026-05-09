@@ -44,6 +44,8 @@ export interface WorkoutSet {
   time_seconds: number | null
   is_pr: boolean
   was_pr: boolean
+  is_position_pr: boolean
+  was_position_pr: boolean
   note: string
   order: number
   is_planned?: boolean
@@ -88,6 +90,8 @@ export interface HistorySet {
   time_seconds: number | null
   is_pr: boolean
   was_pr: boolean
+  is_position_pr: boolean
+  was_position_pr: boolean
   note: string
   order: number
   estimated_one_rm: number
@@ -104,6 +108,10 @@ export interface UserSettings {
   /** Optional UI flag: when true, the set logger shows estimated 1RM next to
    *  each logged set. Defaults to false when missing in older snapshots. */
   show_one_rm?: boolean
+  /** Optional UI flag: when true (default), set lists render a "{n}PR" badge
+   *  for sets that are PRs at their set position. When false, only overall
+   *  exercise PRs render. */
+  show_position_prs?: boolean
 }
 
 export interface User {

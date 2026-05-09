@@ -20,7 +20,7 @@ export {
   hydrate as hydrateStore,
   runBatched,
 } from "./persist"
-export { useStore, useHydrated } from "./store"
+export { useStore, useHydrated, batchMutations } from "./store"
 export {
   getPlannedWorkoutForToday,
   getPlannedDatesQ,
@@ -37,6 +37,9 @@ export {
   finishWorkout,
   logPlannedSet,
   recomputeAllPrs,
+  deleteWorkout,
+  createWorkout,
+  addExerciseToWorkout,
 } from "./mutations"
 export { estimateOneRm } from "./materialize"
 

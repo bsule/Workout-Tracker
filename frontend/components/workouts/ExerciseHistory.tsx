@@ -4,7 +4,10 @@ import type { ExerciseHistoryDay } from "@/types"
 import { cn, formatDayLabel, parseLocalDate } from "@/lib/utils"
 import { PrIcon } from "@/components/workouts/PrIcon"
 import { formatWeight, fromKg, roundForDisplay } from "@/lib/units"
-import { useWeightUnit } from "@/components/settings/SettingsProvider"
+import {
+  useShowPositionPrs,
+  useWeightUnit,
+} from "@/components/settings/SettingsProvider"
 
 interface Props {
   history: ExerciseHistoryDay[]
@@ -44,6 +47,7 @@ function DayBlock({
   isCurrent?: boolean
 }) {
   const unit = useWeightUnit()
+  const showPositionPrs = useShowPositionPrs()
   const longDate = parseLocalDate(day.date).toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
@@ -102,7 +106,18 @@ function DayBlock({
         {day.sets.map((s, i) => (
           <li key={s.id} className="px-4 py-2.5 text-sm">
             <div className="flex items-center gap-3">
-              <PrIcon isPr={s.is_pr} wasPr={s.was_pr} className="size-4" />
+              {s.is_pr || s.was_pr ? (
+                <PrIcon isPr={s.is_pr} wasPr={s.was_pr} className="size-4" />
+              ) : showPositionPrs ? (
+                <PrIcon
+                  isPr={s.is_position_pr}
+                  wasPr={s.was_position_pr}
+                  variant="position"
+                  position={i + 1}
+                />
+              ) : (
+                <PrIcon isPr={false} wasPr={false} className="size-4" />
+              )}
               <span className="font-mono w-6 text-sm font-medium tabular-nums text-muted-foreground">
                 {i + 1}
               </span>

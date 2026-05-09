@@ -220,6 +220,15 @@ function DisplaySection() {
     } finally { setBusy(null) }
   }
 
+  async function changePositionPrs(v: string) {
+    setBusy("posprs"); setError(null)
+    try {
+      await update({ show_position_prs: v === "1" })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed.")
+    } finally { setBusy(null) }
+  }
+
   return (
     <Section title="Display" description="Affects how weights, the calendar, and colors look across the app.">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -272,6 +281,18 @@ function DisplaySection() {
             ]}
           />
           {busy === "onerm" && <p className="mt-1 text-xs text-muted-foreground">Saving…</p>}
+        </div>
+        <div>
+          <FieldLabel>Per-set PRs</FieldLabel>
+          <Dropdown
+            value={(settings.show_position_prs ?? true) ? "1" : "0"}
+            onChange={changePositionPrs}
+            options={[
+              { value: "1", label: "Show \"{n}PR\" badges" },
+              { value: "0", label: "Overall PRs only" },
+            ]}
+          />
+          {busy === "posprs" && <p className="mt-1 text-xs text-muted-foreground">Saving…</p>}
         </div>
       </div>
       {error && <StatusLine kind="error" msg={error} />}

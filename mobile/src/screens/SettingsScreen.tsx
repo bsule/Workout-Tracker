@@ -31,7 +31,7 @@ type ProfileField = "username" | "email"
 export function SettingsScreen({ navigation }: any) {
   const { user, logout, updateProfile } = useAuth()
   const unit = useWeightUnit()
-  const { firstDayOfWeek } = useSettings()
+  const { firstDayOfWeek, showPositionPrs } = useSettings()
   const gyms = useStore((s) => s.snapshot.gyms) as Gym[]
   // Read once on mount; the toggle prompts for restart so we don't need
   // a reactive subscription here.
@@ -227,6 +227,25 @@ export function SettingsScreen({ navigation }: any) {
               variant={themeMode === "light" ? "primary" : "secondary"}
               style={{ flex: 1 }}
               onPress={() => chooseTheme("light")}
+            />
+          </View>
+
+          <Row
+            label="Per-set PRs"
+            value={showPositionPrs ? "On" : "Off"}
+          />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Button
+              label="On"
+              variant={showPositionPrs ? "primary" : "secondary"}
+              style={{ flex: 1 }}
+              onPress={() => api.updateSettings({ show_position_prs: true })}
+            />
+            <Button
+              label="Off"
+              variant={!showPositionPrs ? "primary" : "secondary"}
+              style={{ flex: 1 }}
+              onPress={() => api.updateSettings({ show_position_prs: false })}
             />
           </View>
         </View>

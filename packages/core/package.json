@@ -20,7 +20,8 @@
     "./store/blob": "./src/store/blob.ts",
     "./store/indexes": "./src/store/indexes.ts",
     "./store/materialize": "./src/store/materialize.ts",
-    "./sync": "./src/sync/index.ts"
+    "./sync": "./src/sync/index.ts",
+    "./import": "./src/import/index.ts"
   },
   "dependencies": {
     "fflate": "^0.8.2"

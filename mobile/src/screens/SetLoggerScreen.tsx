@@ -1,9 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
 import {
   Alert,
   Animated,
   Dimensions,
   Easing,
+  InteractionManager,
   Keyboard,
   KeyboardAvoidingView,
   LayoutAnimation,
@@ -25,11 +32,16 @@ import { LineChart } from "react-native-gifted-charts"
 // throwing "Exception in HostFunction" inside Expo Go on this device.
 import { Swipeable } from "react-native-gesture-handler"
 import {
+  addExerciseToWorkout,
+  batchMutations,
+  createWorkout,
   defaultStep,
+  deleteWorkout,
   estimateOneRm,
   formatWeight,
   fromKg,
   getExerciseHistoryQ,
+  getWorkoutByDateQ,
   getWorkoutQ,
   localApi as api,
   logPlannedSet,
@@ -37,7 +49,12 @@ import {
   toKg,
   useStore,
 } from "@lift/core"
-import type { ExerciseHistoryDay, WorkoutSet } from "@lift/core"
+import type {
+  ExerciseHistoryDay,
+  Workout,
+  WorkoutExercise,
+  WorkoutSet,
+} from "@lift/core"
 import { Button } from "../components/Button"
 import { PrIcon } from "../components/PrIcon"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
@@ -62,21 +79,101 @@ if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental
 // run JS driven animation on animated node that has been moved to native"),
 // so we use `scaleXY` instead — visually similar (rows pop in/out) and not
 // shared with any native binding.
+// Per-section durations: rows settle in with a soft spring (alive without
+// being bouncy); both `delete` and `update` use easeInEaseOut so the
+// disappearing row's collapse and the neighbour-shift flow as one motion,
+// matched to the row's own opacity+translateY exit (~180ms total).
 const SET_ANIM = {
   duration: 220,
   create: {
-    type: LayoutAnimation.Types.easeInEaseOut,
+    type: LayoutAnimation.Types.spring,
+    springDamping: 0.78,
     property: LayoutAnimation.Properties.scaleXY,
+    duration: 260,
   },
-  update: { type: LayoutAnimation.Types.easeInEaseOut },
+  update: {
+    type: LayoutAnimation.Types.easeInEaseOut,
+    duration: 220,
+  },
   delete: {
     type: LayoutAnimation.Types.easeInEaseOut,
     property: LayoutAnimation.Properties.scaleXY,
+    duration: 180,
   },
 } as const
 
 function animateNext() {
   LayoutAnimation.configureNext(SET_ANIM)
+}
+
+const EMPTY_HISTORY: ExerciseHistoryDay[] = []
+
+// Per-row mount fade. Legacy `Animated` so we don't pull in Reanimated's
+// runtime (see import comment). The wrapper sits *outside* the Swipeable so
+// our opacity Animated.Value never shares a node with the Swipeable's
+// native-driven dragX/progress, sidestepping the JS/native collision that
+// LayoutAnimation.opacity hits.
+//
+// `leaving`: when true, fades the row to 0 (used for delete-then-mutate so
+//   the user sees the fade *before* the heavy mutation/commit blocks JS).
+// `skipFade`: mounts at full opacity instead of fading in. Used when a real
+//   row is replacing an optimistic placeholder — the placeholder already
+//   showed the fade, so the real row should appear seamlessly.
+function SetRowFade({
+  children,
+  leaving,
+  skipFade,
+}: {
+  children: ReactNode
+  leaving?: boolean
+  skipFade?: boolean
+}) {
+  const opacity = useRef(new Animated.Value(skipFade ? 1 : 0)).current
+  // Small translateY so rows visibly settle into / lift out of place
+  // instead of just changing opacity in a fixed slot. Distance is kept
+  // tiny (6px) so it reads as polish, not a slide.
+  const translateY = useRef(new Animated.Value(skipFade ? 0 : 6)).current
+  useEffect(() => {
+    if (skipFade) return
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start()
+    // Only run on mount — skipFade is captured at mount via useRef's initial.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(() => {
+    if (!leaving) return
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 0,
+        duration: 180,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: -4,
+        duration: 180,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start()
+  }, [leaving, opacity, translateY])
+  return (
+    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
+      {children}
+    </Animated.View>
+  )
 }
 type Metric = "one_rm" | "heaviest" | "avg_weight" | "volume"
 
@@ -91,22 +188,133 @@ const METRIC_OPTIONS: {
 ]
 
 export function SetLoggerScreen({ route, navigation }: any) {
-  const { workoutId, weId } = route.params
+  // The picker forwards `pendingCreate` instead of running the
+  // create-workout + add-exercise mutations itself, so the navigation
+  // message reaches native before any snapshot subscribers re-render.
+  // We then defer the actual mutations behind InteractionManager — the
+  // emit cascade (even with `freezeOnBlur` covering MainTabs) still costs
+  // ~50–100ms of JS work, so running it inside `runAfterInteractions`
+  // pushes it past the ~250ms native push animation. The screen slides in
+  // at 60fps unobstructed, then the workoutId/weId resolve and the SetList
+  // settles in. While unresolved we render a stub `we` synthesized from
+  // the route params (exerciseName / exerciseCategory) so the slide-in
+  // shows the populated header and form from the very first frame.
+  const [resolved, setResolved] = useState<{
+    workoutId: number
+    weId: number
+  } | null>(() => {
+    const p = route.params
+    if (p?.workoutId != null && p?.weId != null) {
+      return { workoutId: p.workoutId, weId: p.weId }
+    }
+    return null
+  })
+  useEffect(() => {
+    if (resolved) return
+    const p = route.params
+    if (!p?.pendingCreate) return
+    const date: string = p.pendingCreate.date
+    const exerciseId: number = p.pendingCreate.exerciseId
+    const handle = InteractionManager.runAfterInteractions(() => {
+      // batchMutations coalesces the create-workout + add-exercise pair
+      // into a single index rebuild + subscriber emit.
+      const ids = batchMutations(() => {
+        const existing = getWorkoutByDateQ(date)
+        const wid = existing?.id ?? createWorkout(date).row.id
+        const we = addExerciseToWorkout(wid, exerciseId)
+        return { workoutId: wid, weId: we.id }
+      })
+      setResolved(ids)
+    })
+    // Also cancel on `beforeRemove` so we don't commit the create-workout
+    // mutation after the user has already chosen to leave — that would
+    // strand a workout + empty WE in the snapshot (the existing
+    // beforeRemove cleanup below sees workoutId=-1 and bails out).
+    const unsub = navigation.addListener("beforeRemove", () => handle.cancel())
+    return () => {
+      handle.cancel()
+      unsub()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  // One-shot flag flipped on the first frame after mount. Used to keep
+  // non-first-paint subtrees (e.g. the always-mounted NoteEditorSheet Modal)
+  // out of the very first render, so native-stack can start the push
+  // animation as soon as possible after navigation.replace.
+  const [firstPaintDone, setFirstPaintDone] = useState(false)
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setFirstPaintDone(true))
+    return () => cancelAnimationFrame(id)
+  }, [])
+  const workoutId = resolved?.workoutId ?? -1
+  const weId = resolved?.weId ?? -1
   const unit = useWeightUnit()
   const step = defaultStep(unit)
-  const { showOneRm } = useSettings()
+  const { showOneRm, showPositionPrs } = useSettings()
   const [tab, setTab] = useState<SubTab>("workout")
 
   const snapshot = useStore((s) => s.snapshot)
-  const workout = useMemo(() => getWorkoutQ(workoutId), [snapshot, workoutId])
-  const we = workout?.exercises.find((e) => e.id === weId)
+  // While `resolved` is null we render a stub workout/we synthesized from
+  // the picker's `pendingCreate` payload — the real workoutId/weId land
+  // ~one frame after the push animation finishes (see the
+  // InteractionManager defer above), and showing the populated header +
+  // form during the slide-in is what makes the transition feel instant.
+  // For a fresh exercise add the stub is visually identical to what the
+  // post-mutation render produces (no logged sets), so the swap is
+  // imperceptible.
+  const realWorkout = useMemo(
+    () => (resolved ? getWorkoutQ(workoutId) : null),
+    [snapshot, workoutId, resolved]
+  )
+  const realWe = realWorkout?.exercises.find((e) => e.id === weId)
+  const stubFromPending = useMemo<{
+    workout: Workout
+    we: WorkoutExercise
+  } | null>(() => {
+    if (resolved) return null
+    const p = route.params?.pendingCreate
+    if (!p) return null
+    const stubWe: WorkoutExercise = {
+      id: -1,
+      order: 0,
+      exercise: {
+        id: p.exerciseId,
+        name: p.exerciseName,
+        category: p.exerciseCategory,
+        kind: "weight_reps",
+        is_custom: false,
+      },
+      sets: [],
+    }
+    const stubWorkout: Workout = {
+      id: -1,
+      date: p.date,
+      status: "active",
+      started_at: null,
+      finished_at: null,
+      duration_seconds: null,
+      gym: "",
+      notes: "",
+      exercises: [stubWe],
+      created_at: new Date().toISOString(),
+    }
+    return { workout: stubWorkout, we: stubWe }
+  }, [resolved, route.params?.pendingCreate])
+  const workout = realWorkout ?? stubFromPending?.workout ?? null
+  const we = realWe ?? stubFromPending?.we
   const sets = we?.sets ?? []
   const isPlanned = workout?.status === "planned"
   const exerciseId = we?.exercise.id ?? null
+  // Lazy: only run the history query when a tab that needs it is active.
+  // The query iterates indexes and is fast, but it runs inside the same
+  // synchronous React commit triggered by add/delete-set mutations, where
+  // every saved millisecond delays the new row's fade-in start.
+  const needsHistory =
+    tab === "history" || tab === "graph" || tab === "records"
   const history: ExerciseHistoryDay[] = useMemo(() => {
-    if (exerciseId == null) return []
+    if (exerciseId == null || !needsHistory) return EMPTY_HISTORY
     return getExerciseHistoryQ(exerciseId)
-  }, [snapshot, exerciseId])
+  }, [snapshot, exerciseId, needsHistory])
 
   const nextPlanned = !isPlanned ? sets.find((s) => s.is_planned) ?? null : null
   const lastSet = sets.length ? sets[sets.length - 1] : null
@@ -125,6 +333,100 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // screen swaps from the form to a selection action bar while active.
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const selectionMode = selectedIds.length > 0
+
+  // Optimistic add: a placeholder row that mounts (and starts its fade-in)
+  // *before* api.addSet runs, so the user sees feedback on the same frame as
+  // the Save click instead of waiting for the heavy mutation/commit. When
+  // the real row lands, we drop the placeholder and mark the new set's id
+  // for `skipFade` so it appears at full opacity (no double-fade flicker).
+  // `baseIds` snapshots the set ids at click-time — that's how we detect the
+  // new row even if a concurrent delete keeps `sets.length` unchanged.
+  const [pendingAdd, setPendingAdd] = useState<{
+    weight: number
+    reps: number
+    key: number
+    baseLen: number
+    baseIds: Set<number>
+  } | null>(null)
+  const pendingAddRef = useRef(pendingAdd)
+  useEffect(() => {
+    pendingAddRef.current = pendingAdd
+  }, [pendingAdd])
+
+  // On leave, if the user never logged a set on this exercise, drop the
+  // empty WE so it doesn't litter the day's view as a ghost "Add first set"
+  // card. We hook `beforeRemove` (not the unmount cleanup) so the store
+  // mutation lands *before* the back-transition animation starts —
+  // otherwise DayScreen flashes the empty card for the duration of the
+  // animation. If the exercise was the only thing on a freshly-created
+  // workout (no gym, no started_at, not planned), delete the workout too.
+  useEffect(() => {
+    const unsub = navigation.addListener("beforeRemove", () => {
+      if (pendingAddRef.current) return
+      const w = getWorkoutQ(workoutId)
+      if (!w) return
+      const currentWe = w.exercises.find((e) => e.id === weId)
+      if (!currentWe || currentWe.sets.length > 0) return
+      const isOnlyExercise = w.exercises.length === 1
+      const isSideEffectWorkout =
+        isOnlyExercise &&
+        !w.started_at &&
+        !w.gym &&
+        !w.notes &&
+        w.status !== "planned"
+      if (isSideEffectWorkout) {
+        deleteWorkout(workoutId)
+      } else {
+        api.removeExerciseFromWorkout(workoutId, weId)
+      }
+    })
+    return unsub
+  }, [navigation, workoutId, weId])
+  const [skipFadeIds, setSkipFadeIds] = useState<Set<number>>(() => new Set())
+  useEffect(() => {
+    if (!pendingAdd || !pendingAdd.baseIds) return
+    const baseIds = pendingAdd.baseIds
+    const newSet = sets.find((s) => !baseIds.has(s.id))
+    if (!newSet) return
+    setSkipFadeIds((prev) => {
+      const n = new Set(prev)
+      n.add(newSet.id)
+      return n
+    })
+    // Hold the placeholder visible until its fade-in fully completes
+    // (~220ms) before dropping it. If we cleared `pendingAdd` the moment
+    // the real row arrived (often <50ms in), the placeholder unmounts
+    // mid-fade and the real row pops in at full opacity — a visible jump
+    // from partial opacity to 1. Waiting out the fade means the swap
+    // happens at opacity 1 on both sides, so it's invisible.
+    const t = setTimeout(() => setPendingAdd(null), 240)
+    return () => clearTimeout(t)
+  }, [sets, pendingAdd])
+
+  // Fade-then-mutate for delete: the row fades to 0 on the UI thread first,
+  // and api.deleteSet only fires after the fade completes — so the user
+  // never sees the JS thread freeze before the visual response.
+  const [leavingIds, setLeavingIds] = useState<Set<number>>(() => new Set())
+  function startDelete(id: number) {
+    setLeavingIds((prev) => {
+      const n = new Set(prev)
+      n.add(id)
+      return n
+    })
+    // 180ms matches the SetRowFade leaving fade so the LayoutAnimation
+    // collapse fires the moment the row reaches opacity 0 — not earlier
+    // (would visibly cut a half-faded row) and not noticeably later.
+    setTimeout(() => {
+      animateNext()
+      api.deleteSet(id)
+      setLeavingIds((prev) => {
+        if (!prev.has(id)) return prev
+        const n = new Set(prev)
+        n.delete(id)
+        return n
+      })
+    }, 180)
+  }
 
   // Note editor sheet state. Triggered by the "Note" swipe action on a row.
   const [noteEditingSet, setNoteEditingSet] = useState<WorkoutSet | null>(null)
@@ -208,11 +510,9 @@ export function SetLoggerScreen({ route, navigation }: any) {
           text: "Delete",
           style: "destructive",
           onPress: () => {
-            animateNext()
-            for (const id of selectedIds) {
-              api.deleteSet(id)
-            }
+            const ids = [...selectedIds]
             clearSelection()
+            for (const id of ids) startDelete(id)
           },
         },
       ]
@@ -220,6 +520,9 @@ export function SetLoggerScreen({ route, navigation }: any) {
   }
 
   if (!we || !workout) {
+    // Reached when the route was given a workoutId/weId that no longer
+    // exists in the snapshot. The pendingCreate handoff path always
+    // synthesizes a stub `we`/`workout`, so it never lands here.
     return (
       <View style={[styles.flex, { padding: theme.spacing[4] }]}>
         <Text style={{ color: theme.colors.muted }}>Exercise not found.</Text>
@@ -229,6 +532,12 @@ export function SetLoggerScreen({ route, navigation }: any) {
 
   function save() {
     setError(null)
+    // While `resolved` is null we're still rendering the stub `we` from
+    // pendingCreate — the real workoutId/weId haven't landed yet, so any
+    // mutation would target id=-1. Saving is gated until the deferred
+    // mutations resolve (typically <300ms, well before the user has time
+    // to type weight/reps and tap Save).
+    if (!resolved) return
     if (weight <= 0 || reps <= 0) {
       setError("Weight and reps must be greater than zero.")
       return
@@ -248,8 +557,20 @@ export function SetLoggerScreen({ route, navigation }: any) {
           api.updateSet(id, { weight: w, reps: r })
         })
       } else if (isPlanned) {
-        animateNext()
-        api.addPlannedSet(weId, { weight: toKg(weight, unit), reps })
+        // Same optimistic-placeholder flow for planned-set authoring so the
+        // fade starts on click instead of after the mutation commits.
+        const w = toKg(weight, unit)
+        const r = reps
+        setPendingAdd({
+          weight: w,
+          reps: r,
+          key: Date.now(),
+          baseLen: sets.length,
+          baseIds: new Set(sets.map((s) => s.id)),
+        })
+        requestAnimationFrame(() => {
+          api.addPlannedSet(weId, { weight: w, reps: r })
+        })
       } else {
         const queued = sets.find((s) => s.is_planned)
         if (queued) {
@@ -257,8 +578,22 @@ export function SetLoggerScreen({ route, navigation }: any) {
           // would be jarring — skip animation.
           logPlannedSet(queued.id, { weight: toKg(weight, unit), reps })
         } else {
-          animateNext()
-          api.addSet(weId, { weight: toKg(weight, unit), reps })
+          // Optimistic placeholder: render an immediate fading-in row so the
+          // user sees the row on the same frame as the click, then defer the
+          // store mutation to the next frame so the heavy commit doesn't
+          // block the fade from starting.
+          const w = toKg(weight, unit)
+          const r = reps
+          setPendingAdd({
+            weight: w,
+            reps: r,
+            key: Date.now(),
+            baseLen: sets.length,
+            baseIds: new Set(sets.map((s) => s.id)),
+          })
+          requestAnimationFrame(() => {
+            api.addSet(weId, { weight: w, reps: r })
+          })
         }
       }
     } catch (e: any) {
@@ -394,14 +729,18 @@ export function SetLoggerScreen({ route, navigation }: any) {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
       >
-        {tab === "workout" && (
+        {tab === "workout" && firstPaintDone && (
           <>
             <SetList
               sets={sets}
               unit={unit}
               canHit={!isPlanned}
               showOneRm={showOneRm}
+              showPositionPrs={showPositionPrs}
               selectedIds={selectedIds}
+              pendingAdd={pendingAdd}
+              leavingIds={leavingIds}
+              skipFadeIds={skipFadeIds}
               onLongPress={(s) => {
                 if (s.is_planned) return
                 if (!selectedIds.includes(s.id)) toggleSelected(s.id)
@@ -413,19 +752,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
               }}
               onEdit={startEdit}
               onAddNote={openNoteEditor}
-              onDelete={(s) => {
-                Alert.alert("Delete set?", `${formatWeight(s.weight, unit)} ${unit} × ${s.reps ?? 0} reps`, [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "Delete",
-                    style: "destructive",
-                    onPress: () => {
-                      animateNext()
-                      api.deleteSet(s.id)
-                    },
-                  },
-                ])
-              }}
+              onDelete={(s) => startDelete(s.id)}
             />
           </>
         )}
@@ -435,6 +762,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
             currentDate={workout.date}
             unit={unit}
             showOneRm={showOneRm}
+            showPositionPrs={showPositionPrs}
           />
         )}
         {tab === "graph" && <GraphPanel days={history} unit={unit} />}
@@ -443,14 +771,19 @@ export function SetLoggerScreen({ route, navigation }: any) {
       </ScrollView>
 
       <SubTabBar tab={tab} onChange={setTab} />
-      <NoteEditorSheet
-        visible={noteEditingSet != null}
-        original={noteEditingSet?.note ?? ""}
-        draft={noteDraft}
-        onChangeDraft={setNoteDraft}
-        onCancel={closeNoteEditor}
-        onSave={saveNote}
-      />
+      {/* Gated on firstPaintDone so the Modal's host-view allocation isn't on
+       *  the critical path of the slide-in. The Modal is invisible during the
+       *  push animation anyway; mounting it one frame later is imperceptible. */}
+      {firstPaintDone && (
+        <NoteEditorSheet
+          visible={noteEditingSet != null}
+          original={noteEditingSet?.note ?? ""}
+          draft={noteDraft}
+          onChangeDraft={setNoteDraft}
+          onCancel={closeNoteEditor}
+          onSave={saveNote}
+        />
+      )}
     </StaticSafeAreaView>
     </TouchableWithoutFeedback>
   )
@@ -476,9 +809,9 @@ function PhaseButton({
   style?: any
 }) {
   const fg =
-    variant === "secondary" ? theme.colors.muted : theme.colors.foreground
+    variant === "secondary" ? theme.colors.foreground : theme.colors.foreground
   const border =
-    variant === "secondary" ? theme.colors.border : theme.colors.foreground
+    variant === "secondary" ? theme.colors.borderStrong : theme.colors.foreground
   const fadeOut = phase.interpolate({
     inputRange: [0, 1],
     outputRange: [1, 0],
@@ -566,11 +899,13 @@ export function PastHistory({
   currentDate,
   unit,
   showOneRm,
+  showPositionPrs,
 }: {
   days: ExerciseHistoryDay[]
   currentDate: string
   unit: "kg" | "lb"
   showOneRm: boolean
+  showPositionPrs: boolean
 }) {
   const past = days.filter((d) => d.date <= currentDate)
   if (past.length === 0) {
@@ -589,9 +924,15 @@ export function PastHistory({
           {day.sets.map((s, i) => (
             <View key={s.id} style={styles.pastSetRow}>
               <View style={{ width: 28, alignItems: "flex-start" }}>
-                {(s.is_pr || s.was_pr) && (
+                {s.is_pr || s.was_pr ? (
                   <PrIcon historical={!s.is_pr && s.was_pr} />
-                )}
+                ) : showPositionPrs && (s.is_position_pr || s.was_position_pr) ? (
+                  <PrIcon
+                    variant="position"
+                    position={i + 1}
+                    historical={!s.is_position_pr && s.was_position_pr}
+                  />
+                ) : null}
               </View>
               <Text style={styles.setIndex}>{i + 1}</Text>
               <Text style={styles.setWeight}>
@@ -1104,7 +1445,11 @@ function SetList({
   unit,
   canHit,
   showOneRm,
+  showPositionPrs,
   selectedIds,
+  pendingAdd,
+  leavingIds,
+  skipFadeIds,
   onLongPress,
   onSelectToggle,
   onHit,
@@ -1116,7 +1461,17 @@ function SetList({
   unit: "kg" | "lb"
   canHit: boolean
   showOneRm: boolean
+  showPositionPrs: boolean
   selectedIds: number[]
+  pendingAdd: {
+    weight: number
+    reps: number
+    key: number
+    baseLen: number
+    baseIds: Set<number>
+  } | null
+  leavingIds: Set<number>
+  skipFadeIds: Set<number>
   onLongPress: (s: WorkoutSet) => void
   onSelectToggle: (id: number) => void
   onHit: (s: WorkoutSet) => void
@@ -1127,15 +1482,21 @@ function SetList({
   const selectionMode = selectedIds.length > 0
   const openSwipeableRef = useRef<Swipeable | null>(null)
   const swipeableRefs = useRef(new Map<number, Swipeable | null>())
-  // While one row is mid-swipe (drag or in-flight spring), other rows
-  // are gesture-locked. Spam-swiping different rows is what causes the
-  // legacy Swipeable to glitch — its row transform is the *sum* of an
-  // in-flight spring and a new finger drag, so a second gesture during
-  // the first's animation visibly layers the two. Locking new gestures
-  // until the active row settles avoids the case entirely.
-  const [transitioningId, setTransitioningId] = useState<number | null>(null)
+  // Imperative close (no state, no re-renders) — fired from each
+  // Swipeable's open-related callbacks. Whichever fires first does the
+  // close; subsequent calls are no-ops because the ref is null.
+  function closeOtherOpenRow(currentId: number) {
+    const current = swipeableRefs.current.get(currentId) ?? null
+    if (
+      openSwipeableRef.current &&
+      openSwipeableRef.current !== current
+    ) {
+      openSwipeableRef.current.close()
+      openSwipeableRef.current = null
+    }
+  }
 
-  if (!sets.length) {
+  if (!sets.length && !pendingAdd) {
     return (
       <View style={[styles.card, { borderStyle: "dashed", alignItems: "center" }]}>
         <Text style={{ color: theme.colors.muted, fontSize: theme.fontSize.sm }}>
@@ -1152,9 +1513,27 @@ function SetList({
     0
   )
 
+  // Keep the placeholder visible the entire time `pendingAdd` is set —
+  // including the held-open window (~240ms) after the real row arrives.
+  // The parent delays `setPendingAdd(null)` until the placeholder's
+  // fade-in is complete, so when the placeholder finally unmounts here
+  // it's at full opacity, and the real row appears at full opacity via
+  // `skipFade` — no jump.
+  const showPlaceholder = pendingAdd != null
+
   return (
     <View style={styles.setListCard}>
       {sets.map((s, i) => {
+        // Hide the new real row only while the placeholder is still showing.
+        // Once `realArrivedBeforeCleanup` is true (placeholder dropped),
+        // we let the new row render — with `skipFade` so it appears at full
+        // opacity rather than fading in over the placeholder's exit.
+        const isNewlyAdded =
+          pendingAdd != null &&
+          pendingAdd.baseIds != null &&
+          !pendingAdd.baseIds.has(s.id)
+        if (showPlaceholder && isNewlyAdded) return null
+
         function closeThen(action: () => void) {
           const current = swipeableRefs.current.get(s.id) ?? null
           current?.close()
@@ -1168,9 +1547,19 @@ function SetList({
         const isSelected = selectedIds.includes(s.id)
         const isPr = !!s.is_pr
         const wasPr = !s.is_pr && !!s.was_pr
+        const isPosPr = !s.is_pr && !s.was_pr && !!s.is_position_pr
+        const wasPosPr =
+          !s.is_pr && !s.was_pr && !s.is_position_pr && !!s.was_position_pr
         const isTopOfSession =
           !s.is_planned && oneRm > 0 && oneRm === sessionTopOneRm
         const isLast = i === sets.length - 1
+        const leaving = leavingIds?.has(s.id) ?? false
+        // `isNewlyAdded` (computed above) means the placeholder was just
+        // swapped out for this row — mount it at full opacity instead of
+        // fading in, since the placeholder already showed the user the
+        // row's content. After this render, the useEffect will mirror this
+        // into `skipFadeIds` for subsequent renders.
+        const skipFade = (skipFadeIds?.has(s.id) ?? false) || isNewlyAdded
 
         const body = (
           <Pressable
@@ -1179,6 +1568,18 @@ function SetList({
               if (selectionMode && !s.is_planned) onSelectToggle(s.id)
             }}
             delayLongPress={350}
+            // Cache the row's content as a hardware-backed texture so
+            // the Swipeable's drag transform is a cheap GPU translate
+            // of a pre-rendered bitmap, not a per-frame re-paint of
+            // the Pressable + ~6 Text nodes underneath. This is the
+            // single biggest fix for "low fps feel" during swipe on
+            // Android — without it, every dragX update re-rasterizes
+            // the whole row's text layout, which can't keep up at 60fps.
+            // collapsable=false ensures Android doesn't optimize this
+            // intermediate view away, which would defeat the cache.
+            collapsable={false}
+            renderToHardwareTextureAndroid
+            shouldRasterizeIOS
             style={[
               styles.setRow,
               !isLast && styles.setRowDivider,
@@ -1190,6 +1591,8 @@ function SetList({
               <View style={{ width: 28, alignItems: "flex-start" }}>
                 {!s.is_planned && (isPr || wasPr) ? (
                   <PrIcon historical={wasPr} />
+                ) : !s.is_planned && showPositionPrs && (isPosPr || wasPosPr) ? (
+                  <PrIcon variant="position" position={i + 1} historical={wasPosPr} />
                 ) : !s.is_planned && isTopOfSession ? (
                   <View style={styles.topDot} />
                 ) : null}
@@ -1267,18 +1670,21 @@ function SetList({
 
         // Swipe-to-delete only for logged sets (not planned targets, since
         // those have their own Hit/Skip flow above).
-        if (s.is_planned) return <View key={s.id}>{body}</View>
+        if (s.is_planned)
+          return (
+            <SetRowFade key={s.id} leaving={leaving} skipFade={skipFade}>
+              <View>{body}</View>
+            </SetRowFade>
+          )
 
         return (
+          <SetRowFade key={s.id} leaving={leaving} skipFade={skipFade}>
           <Swipeable
             ref={(ref) => {
               swipeableRefs.current.set(s.id, ref)
             }}
             key={s.id}
-            enabled={
-              !selectionMode &&
-              (transitioningId === null || transitioningId === s.id)
-            }
+            enabled={!selectionMode}
             // Native-driven animations so the row tracks the finger on the
             // UI thread. With JS driving, fast flicks outrun React's commit
             // cycle and the row stutters / progress never settles at 1
@@ -1287,68 +1693,65 @@ function SetList({
             // natively animatable, so there's no JS/native mixing on the
             // same node.
             useNativeAnimations={true}
-            // friction=1.4 dampens the spam-swipe glitch. The legacy
-            // Swipeable's row transform is `rowTranslation + dragX /
-            // friction` — when a new touch starts mid-spring, the
-            // previous spring keeps animating `rowTranslation` while
-            // the new gesture writes to `dragX`, and the row's visual
-            // is the *sum*. Increasing friction divides the new drag's
-            // contribution, so the in-flight spring no longer
-            // visibly layers on top of finger movement during rapid
-            // back-to-back swipes. Slight loss of 1:1 feel; fixes the
-            // jump.
+            // OVERSHOOT PROFILE — the row tracks the finger 1:1 and
+            // the release spring is allowed to overshoot the open/
+            // closed target slightly before settling. Tuned together:
+            //   - friction=1: 1:1 finger tracking
+            //   - overshootFriction=6: dampens the rubber-band when
+            //     dragging past the action width — without it, drag
+            //     past 140px feels rubbery in a bad way
+            //   - bounciness=8 + speed=14: snappy spring with a small
+            //     natural bounce on settle (~250ms total). Stays in
+            //     the bounciness/speed family — RN throws if a config
+            //     mixes that with tension/friction or stiffness.
+            //   - overshootClamping=false: lets the spring actually
+            //     oscillate (this is the whole point of the overshoot
+            //     profile — clamping=true would freeze it at target)
             friction={1.4}
-            // RNGH docs explicitly recommend `8+` here for a "native
-            // feel". The default of 1 lets the release spring use raw
-            // velocity, which on a fast flick snaps hard at the
-            // -rightWidth boundary.
-            overshootFriction={8}
-            rightThreshold={40}
-            // Require ~16 px of horizontal travel before the pan
-            // handler claims the gesture. Default 10 is so eager that
-            // fast diagonal flicks cause the row to jump as the handler
-            // activates mid-motion.
-            dragOffsetFromRightEdge={16}
+            rightThreshold={10}
+            dragOffsetFromRightEdge={5}
+            activeOffsetX={[-5, 5]}
+            failOffsetY={[-30, 30]}
             overshootLeft={false}
             overshootRight={false}
-            // Clamp the release spring so it can't oscillate past the
-            // target. A spam-interrupted spring with overshoot is the
-            // worst case — it can re-cross the boundary while a new
-            // gesture is already updating `dragX`, producing a visible
-            // bounce.
-            animationOptions={{ overshootClamping: true }}
+            animationOptions={{
+              overshootClamping: true,
+              bounciness: 0,
+              speed: 14,
+            }}
             containerStyle={styles.setSwipeContainer}
             childrenContainerStyle={styles.setSwipeChild}
-            // Mark this row as the active transitioner the moment a
-            // drag begins. Other rows' Swipeables become disabled via
-            // the `enabled` prop above until this row settles, so no
-            // second swipe can interrupt this one mid-flight.
-            onSwipeableOpenStartDrag={() => setTransitioningId(s.id)}
-            onSwipeableCloseStartDrag={() => setTransitioningId(s.id)}
-            // Spring started → still in transition.
-            onSwipeableWillOpen={() => setTransitioningId(s.id)}
             onSwipeableWillClose={() => {
-              setTransitioningId(s.id)
               const current = swipeableRefs.current.get(s.id) ?? null
               if (openSwipeableRef.current === current) {
                 openSwipeableRef.current = null
               }
             }}
-            // Spring settled — clear the lock and apply the
-            // "one-open-at-a-time" rule with no race (the previous row,
-            // if any, gets a clean independent close-spring).
-            onSwipeableOpen={() => {
-              setTransitioningId(null)
-              const current = swipeableRefs.current.get(s.id) ?? null
-              if (
-                openSwipeableRef.current &&
-                openSwipeableRef.current !== current
-              ) {
-                openSwipeableRef.current.close()
-              }
-              openSwipeableRef.current = current
+            // "One-open-at-a-time" close, fired from three callbacks
+            // so the old row closes as early as the legacy Swipeable
+            // will let us. The ref-set in `onSwipeableWillOpen` is
+            // critical — it tracks the row as "open" the moment its
+            // open-spring starts, not when it settles. Without that,
+            // a second swipe started during the first row's in-flight
+            // open-spring sees a null ref and can't close it.
+            //   - onSwipeableOpenStartDrag: drag begins on a closed
+            //     row — earliest signal, runs the close in parallel
+            //     with the new gesture
+            //   - onSwipeableWillOpen: gesture committed past the
+            //     threshold; spring is starting. Mark this row open
+            //     NOW so it's closeable even mid-spring.
+            //   - onSwipeableOpen: spring settled (fallback)
+            onSwipeableOpenStartDrag={() => closeOtherOpenRow(s.id)}
+            onSwipeableWillOpen={() => {
+              closeOtherOpenRow(s.id)
+              openSwipeableRef.current =
+                swipeableRefs.current.get(s.id) ?? null
             }}
-            onSwipeableClose={() => setTransitioningId(null)}
+            onSwipeableOpen={() => {
+              closeOtherOpenRow(s.id)
+              openSwipeableRef.current =
+                swipeableRefs.current.get(s.id) ?? null
+            }}
             renderRightActions={(progress, dragX) => {
               // Three 36-wide circular buttons + 8px gaps + 8px padding
               // = 140 total reveal width. The buttons sit on a transparent
@@ -1359,16 +1762,22 @@ function SetList({
                 outputRange: [0, 140],
                 extrapolate: "clamp",
               })
-              const opacity = progress.interpolate({
-                inputRange: [0, 0.5, 1],
-                outputRange: [0, 0.7, 1],
-                extrapolate: "clamp",
+              // Combine translateX + opacity on a single Animated.View
+              // wrapping all three buttons. Going from 4 native-animated
+              // layers (parent + 3 per-button) to 1 means the compositor
+              // does one GPU operation per frame instead of four — the
+              // single biggest source of swipe judder on Android, where
+              // each Animated layer is a separate composition target.
+              const groupOpacity = progress.interpolate({
+                inputRange: [0, 0.05, 0.25, 1],
+                outputRange: [0, 0, 1, 1],
+                extrapolate: "clamp" as const,
               })
               return (
                 <Animated.View
                   style={[
                     styles.setSwipeActions,
-                    { transform: [{ translateX }], opacity },
+                    { transform: [{ translateX }], opacity: groupOpacity },
                   ]}
                 >
                   <Pressable
@@ -1422,22 +1831,40 @@ function SetList({
           >
             {body}
           </Swipeable>
+          </SetRowFade>
         )
       })}
+      {showPlaceholder && pendingAdd && (
+        <SetRowFade key={`pending-${pendingAdd.key}`}>
+          <Pressable style={styles.setRow} disabled>
+            <View style={styles.setRowContent}>
+              <View style={{ width: 28, alignItems: "flex-start" }} />
+              <Text style={styles.setIndex}>{pendingAdd.baseLen + 1}</Text>
+              <Text style={styles.setWeight}>
+                {formatWeight(pendingAdd.weight, unit)}{" "}
+                <Text style={styles.setUnit}>{unit}</Text>
+              </Text>
+              <Text style={styles.setReps}>{pendingAdd.reps}</Text>
+              {showOneRm && (
+                <Text style={styles.oneRm}>
+                  {formatWeight(
+                    estimateOneRm(pendingAdd.weight, pendingAdd.reps),
+                    unit
+                  )}{" "}
+                  1RM
+                </Text>
+              )}
+            </View>
+          </Pressable>
+        </SetRowFade>
+      )}
     </View>
   )
 }
 
-// Bottom-sheet editor for a set's note. Renders nothing when `visible` is
-// false; when shown, slides up over a translucent backdrop with a multiline
-// TextInput. Save is disabled when the trimmed draft equals the original
-// (no-op) so the user can't waste a network call on identical text.
-//
-// Animation is driven manually (animationType="none" on Modal) so the
-// backdrop can fade independently of the card's slide. The default "slide"
-// animation translates the entire modal — including the dark backdrop —
-// which left a black band sliding off the top on dismiss instead of a
-// clean fade.
+// Fixed centered popup for editing a set's note. No slide/fade animation —
+// the Modal opens and closes instantly so re-opens feel snappy. Save is
+// disabled when the trimmed draft equals the original (no-op).
 function NoteEditorSheet({
   visible,
   original,
@@ -1454,111 +1881,46 @@ function NoteEditorSheet({
   onSave: () => void
 }) {
   const dirty = draft.trim() !== (original ?? "").trim()
-  const anim = useRef(new Animated.Value(0)).current
-  const inputRef = useRef<TextInput>(null)
-  // Keep the Modal mounted through the exit animation. `mounted` lags
-  // `visible` on the way out: visible flips to false, anim runs to 0, then
-  // mounted flips to false and the Modal unmounts.
-  const [mounted, setMounted] = useState(visible)
-  const screenH = Dimensions.get("window").height
-
-  useEffect(() => {
-    if (visible) {
-      if (!mounted) {
-        // First-time mount: reset anim, mount the Modal. The next effect
-        // run (with mounted=true) schedules the entry animation.
-        anim.setValue(0)
-        setMounted(true)
-        return
-      }
-      // Defer one frame so the Modal is fully painted before we start
-      // animating — otherwise the first few frames of the slide are
-      // skipped and the card appears to jump in. Also handles the
-      // interrupted-exit case: if the user reopens while the exit anim
-      // is still running, this reverses direction from the current
-      // anim value back to 1.
-      const raf = requestAnimationFrame(() => {
-        Animated.timing(anim, {
-          toValue: 1,
-          duration: 240,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }).start(({ finished }) => {
-          // Focus only after the slide finishes so the keyboard's
-          // appearance doesn't fight the translateY animation.
-          if (finished) inputRef.current?.focus()
-        })
-      })
-      return () => cancelAnimationFrame(raf)
-    } else if (mounted) {
-      Animated.timing(anim, {
-        toValue: 0,
-        duration: 200,
-        easing: Easing.in(Easing.cubic),
-        useNativeDriver: true,
-      }).start(({ finished }) => {
-        if (finished) setMounted(false)
-      })
-    }
-  }, [visible, mounted, anim])
-
-  if (!mounted) return null
-
-  const backdropOpacity = anim
-  const cardTranslateY = anim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [screenH, 0],
-  })
-
   return (
     <Modal
-      visible={mounted}
+      visible={visible}
       transparent
-      animationType="none"
+      animationType="fade"
       onRequestClose={onCancel}
     >
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.notePopupRoot}
       >
-        <View style={styles.noteSheetRoot}>
-          <Animated.View
-            style={[styles.noteSheetBackdropFill, { opacity: backdropOpacity }]}
-            pointerEvents="none"
-          />
-          <Pressable style={styles.noteSheetPressArea} onPress={onCancel} />
-          <Animated.View
-            style={[styles.noteSheetCardWrap, { transform: [{ translateY: cardTranslateY }] }]}
-          >
-            {/* Stop the inner card from forwarding presses to the backdrop. */}
-            <Pressable onPress={() => {}} style={styles.noteSheetCard}>
-              <Text style={styles.noteSheetTitle}>Note</Text>
-              <TextInput
-                ref={inputRef}
-                value={draft}
-                onChangeText={onChangeDraft}
-                placeholder="Add a note for this set…"
-                placeholderTextColor={theme.colors.muted}
-                multiline
-                style={styles.noteSheetInput}
+        <Pressable style={styles.notePopupBackdrop} onPress={onCancel}>
+          {/* Stop the inner card from forwarding presses to the backdrop. */}
+          <Pressable onPress={() => {}} style={styles.notePopupCard}>
+            <Text style={styles.noteSheetTitle}>Note</Text>
+            <TextInput
+              value={draft}
+              onChangeText={onChangeDraft}
+              placeholder="Add a note for this set…"
+              placeholderTextColor={theme.colors.muted}
+              multiline
+              autoFocus
+              style={styles.noteSheetInput}
+            />
+            <View style={styles.noteSheetActions}>
+              <Button
+                label="Cancel"
+                variant="secondary"
+                onPress={onCancel}
+                style={{ flex: 1 }}
               />
-              <View style={styles.noteSheetActions}>
-                <Button
-                  label="Cancel"
-                  variant="secondary"
-                  onPress={onCancel}
-                  style={{ flex: 1 }}
-                />
-                <Button
-                  label="Save"
-                  onPress={onSave}
-                  disabled={!dirty}
-                  style={{ flex: 1 }}
-                />
-              </View>
-            </Pressable>
-          </Animated.View>
-        </View>
+              <Button
+                label="Save"
+                onPress={onSave}
+                disabled={!dirty}
+                style={{ flex: 1 }}
+              />
+            </View>
+          </Pressable>
+        </Pressable>
       </KeyboardAvoidingView>
     </Modal>
   )
@@ -1589,8 +1951,8 @@ const styles = StyleSheet.create({
   exerciseName: { color: theme.colors.foreground, fontSize: theme.fontSize.xl, fontWeight: "800" },
   exerciseMeta: { color: theme.colors.muted, fontSize: theme.fontSize.xs, textTransform: "uppercase", letterSpacing: 1.2 },
   card: {
-    backgroundColor: theme.colors.card,
-    borderColor: "rgba(255,255,255,0.05)",
+    backgroundColor: theme.colors.background,
+    borderColor: "rgba(255,255,255,0.12)",
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     padding: theme.spacing[5],
@@ -1621,8 +1983,8 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: theme.radius.md,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.05)",
-    backgroundColor: "rgba(255,255,255,0.03)",
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1632,8 +1994,8 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: theme.radius.md,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.05)",
-    backgroundColor: "rgba(255,255,255,0.03)",
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "transparent",
     color: theme.colors.foreground,
     fontSize: 24,
     fontWeight: "700",
@@ -1664,7 +2026,9 @@ const styles = StyleSheet.create({
     textAlignVertical: "center",
   },
   setListCard: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.background,
+    borderColor: "rgba(255,255,255,0.12)",
+    borderWidth: 1,
     borderRadius: theme.radius.lg,
     marginTop: theme.spacing[2],
     overflow: "hidden",
@@ -1786,28 +2150,25 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
     lineHeight: 16,
   },
-  noteSheetRoot: {
+  notePopupRoot: {
     flex: 1,
-    justifyContent: "flex-end",
   },
-  noteSheetBackdropFill: {
-    ...StyleSheet.absoluteFillObject,
+  notePopupBackdrop: {
+    flex: 1,
     backgroundColor: "rgba(0,0,0,0.55)",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: theme.spacing[10],
   },
-  noteSheetPressArea: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  noteSheetCardWrap: {
-    width: "100%",
-  },
-  noteSheetCard: {
+  notePopupCard: {
+    width: "90%",
+    maxWidth: 360,
     backgroundColor: theme.colors.card,
-    borderTopLeftRadius: theme.radius.lg,
-    borderTopRightRadius: theme.radius.lg,
-    borderTopWidth: 1,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
     borderColor: theme.colors.border,
     padding: theme.spacing[4],
-    paddingBottom: theme.spacing[6],
     gap: theme.spacing[3],
   },
   noteSheetTitle: {
@@ -1824,7 +2185,8 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.md,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[3],
-    minHeight: 96,
+    height: 96,
+    maxHeight: 160,
     textAlignVertical: "top",
   },
   noteSheetActions: {

@@ -1,9 +1,10 @@
 import type { Category, ExerciseKind, UserSettings, WorkoutStatus } from "../types"
 
+// v4: add is_position_pr / was_position_pr to SetRow.
 // v3: add soft-delete support to ExerciseRow.
 // v2: add kind to ExerciseRow, distance/time fields to SetRow.
 // Older snapshots are migrated in blob.ts:migrate().
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 export interface ExerciseRow {
   id: number
@@ -46,6 +47,8 @@ export interface SetRow {
   is_planned: boolean
   is_pr: boolean
   was_pr: boolean
+  is_position_pr: boolean
+  was_position_pr: boolean
   note: string
   order: number
   created_at: string
