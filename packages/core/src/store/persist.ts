@@ -55,9 +55,12 @@ export async function hydrate(): Promise<void> {
     const s = ensureStorage()
     const bytes = await s.readSnapshot()
     let snap: Snapshot
+    let migrated = false
     if (bytes) {
       try {
-        snap = await parse(bytes)
+        const parsed = await parse(bytes)
+        snap = parsed.snapshot
+        migrated = parsed.migrated
       } catch (e) {
         console.error("Failed to parse snapshot, starting fresh", e)
         snap = emptySnapshot(newDeviceId())
@@ -73,7 +76,14 @@ export async function hydrate(): Promise<void> {
 
     markHydrated(snap)
 
-    if (pending.length > 0) {
+    if (migrated) {
+      // Schema bump may have added flags that need a full recompute pass
+      // (e.g. v4 introduced is_position_pr / was_position_pr).
+      const { recomputeAllPrs } = await import("./mutations")
+      recomputeAllPrs()
+    }
+
+    if (pending.length > 0 || migrated) {
       // Persist replayed state and clear the log.
       await flushNow()
     } else {
@@ -278,7 +288,12 @@ function applyOne(snap: Snapshot, op: OpEnvelope): Snapshot {
       }
     }
     case "add_set": {
-      const row = op.row as Snapshot["sets"][number]
+      const raw = op.row as Snapshot["sets"][number]
+      const row: Snapshot["sets"][number] = {
+        ...raw,
+        is_position_pr: raw.is_position_pr ?? false,
+        was_position_pr: raw.was_position_pr ?? false,
+      }
       if (snap.sets.some((s) => s.id === row.id)) return snap
       return { ...snap, sets: [...snap.sets, row] }
     }

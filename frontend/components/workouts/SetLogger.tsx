@@ -16,7 +16,10 @@ import { Button } from "@/components/ui/button"
 import { localApi as api, logPlannedSet } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { defaultStep, formatWeight, fromKg, roundForDisplay, toKg } from "@/lib/units"
-import { useWeightUnit } from "@/components/settings/SettingsProvider"
+import {
+  useShowPositionPrs,
+  useWeightUnit,
+} from "@/components/settings/SettingsProvider"
 import type { WorkoutSet } from "@/types"
 
 interface Props {
@@ -254,6 +257,7 @@ function SetRow({
 }) {
   const confirm = useConfirm()
   const unit = useWeightUnit()
+  const showPositionPrs = useShowPositionPrs()
   const [editing, setEditing] = useState(false)
   const [weight, setWeight] = useState(roundForDisplay(fromKg(set.weight, unit), unit))
   const [reps, setReps] = useState<number>(set.reps ?? 0)
@@ -386,8 +390,17 @@ function SetRow({
               className="size-2 rounded-full border border-dashed border-primary/60"
               aria-label="Target set"
             />
-          ) : (
+          ) : set.is_pr || set.was_pr ? (
             <PrIcon isPr={set.is_pr} wasPr={set.was_pr} className="size-4" />
+          ) : showPositionPrs ? (
+            <PrIcon
+              isPr={set.is_position_pr}
+              wasPr={set.was_position_pr}
+              variant="position"
+              position={index}
+            />
+          ) : (
+            <PrIcon isPr={false} wasPr={false} className="size-4" />
           )}
           <span className="font-mono text-base font-semibold tabular-nums text-muted-foreground">
             {index}

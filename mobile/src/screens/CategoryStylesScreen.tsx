@@ -228,7 +228,7 @@ function CategoryEditorModal({
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType="fade"
       onRequestClose={onCancel}
     >
       <KeyboardAvoidingView
@@ -367,16 +367,17 @@ const styles = StyleSheet.create({
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.55)",
-    justifyContent: "flex-end",
+    justifyContent: "flex-start",
+    alignItems: "stretch",
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: theme.spacing[10],
   },
   modalCard: {
     backgroundColor: theme.colors.card,
-    borderTopLeftRadius: theme.radius.lg,
-    borderTopRightRadius: theme.radius.lg,
-    borderTopWidth: 1,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
     borderColor: theme.colors.border,
     padding: theme.spacing[4],
-    paddingBottom: theme.spacing[6],
     gap: theme.spacing[3],
   },
   modalTitle: {

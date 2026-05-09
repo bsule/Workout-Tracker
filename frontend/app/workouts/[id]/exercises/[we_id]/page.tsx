@@ -10,7 +10,7 @@ import {
   ListPlus,
   Trophy,
 } from "lucide-react"
-import { useStore, useHydrated } from "@/lib/store"
+import { useStore, useHydrated, localApi as api, deleteWorkout } from "@/lib/store"
 import { FullPageLoader, LoadingBlock } from "@/components/ui/Spinner"
 import { getWorkoutQ, getExerciseHistoryQ } from "@/lib/store/queries"
 import { useAuth } from "@/components/auth/AuthProvider"
@@ -66,6 +66,34 @@ export default function ExerciseLoggerPage({
       setError(null)
     }
   }, [hydrated, workout, we])
+
+  // On leave, if no set was ever logged on this exercise, drop the empty
+  // WE so it doesn't show up as a ghost row on the day view. If that
+  // leaves the workout empty *and* it has no other state (gym, started_at,
+  // planned status), delete the workout too — it was only created as a
+  // side-effect of the picker flow.
+  useEffect(() => {
+    const workoutId = Number(id)
+    const weId = Number(we_id)
+    return () => {
+      const w = getWorkoutQ(workoutId)
+      if (!w) return
+      const currentWe = w.exercises.find((e) => e.id === weId)
+      if (!currentWe || currentWe.sets.length > 0) return
+      const isOnlyExercise = w.exercises.length === 1
+      const isSideEffectWorkout =
+        isOnlyExercise &&
+        !w.started_at &&
+        !w.gym &&
+        !w.notes &&
+        w.status !== "planned"
+      if (isSideEffectWorkout) {
+        deleteWorkout(workoutId)
+      } else {
+        void api.removeExerciseFromWorkout(workoutId, weId)
+      }
+    }
+  }, [id, we_id])
 
   if (loading || !user) {
     return <FullPageLoader />

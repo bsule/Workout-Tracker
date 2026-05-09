@@ -48,3 +48,9 @@ export function useShowOneRm(): boolean {
   const v = useSettings().settings.show_one_rm
   return v == null ? true : v
 }
+
+/** Whether to render per-set-position PR badges. Defaults to true. */
+export function useShowPositionPrs(): boolean {
+  const v = useSettings().settings.show_position_prs
+  return v == null ? true : v
+}

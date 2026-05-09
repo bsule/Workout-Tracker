@@ -139,11 +139,27 @@ export function CalendarScreen({ navigation }: any) {
         contentContainerStyle={{ paddingBottom: 100 }}
       >
         <View style={styles.detail}>
-          <Text style={styles.detailTitle}>{niceLongDate(selectedDate)}</Text>
+          <View style={styles.detailHeader}>
+            <Text style={styles.detailTitle}>{niceLongDate(selectedDate)}</Text>
+            <Pressable
+              onPress={() => {
+                setActiveDate(selectedDate)
+                navigation.navigate("Today", { date: selectedDate })
+              }}
+              hitSlop={8}
+              style={({ pressed }) => [styles.goToDateBtn, pressedStyle(pressed)]}
+            >
+              <Text style={styles.goToDateText}>Go to date</Text>
+              <Ionicons
+                name="arrow-forward"
+                size={14}
+                color={theme.colors.foreground}
+              />
+            </Pressable>
+          </View>
           <DayWorkoutContent
             date={selectedDate}
             onPressExercise={openSetLogger}
-            compact
           />
         </View>
       </ScrollView>
@@ -334,9 +350,32 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
+  detailHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[3],
+  },
   detailTitle: {
+    flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.md,
+    fontWeight: "700",
+  },
+  goToDateBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  goToDateText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.xs,
     fontWeight: "700",
   },
   dotsRow: {

@@ -1,13 +1,13 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react"
 import {
   Alert,
+  FlatList,
   KeyboardAvoidingView,
   Modal,
   type NativeScrollEvent,
@@ -28,18 +28,17 @@ import {
   useHydrated,
   useStore,
   getWorkoutByDateQ,
-  formatWeight,
   workoutDurationSeconds,
 } from "@lift/core"
 import type { Workout, WorkoutExercise } from "@lift/core"
 import { Ionicons } from "@expo/vector-icons"
+import { useIsFocused } from "@react-navigation/native"
 import { Button } from "../components/Button"
-import { PrIcon } from "../components/PrIcon"
+import { SetList } from "../components/SetList"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
 import { useCategoryColor } from "../categories/CategoryStylesProvider"
-import { useWeightUnit } from "../settings/SettingsProvider"
 import { useActiveDateAndSetter } from "../state/activeDate"
 
 function todayString(): string {
@@ -55,91 +54,98 @@ function shiftDateString(date: string, delta: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+// ~6 year sliding window (3 each side of today). Generous enough that
+// the user effectively never hits the edge in normal use, and the
+// `data` array is just integers so the memory cost is trivial — only
+// ~3 pages of `DayContent` are rendered at a time thanks to FlatList
+// virtualization.
+const TOTAL_DAYS = 365 * 6
+const INITIAL_INDEX = Math.floor(TOTAL_DAYS / 2)
+
+const noop = () => {}
+
 export function DayScreen({ navigation, route }: any) {
   // Date lives in the shared ActiveDate context — that way the global "+"
   // tab reads the same value DayScreen displays, with zero sync lag. Any
   // initial date param wins on first mount.
   const { date, setDate } = useActiveDateAndSetter()
+  // useIsFocused returns false while a stack child (e.g. ExercisePicker) is
+  // on top — including during the back-swipe gesture. Gating the horizontal
+  // pager's scroll on this prevents the tail end of an edge-swipe-back from
+  // being caught by the date pager once the picker dismisses.
+  const isFocused = useIsFocused()
   useEffect(() => {
     if (route?.params?.date) setDate(route.params.date)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const { width: pageWidth } = useWindowDimensions()
-  const pagerRef = useRef<ScrollView | null>(null)
+
+  // Anchor: today as of mount. FlatList index N maps to anchor +
+  // (N - INITIAL_INDEX) days. The pager is now a single virtualized
+  // horizontal list — every swipe just shifts the FlatList's content
+  // offset by one page, no mid-flight recenter. That removes the
+  // entire class of spam-swipe bugs the 3-page version had.
+  const anchorRef = useRef(todayString())
+
+  const indexForDate = useCallback((d: string) => {
+    const a = new Date(anchorRef.current + "T00:00:00")
+    const t = new Date(d + "T00:00:00")
+    const diff = Math.round((t.getTime() - a.getTime()) / 86400000)
+    return INITIAL_INDEX + diff
+  }, [])
+
+  const dateForIndex = useCallback(
+    (idx: number) => shiftDateString(anchorRef.current, idx - INITIAL_INDEX),
+    []
+  )
 
   // Long-press a whole exercise card to enter multi-select; tap other cards
-  // to add. The selection bar replaces the summary card while active.
-  // selectedIds are workout-exercise ids (we.id), not individual set ids.
-  // Selection lives at the screen level (not per-page) and is cleared
-  // automatically when the date changes via swipe or tap.
+  // to add. selectedIds live at the screen level and clear automatically
+  // when the date changes via swipe or tap.
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const selectionMode = selectedIds.length > 0
-
-  // While a date transition is in flight, the pager is gesture-locked.
-  // Two layers, because each catches a different way the spam-glitch
-  // sneaks in:
-  //   1. `isTransitioning` (state) flips `scrollEnabled` off — blocks
-  //      *new* gestures the system would route to this ScrollView.
-  //   2. `transitioningRef` is a synchronous guard inside the
-  //      momentum-end handler. iOS can fire a queued momentum-end *after*
-  //      we set state but before React commits, and the handler's
-  //      closure still sees the old state value. The ref always reads
-  //      latest, so a duplicate momentum-end is dropped on the floor.
-  const [isTransitioning, setIsTransitioning] = useState(false)
-  const transitioningRef = useRef(false)
 
   function shiftDay(delta: number) {
     setDate(shiftDateString(date, delta))
   }
 
-  // The 3-page horizontal pager keeps prev/current/next mounted so the
-  // neighbor day's content is visible during the swipe (no black flash).
-  // After paging settles on a neighbor we update `date` and recenter to
-  // the middle so the user can keep swiping in either direction without
-  // hitting an edge.
-  //
-  // Closure safety: we read `date` from a ref so a stale render's
-  // handleMomentumEnd can't shift from yesterday's value when the user
-  // swipes faster than React commits.
+  const flatListRef = useRef<FlatList<number> | null>(null)
   const dateRef = useRef(date)
   useEffect(() => {
     dateRef.current = date
   }, [date])
 
+  // When `date` changes from a swipe, FlatList is *already* at the
+  // correct offset — we should not call scrollToOffset again, otherwise
+  // a rapid follow-up gesture gets jolted. This flag lets the
+  // sync-effect skip swipe-driven changes; only external sources
+  // (Today button, calendar nav, route param) trigger a programmatic
+  // scroll.
+  const swipeInProgressRef = useRef(false)
+
   function handleMomentumEnd(e: NativeSyntheticEvent<NativeScrollEvent>) {
-    if (transitioningRef.current) return
-    const x = e.nativeEvent.contentOffset.x
     if (pageWidth <= 0) return
-    const page = Math.round(x / pageWidth)
-    if (page === 1) return
-    transitioningRef.current = true
-    setIsTransitioning(true)
-    const delta = page === 0 ? -1 : 1
-    setDate(shiftDateString(dateRef.current, delta))
-    // No inline scrollTo here — recentering before React commits the new
-    // prev/current/next pages flashes the wrong day for one frame. The
-    // useLayoutEffect below recenters AFTER commit, before paint.
+    const x = e.nativeEvent.contentOffset.x
+    const idx = Math.round(x / pageWidth)
+    const newDate = dateForIndex(idx)
+    if (newDate === dateRef.current) return
+    swipeInProgressRef.current = true
+    setDate(newDate)
+    requestAnimationFrame(() => {
+      swipeInProgressRef.current = false
+    })
   }
 
-  // Recenter the pager whenever `date` changes (swipe, route param,
-  // "Today" tap, calendar nav). useLayoutEffect runs synchronously after
-  // React commits the new pages but before paint, so the scroll snap is
-  // invisible — no flash of the neighbor's content.
-  useLayoutEffect(() => {
-    pagerRef.current?.scrollTo({ x: pageWidth, y: 0, animated: false })
+  // Sync FlatList scroll position to `date` on external changes only.
+  // (Selection always clears on a date change, regardless of source.)
+  useEffect(() => {
     setSelectedIds([])
-    // Unlock on the next frame — the ref guard above is what actually
-    // drops queued momentum-end events synchronously, so the state
-    // lock just needs to span "React commit + paint" so the user
-    // doesn't see a stale page when their next swipe begins. A long
-    // timeout here only made the screen feel sluggish.
-    const id = requestAnimationFrame(() => {
-      transitioningRef.current = false
-      setIsTransitioning(false)
-    })
-    return () => cancelAnimationFrame(id)
-  }, [date, pageWidth])
+    if (swipeInProgressRef.current) return
+    if (pageWidth <= 0) return
+    const offset = indexForDate(date) * pageWidth
+    flatListRef.current?.scrollToOffset({ offset, animated: false })
+  }, [date, pageWidth, indexForDate])
 
   const toggleSelected = useCallback((weId: number) => {
     setSelectedIds((prev) =>
@@ -148,8 +154,51 @@ export function DayScreen({ navigation, route }: any) {
   }, [])
   const clearSelection = useCallback(() => setSelectedIds([]), [])
 
-  const prevDate = useMemo(() => shiftDateString(date, -1), [date])
-  const nextDate = useMemo(() => shiftDateString(date, 1), [date])
+  const data = useMemo(
+    () => Array.from({ length: TOTAL_DAYS }, (_, i) => i),
+    []
+  )
+
+  const getItemLayout = useCallback(
+    (_d: ArrayLike<number> | null | undefined, index: number) => ({
+      length: pageWidth,
+      offset: pageWidth * index,
+      index,
+    }),
+    [pageWidth]
+  )
+
+  const keyExtractor = useCallback((item: number) => String(item), [])
+
+  const renderItem = useCallback(
+    ({ item }: { item: number }) => {
+      const itemDate = dateForIndex(item)
+      const isCurrent = itemDate === date
+      return (
+        <View style={{ width: pageWidth }}>
+          <DayContent
+            date={itemDate}
+            navigation={navigation}
+            interactive={isCurrent}
+            selectedIds={isCurrent ? selectedIds : []}
+            selectionMode={isCurrent ? selectionMode : false}
+            onToggleSelected={isCurrent ? toggleSelected : noop}
+            onClearSelection={isCurrent ? clearSelection : noop}
+          />
+        </View>
+      )
+    },
+    [
+      date,
+      pageWidth,
+      selectedIds,
+      selectionMode,
+      dateForIndex,
+      navigation,
+      toggleSelected,
+      clearSelection,
+    ]
+  )
 
   return (
     <StaticSafeAreaView>
@@ -158,55 +207,27 @@ export function DayScreen({ navigation, route }: any) {
         <DateNav date={date} onShift={shiftDay} onToday={() => setDate(todayString())} />
       </View>
 
-      <ScrollView
-        ref={pagerRef}
+      <FlatList
+        ref={flatListRef}
+        data={data}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
+        getItemLayout={getItemLayout}
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
-        // Start at middle page; subsequent re-centerings are explicit.
-        contentOffset={{ x: pageWidth, y: 0 }}
+        decelerationRate={0.9}
+        disableIntervalMomentum={true}
+        scrollEnabled={!selectionMode && isFocused}
+        initialScrollIndex={indexForDate(date)}
         onMomentumScrollEnd={handleMomentumEnd}
-        // Disable horizontal swipe while in selection mode so multi-select
-        // taps don't accidentally page the view, and during a date
-        // transition so spam-swipes can't stack mid-recenter.
-        scrollEnabled={!selectionMode && !isTransitioning}
         keyboardShouldPersistTaps="handled"
         style={styles.pager}
-      >
-        <View style={{ width: pageWidth }}>
-          <DayContent
-            date={prevDate}
-            navigation={navigation}
-            interactive={false}
-            selectedIds={[]}
-            selectionMode={false}
-            onToggleSelected={() => {}}
-            onClearSelection={() => {}}
-          />
-        </View>
-        <View style={{ width: pageWidth }}>
-          <DayContent
-            date={date}
-            navigation={navigation}
-            interactive={true}
-            selectedIds={selectedIds}
-            selectionMode={selectionMode}
-            onToggleSelected={toggleSelected}
-            onClearSelection={clearSelection}
-          />
-        </View>
-        <View style={{ width: pageWidth }}>
-          <DayContent
-            date={nextDate}
-            navigation={navigation}
-            interactive={false}
-            selectedIds={[]}
-            selectionMode={false}
-            onToggleSelected={() => {}}
-            onClearSelection={() => {}}
-          />
-        </View>
-      </ScrollView>
+        windowSize={3}
+        maxToRenderPerBatch={3}
+        initialNumToRender={3}
+        removeClippedSubviews={Platform.OS === "android"}
+      />
     </StaticSafeAreaView>
   )
 }
@@ -230,10 +251,34 @@ function DayContent({
 }) {
   const hydrated = useHydrated()
   const snapshot = useStore((s) => s.snapshot)
-  const workout = useMemo(
+  const rawWorkout = useMemo(
     () => (hydrated ? getWorkoutByDateQ(date) : undefined),
     [hydrated, date, snapshot]
   )
+  // Hide WEs that have no sets yet — they're transient placeholders that only
+  // exist while the user is in SetLogger from the picker flow. If a backwards
+  // navigation drops them, we don't want a half-second flash of an empty
+  // "Add first set" card. The cleanup hook in SetLoggerScreen still purges
+  // them from the store, this just gates visibility in the meantime.
+  // If filtering leaves the workout with no exercises *and* no other state
+  // (gym, started_at, planned), treat the whole workout as not-yet-existing
+  // so the SummaryStrip/empty state don't flash either.
+  const workout = useMemo(() => {
+    if (!rawWorkout) return rawWorkout
+    const visibleExercises = rawWorkout.exercises.filter(
+      (we) => we.sets.length > 0
+    )
+    if (
+      visibleExercises.length === 0 &&
+      !rawWorkout.started_at &&
+      !rawWorkout.gym &&
+      !rawWorkout.notes &&
+      rawWorkout.status !== "planned"
+    ) {
+      return undefined
+    }
+    return { ...rawWorkout, exercises: visibleExercises }
+  }, [rawWorkout])
 
   function handleStart() {
     if (!workout || workout.status !== "planned") return
@@ -487,7 +532,7 @@ function GymPickerModal({
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType="fade"
       onRequestClose={onClose}
     >
       <KeyboardAvoidingView
@@ -606,7 +651,6 @@ function ExerciseRow({
   isSelected: boolean
   selectionMode: boolean
 }) {
-  const unit = useWeightUnit()
   const catColor = useCategoryColor(we.exercise.category)
   const setCount = we.sets.length
   const loggedCount = we.sets.filter((s) => !s.is_planned).length
@@ -623,9 +667,6 @@ function ExerciseRow({
         isSelected && styles.exerciseCardSelected,
       ]}
     >
-      {/* Category-color accent strip running the full height of the card */}
-      <View style={[styles.exerciseAccent, { backgroundColor: catColor }]} />
-
       <View style={styles.exerciseInner}>
         <View style={styles.exerciseHeader}>
           <View style={styles.exerciseTitleWrap}>
@@ -665,62 +706,7 @@ function ExerciseRow({
           </View>
         ) : (
           <View style={styles.exSetList}>
-            {we.sets.map((s, i) => {
-              const isPr = !!s.is_pr
-              const wasPr = !s.is_pr && !!s.was_pr
-              return (
-                <View
-                  key={s.id}
-                  style={[
-                    styles.exSetRow,
-                    s.is_planned && styles.exSetRowPlanned,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.exSetNum,
-                      s.is_planned && { color: "rgba(255,255,255,0.30)" },
-                      isPr && { color: "#e0c050" },
-                    ]}
-                  >
-                    {i + 1}
-                  </Text>
-                  <View style={styles.exSetWeightReps}>
-                    <Text
-                      style={[
-                        styles.exSetWeight,
-                        s.is_planned && styles.exSetDim,
-                      ]}
-                    >
-                      {formatWeight(s.weight, unit)}
-                    </Text>
-                    <Text style={styles.exSetUnit}>{unit}</Text>
-                    <Text
-                      style={[
-                        styles.exSetTimes,
-                        s.is_planned && { color: "rgba(255,255,255,0.20)" },
-                      ]}
-                    >
-                      ×
-                    </Text>
-                    <Text
-                      style={[
-                        styles.exSetReps,
-                        s.is_planned && styles.exSetDim,
-                      ]}
-                    >
-                      {s.reps ?? "—"}
-                    </Text>
-                  </View>
-                  <View style={styles.exSetTrailing}>
-                    {(isPr || wasPr) && <PrIcon historical={!isPr} />}
-                    {s.is_planned && (
-                      <Text style={styles.exSetPlannedTag}>plan</Text>
-                    )}
-                  </View>
-                </View>
-              )
-            })}
+            <SetList sets={we.sets} />
           </View>
         )}
       </View>
@@ -838,8 +824,8 @@ const styles = StyleSheet.create({
   emptyText: { color: theme.colors.muted, fontSize: theme.fontSize.sm },
   exerciseCard: {
     flexDirection: "row",
-    backgroundColor: theme.colors.card,
-    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    borderColor: "rgba(255,255,255,0.25)",
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     overflow: "hidden",
@@ -865,9 +851,13 @@ const styles = StyleSheet.create({
   },
   exerciseName: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.md,
-    fontWeight: "800",
-    letterSpacing: -0.3,
+    fontFamily: Platform.select({
+      ios: "Futura",
+      android: "sans-serif-condensed",
+    }),
+    fontSize: theme.fontSize.base,
+    fontWeight: "700",
+    letterSpacing: -0.2,
   },
   exerciseCategory: {
     fontSize: 10,
@@ -909,77 +899,47 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   exSetList: {
-    borderTopColor: "rgba(255,255,255,0.06)",
-    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(255,255,255,0.25)",
+    borderTopWidth: 1,
   },
   exSetRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: 9,
-    borderBottomColor: "rgba(255,255,255,0.04)",
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: 8,
+    gap: theme.spacing[3],
+    borderBottomColor: "rgba(255,255,255,0.18)",
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  exSetRowPlanned: {
-    backgroundColor: "rgba(255,255,255,0.012)",
+  exSetIcon: { width: 28, alignItems: "flex-start" },
+  exPlannedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderColor: theme.colors.primary,
+    borderStyle: "dashed",
+    borderWidth: 1.5,
   },
-  exSetNum: {
-    width: 18,
+  exSetIndex: {
+    width: 24,
     color: theme.colors.muted,
-    fontSize: theme.fontSize.xs,
-    fontWeight: "800",
-    fontVariant: ["tabular-nums"],
-  },
-  exSetWeightReps: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "baseline",
-    gap: 4,
+    fontSize: theme.fontSize.base,
+    fontWeight: "600",
   },
   exSetWeight: {
+    flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.md,
-    fontWeight: "800",
-    letterSpacing: -0.3,
-    fontVariant: ["tabular-nums"],
-  },
-  exSetUnit: {
-    color: theme.colors.muted,
-    fontSize: 10,
     fontWeight: "700",
-    marginRight: 2,
+    textAlign: "center",
   },
-  exSetTimes: {
-    color: "rgba(255,255,255,0.30)",
-    fontSize: theme.fontSize.sm,
-    fontWeight: "500",
-    marginHorizontal: 1,
-  },
+  exSetUnit: { color: theme.colors.muted, fontSize: 12, fontWeight: "400" },
   exSetReps: {
+    width: 50,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.md,
-    fontWeight: "800",
-    fontVariant: ["tabular-nums"],
-  },
-  exSetDim: {
-    color: theme.colors.muted,
-    fontStyle: "italic",
-  },
-  exSetTrailing: {
-    minWidth: 36,
-    alignItems: "flex-end",
-  },
-  exSetPlannedTag: {
-    color: theme.colors.muted,
-    fontSize: 9,
-    fontWeight: "800",
-    textTransform: "uppercase",
-    letterSpacing: 1.2,
-    paddingHorizontal: 5,
-    paddingVertical: 1.5,
-    borderRadius: 3,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    fontWeight: "700",
+    textAlign: "right",
   },
   exerciseCardSelected: {
     borderColor: theme.colors.foreground,
@@ -988,8 +948,8 @@ const styles = StyleSheet.create({
   selectionBar: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: theme.colors.card,
-    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    borderColor: "rgba(255,255,255,0.25)",
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     paddingHorizontal: theme.spacing[3],
@@ -1028,16 +988,17 @@ const styles = StyleSheet.create({
   gymSheetBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.55)",
-    justifyContent: "flex-end",
+    justifyContent: "flex-start",
+    alignItems: "stretch",
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: theme.spacing[10],
   },
   gymSheetCard: {
     backgroundColor: theme.colors.card,
-    borderTopLeftRadius: theme.radius.lg,
-    borderTopRightRadius: theme.radius.lg,
-    borderTopWidth: 1,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
     borderColor: theme.colors.border,
     padding: theme.spacing[4],
-    paddingBottom: theme.spacing[6],
     gap: theme.spacing[3],
   },
   gymSheetTitle: {
