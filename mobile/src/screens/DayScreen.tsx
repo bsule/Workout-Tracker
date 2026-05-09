@@ -7,9 +7,10 @@ import {
 } from "react"
 import {
   Alert,
+  Animated,
+  Easing,
   FlatList,
-  KeyboardAvoidingView,
-  Modal,
+  Keyboard,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
@@ -52,6 +53,13 @@ function shiftDateString(date: string, delta: number): string {
   const d = new Date(date + "T00:00:00")
   d.setDate(d.getDate() + delta)
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function tintedBg(hex: string, alpha = 0.16): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+  if (!m) return `rgba(255,255,255,${alpha})`
+  const n = parseInt(m[1], 16)
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
 }
 
 // ~6 year sliding window (3 each side of today). Generous enough that
@@ -312,69 +320,85 @@ function DayContent({
     )
   }
 
-  return (
-    <ScrollView style={styles.scrollView} contentContainerStyle={styles.scroll}>
-      {selectionMode && interactive ? (
-        <View style={styles.selectionBar}>
-          <Pressable
-            onPress={onClearSelection}
-            hitSlop={12}
-            style={styles.selectionCancelBtn}
-          >
-            <Ionicons name="close" size={22} color={theme.colors.foreground} />
-          </Pressable>
-          <Text style={styles.selectionCount}>
-            {selectedIds.length} selected
-          </Text>
-          <Pressable
-            onPress={confirmDeleteSelected}
-            style={({ pressed }) => [
-              styles.selectionRemoveBtn,
-              pressed && { opacity: 0.85 },
-            ]}
-          >
-            <Ionicons name="trash-outline" size={16} color={theme.colors.destructive} />
-            <Text style={styles.selectionRemoveText}>Remove</Text>
-          </Pressable>
-        </View>
-      ) : (
-        <>
-          {workout && <SummaryStrip workout={workout} />}
-          {workout?.status === "planned" && (
-            <PlannedBanner date={date} onStart={handleStart} />
-          )}
-        </>
-      )}
+  const [gymPickerOpen, setGymPickerOpen] = useState(false)
 
-      {workout && workout.exercises.length > 0 ? (
-        <View style={{ gap: theme.spacing[3] }}>
-          {workout.exercises.map((we) => {
-            const isSelected = interactive && selectedIds.includes(we.id)
-            return (
-              <ExerciseRow
-                key={we.id}
-                we={we}
-                isSelected={isSelected}
-                selectionMode={selectionMode && interactive}
-                onPress={() => {
-                  if (!interactive) return
-                  if (selectionMode) onToggleSelected(we.id)
-                  else handlePressExercise(we)
-                }}
-                onLongPress={() => {
-                  if (!interactive) return
-                  if (!isSelected) onToggleSelected(we.id)
-                }}
+  return (
+    <View style={{ flex: 1 }}>
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scroll}>
+        {selectionMode && interactive ? (
+          <View style={styles.selectionBar}>
+            <Pressable
+              onPress={onClearSelection}
+              hitSlop={12}
+              style={styles.selectionCancelBtn}
+            >
+              <Ionicons name="close" size={22} color={theme.colors.foreground} />
+            </Pressable>
+            <Text style={styles.selectionCount}>
+              {selectedIds.length} selected
+            </Text>
+            <Pressable
+              onPress={confirmDeleteSelected}
+              style={({ pressed }) => [
+                styles.selectionRemoveBtn,
+                pressed && { opacity: 0.85 },
+              ]}
+            >
+              <Ionicons name="trash-outline" size={16} color={theme.colors.destructive} />
+              <Text style={styles.selectionRemoveText}>Remove</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <>
+            {workout && (
+              <SummaryStrip
+                workout={workout}
+                onOpenPicker={() => setGymPickerOpen(true)}
               />
-            )
-          })}
-        </View>
-      ) : (
-        <View style={styles.empty}>
-          <Text style={styles.emptyText}>No exercises yet. Add one below.</Text>
-        </View>
+            )}
+            {workout?.status === "planned" && (
+              <PlannedBanner date={date} onStart={handleStart} />
+            )}
+          </>
+        )}
+
+        {workout && workout.exercises.length > 0 ? (
+          <View style={{ gap: theme.spacing[3] }}>
+            {workout.exercises.map((we) => {
+              const isSelected = interactive && selectedIds.includes(we.id)
+              return (
+                <ExerciseRow
+                  key={we.id}
+                  we={we}
+                  isSelected={isSelected}
+                  selectionMode={selectionMode && interactive}
+                  onPress={() => {
+                    if (!interactive) return
+                    if (selectionMode) onToggleSelected(we.id)
+                    else handlePressExercise(we)
+                  }}
+                  onLongPress={() => {
+                    if (!interactive) return
+                    if (!isSelected) onToggleSelected(we.id)
+                  }}
+                />
+              )
+            })}
+          </View>
+        ) : (
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>No exercises yet. Add one below.</Text>
+          </View>
+        )}
+      </ScrollView>
+      {workout && interactive && (
+        <GymPickerModal
+          visible={gymPickerOpen}
+          workout={workout}
+          onClose={() => setGymPickerOpen(false)}
+        />
       )}
-    </ScrollView>
+    </View>
   )
 }
 
@@ -437,9 +461,13 @@ function labelForDate(d: string): string {
   })
 }
 
-function SummaryStrip({ workout }: { workout: Workout }) {
-  const [pickerOpen, setPickerOpen] = useState(false)
-
+function SummaryStrip({
+  workout,
+  onOpenPicker,
+}: {
+  workout: Workout
+  onOpenPicker: () => void
+}) {
   // Show start/end/duration whenever the workout has a real `started_at` —
   // that's set when the workout was originally created on its own day. Past
   // workouts that were logged retroactively (createWorkout for a past date)
@@ -460,7 +488,7 @@ function SummaryStrip({ workout }: { workout: Workout }) {
           {duration && <SummaryMeta label="Duration" value={duration} />}
         </View>
         <Pressable
-          onPress={() => setPickerOpen(true)}
+          onPress={onOpenPicker}
           style={({ pressed }) => [styles.summaryGymRow, pressedStyle(pressed)]}
           hitSlop={8}
         >
@@ -476,19 +504,17 @@ function SummaryStrip({ workout }: { workout: Workout }) {
           </Text>
         </Pressable>
       </View>
-      <GymPickerModal
-        visible={pickerOpen}
-        workout={workout}
-        onClose={() => setPickerOpen(false)}
-      />
     </View>
   )
 }
 
-// Bottom-sheet modal for editing the workout's gym. Shows suggestions
-// drawn from `localApi.listGyms()` (saved + previously-typed names).
-// Tapping a suggestion fills the input but does not auto-save — gives the
-// user a chance to tweak before committing.
+// Custom Animated.View overlay (not react-native-modal) for picking
+// the workout's gym. Same pattern as SetLogger's NoteEditorSheet —
+// react-native-modal's keyboard handling caused visible stutter on
+// close, and mutations during the exit animation made it appear to
+// "double-animate". This implementation runs a single native-driven
+// fade and defers store mutations until after the fade completes.
+const GYM_FADE_MS = 180
 function GymPickerModal({
   visible,
   workout,
@@ -498,99 +524,185 @@ function GymPickerModal({
   workout: Workout
   onClose: () => void
 }) {
-  const [draft, setDraft] = useState(workout.gym ?? "")
   const [gymNames, setGymNames] = useState<string[]>([])
-  const [saving, setSaving] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [newGym, setNewGym] = useState("")
+  const opacity = useRef(new Animated.Value(0)).current
+  const [mounted, setMounted] = useState(visible)
+  const newGymInputRef = useRef<TextInput | null>(null)
 
   useEffect(() => {
-    if (!visible) return
-    setDraft(workout.gym ?? "")
-    api
-      .listGyms()
-      .then((gs) => setGymNames(gs.map((g) => g.name)))
-      .catch(() => setGymNames([]))
-  }, [visible, workout.gym, workout.id])
-
-  const filtered = useMemo(() => {
-    const q = draft.trim().toLowerCase()
-    if (!q) return gymNames
-    return gymNames.filter((g) => g.toLowerCase().includes(q))
-  }, [gymNames, draft])
-
-  async function save() {
-    if (saving) return
-    setSaving(true)
-    try {
-      await api.patchWorkout(workout.id, { gym: draft.trim() })
-      onClose()
-    } finally {
-      setSaving(false)
+    if (visible) {
+      setMounted(true)
+      setAdding(false)
+      setNewGym("")
+      api
+        .listGyms()
+        .then((gs) => setGymNames(gs.map((g) => g.name)))
+        .catch(() => setGymNames([]))
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: GYM_FADE_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start()
+      return
     }
+    Animated.timing(opacity, {
+      toValue: 0,
+      duration: GYM_FADE_MS,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setMounted(false)
+    })
+  }, [visible, opacity])
+
+  const selected = workout.gym
+
+  // Close first, then run the (sync) store mutation after the fade has
+  // finished. Mutating during the exit animation re-renders the parent
+  // mid-fade and visibly stutters the overlay.
+  function deferMutation(fn: () => void) {
+    setTimeout(fn, GYM_FADE_MS + 40)
   }
 
+  function selectGym(name: string) {
+    Keyboard.dismiss()
+    onClose()
+    if (name === workout.gym) return
+    deferMutation(() => api.patchWorkout(workout.id, { gym: name }))
+  }
+
+  function clearGym() {
+    Keyboard.dismiss()
+    onClose()
+    deferMutation(() => api.patchWorkout(workout.id, { gym: "" }))
+  }
+
+  function commitNew() {
+    const name = newGym.trim()
+    if (!name) return
+    Keyboard.dismiss()
+    const exists = gymNames.some(
+      (g) => g.toLowerCase() === name.toLowerCase()
+    )
+    onClose()
+    deferMutation(() => {
+      if (!exists) api.createGym(name)
+      api.patchWorkout(workout.id, { gym: name })
+    })
+  }
+
+  function cancelAdd() {
+    Keyboard.dismiss()
+    setAdding(false)
+    setNewGym("")
+  }
+
+  function startAdding() {
+    setAdding(true)
+    // Focus on next frame so the keyboard rises against an already-
+    // mounted input rather than racing the layout pass.
+    requestAnimationFrame(() => newGymInputRef.current?.focus())
+  }
+
+  if (!mounted) return null
+
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
+    <Animated.View
+      pointerEvents={visible ? "auto" : "none"}
+      style={[styles.gymOverlay, { opacity }]}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
-      >
-        <Pressable style={styles.gymSheetBackdrop} onPress={onClose}>
-          <Pressable onPress={() => {}} style={styles.gymSheetCard}>
-            <Text style={styles.gymSheetTitle}>Gym</Text>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      <View style={styles.gymOverlayCard} pointerEvents="box-none">
+        <Text style={styles.gymOverlayTitle}>Gym</Text>
+        {adding ? (
+          <>
             <TextInput
-              value={draft}
-              onChangeText={setDraft}
-              placeholder="Where are you working out?"
+              ref={newGymInputRef}
+              value={newGym}
+              onChangeText={setNewGym}
+              placeholder="New gym name"
               placeholderTextColor={theme.colors.muted}
-              autoFocus
               autoCapitalize="words"
               autoCorrect={false}
               returnKeyType="done"
-              onSubmitEditing={save}
+              onSubmitEditing={commitNew}
               style={styles.gymSheetInput}
             />
-            {filtered.length > 0 && (
-              <ScrollView
-                style={styles.gymSheetSuggestList}
-                keyboardShouldPersistTaps="handled"
-              >
-                {filtered.map((name) => (
-                  <Pressable
-                    key={name}
-                    onPress={() => setDraft(name)}
-                    style={({ pressed }) => [
-                      styles.gymSheetSuggestRow,
-                      pressed && { opacity: 0.7 },
-                    ]}
-                  >
-                    <Text style={styles.gymSheetSuggestText}>{name}</Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-            )}
             <View style={styles.gymSheetActions}>
               <Button
                 label="Cancel"
                 variant="secondary"
-                onPress={onClose}
+                onPress={cancelAdd}
                 style={{ flex: 1 }}
               />
               <Button
-                label={saving ? "Saving…" : "Save"}
-                onPress={save}
-                disabled={saving}
+                label="Add"
+                onPress={commitNew}
+                disabled={!newGym.trim()}
                 style={{ flex: 1 }}
               />
             </View>
-          </Pressable>
-        </Pressable>
-      </KeyboardAvoidingView>
-    </Modal>
+          </>
+        ) : (
+          <>
+            {gymNames.length === 0 ? (
+              <Text style={styles.gymSheetEmpty}>
+                No gyms yet — tap "Add gym" to create one.
+              </Text>
+            ) : (
+              <ScrollView
+                style={styles.gymSheetSuggestList}
+                keyboardShouldPersistTaps="always"
+              >
+                {gymNames.map((name) => {
+                  const isSelected = name === selected
+                  return (
+                    <Pressable
+                      key={name}
+                      onPress={() => selectGym(name)}
+                      style={({ pressed }) => [
+                        styles.gymSheetSuggestRow,
+                        pressed && { opacity: 0.7 },
+                        isSelected && styles.gymSheetSuggestRowSelected,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.gymSheetSuggestText,
+                          isSelected && styles.gymSheetSuggestTextSelected,
+                        ]}
+                      >
+                        {isSelected ? "✓  " : "    "}
+                        {name}
+                      </Text>
+                    </Pressable>
+                  )
+                })}
+              </ScrollView>
+            )}
+            <View style={styles.gymSheetActions}>
+              <Button
+                label="Add gym"
+                variant="secondary"
+                onPress={startAdding}
+                style={{ flex: 1 }}
+              />
+              <Button label="Done" onPress={onClose} style={{ flex: 1 }} />
+            </View>
+            {workout.gym ? (
+              <Button
+                label="Clear gym"
+                variant="ghost"
+                onPress={clearGym}
+              />
+            ) : null}
+          </>
+        )}
+      </View>
+    </Animated.View>
   )
 }
 
@@ -669,14 +781,9 @@ function ExerciseRow({
     >
       <View style={styles.exerciseInner}>
         <View style={styles.exerciseHeader}>
-          <View style={styles.exerciseTitleWrap}>
-            <Text style={styles.exerciseName} numberOfLines={1}>
-              {we.exercise.name}
-            </Text>
-            <Text style={[styles.exerciseCategory, { color: catColor }]}>
-              {we.exercise.category}
-            </Text>
-          </View>
+          <Text style={styles.exerciseName} numberOfLines={1}>
+            {we.exercise.name}
+          </Text>
           <View style={styles.exerciseHeaderRight}>
             {allPlanned && (
               <View style={[styles.setCountChip, styles.setCountChipPlanned]}>
@@ -690,6 +797,16 @@ function ExerciseRow({
                 </Text>
               </View>
             )}
+            <View
+              style={[
+                styles.exerciseCatPill,
+                { backgroundColor: tintedBg(catColor) },
+              ]}
+            >
+              <Text style={[styles.exerciseCategory, { color: catColor }]}>
+                {we.exercise.category}
+              </Text>
+            </View>
             {isSelected && (
               <Ionicons
                 name="checkmark-circle"
@@ -825,7 +942,7 @@ const styles = StyleSheet.create({
   exerciseCard: {
     flexDirection: "row",
     backgroundColor: theme.colors.background,
-    borderColor: "rgba(255,255,255,0.25)",
+    borderColor: "rgba(255,255,255,0.18)",
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     overflow: "hidden",
@@ -845,25 +962,24 @@ const styles = StyleSheet.create({
     paddingTop: theme.spacing[3],
     paddingBottom: theme.spacing[3],
   },
-  exerciseTitleWrap: {
-    flex: 1,
-    gap: 2,
-  },
   exerciseName: {
+    flex: 1,
     color: theme.colors.foreground,
-    fontFamily: Platform.select({
-      ios: "Futura",
-      android: "sans-serif-condensed",
-    }),
-    fontSize: theme.fontSize.base,
-    fontWeight: "700",
-    letterSpacing: -0.2,
+    fontSize: theme.fontSize.md,
+    fontWeight: "800",
+    letterSpacing: -0.3,
+  },
+  exerciseCatPill: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
   },
   exerciseCategory: {
     fontSize: 10,
     fontWeight: "800",
     textTransform: "uppercase",
-    letterSpacing: 1.4,
+    letterSpacing: 1.6,
   },
   exerciseHeaderRight: {
     flexDirection: "row",
@@ -899,7 +1015,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   exSetList: {
-    borderTopColor: "rgba(255,255,255,0.25)",
+    borderTopColor: "rgba(255,255,255,0.18)",
     borderTopWidth: 1,
   },
   exSetRow: {
@@ -908,7 +1024,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing[3],
     paddingVertical: 8,
     gap: theme.spacing[3],
-    borderBottomColor: "rgba(255,255,255,0.18)",
+    borderBottomColor: theme.colors.foreground,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   exSetIcon: { width: 28, alignItems: "flex-start" },
@@ -949,7 +1065,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: theme.colors.background,
-    borderColor: "rgba(255,255,255,0.25)",
+    borderColor: "rgba(255,255,255,0.18)",
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     paddingHorizontal: theme.spacing[3],
@@ -985,23 +1101,23 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.sm,
     fontWeight: "700",
   },
-  gymSheetBackdrop: {
-    flex: 1,
+  gymOverlay: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.55)",
-    justifyContent: "flex-start",
-    alignItems: "stretch",
+    paddingTop: 80,
     paddingHorizontal: theme.spacing[4],
-    paddingTop: theme.spacing[10],
+    zIndex: 50,
+    elevation: 50,
   },
-  gymSheetCard: {
+  gymOverlayCard: {
     backgroundColor: theme.colors.card,
     borderRadius: theme.radius.lg,
-    borderWidth: 1,
     borderColor: theme.colors.border,
+    borderWidth: 1,
     padding: theme.spacing[4],
     gap: theme.spacing[3],
   },
-  gymSheetTitle: {
+  gymOverlayTitle: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.md,
     fontWeight: "800",
@@ -1028,9 +1144,21 @@ const styles = StyleSheet.create({
     borderBottomColor: "rgba(255,255,255,0.04)",
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
+  gymSheetSuggestRowSelected: {
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
   gymSheetSuggestText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
+  },
+  gymSheetSuggestTextSelected: {
+    fontWeight: "700",
+  },
+  gymSheetEmpty: {
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.sm,
+    fontStyle: "italic",
+    paddingVertical: theme.spacing[2],
   },
   gymSheetActions: {
     flexDirection: "row",

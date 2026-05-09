@@ -1,15 +1,26 @@
+import { memo } from "react"
 import { StyleSheet, Text, View } from "react-native"
 import { formatWeight } from "@lift/core"
-import type { WorkoutSet } from "@lift/core"
 import { PrIcon } from "./PrIcon"
 import { theme } from "../theme/theme"
 import { useSettings, useWeightUnit } from "../settings/SettingsProvider"
 
-interface Props {
-  sets: WorkoutSet[]
+interface DisplaySet {
+  id: number
+  weight: number | null
+  reps: number | null
+  is_pr: boolean
+  was_pr: boolean
+  is_position_pr: boolean
+  was_position_pr: boolean
+  is_planned?: boolean
 }
 
-export function SetList({ sets }: Props) {
+interface Props {
+  sets: DisplaySet[]
+}
+
+export const SetList = memo(function SetList({ sets }: Props) {
   const unit = useWeightUnit()
   const { showPositionPrs } = useSettings()
   return (
@@ -50,7 +61,7 @@ export function SetList({ sets }: Props) {
       ))}
     </View>
   )
-}
+})
 
 const styles = StyleSheet.create({
   setRow: {

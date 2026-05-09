@@ -1,9 +1,6 @@
 import { useState } from "react"
 import {
   Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,11 +9,11 @@ import {
   View,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
-import { localApi as api, useStore } from "@lift/core"
-import type { Gym } from "@lift/core"
+import { localApi as api } from "@lift/core"
 import { useAuth } from "../auth/AuthProvider"
 import { ApiError } from "../auth/api"
 import { Button } from "../components/Button"
+import { PopupModal } from "../components/PopupModal"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { theme } from "../theme/theme"
 import {
@@ -32,7 +29,6 @@ export function SettingsScreen({ navigation }: any) {
   const { user, logout, updateProfile } = useAuth()
   const unit = useWeightUnit()
   const { firstDayOfWeek, showPositionPrs } = useSettings()
-  const gyms = useStore((s) => s.snapshot.gyms) as Gym[]
   // Read once on mount; the toggle prompts for restart so we don't need
   // a reactive subscription here.
   const [themeMode, setThemeMode] = useState<ThemeMode>(currentMode())
@@ -84,42 +80,6 @@ export function SettingsScreen({ navigation }: any) {
     )
   }
 
-  const [gymDraft, setGymDraft] = useState("")
-  const [gymBusy, setGymBusy] = useState(false)
-  const [gymError, setGymError] = useState<string | null>(null)
-
-  async function addGym() {
-    const trimmed = gymDraft.trim()
-    if (!trimmed || gymBusy) return
-    setGymBusy(true)
-    setGymError(null)
-    try {
-      await api.createGym(trimmed)
-      setGymDraft("")
-    } catch (e) {
-      setGymError(e instanceof Error ? e.message : "Failed to add gym.")
-    } finally {
-      setGymBusy(false)
-    }
-  }
-  function confirmDeleteGym(g: Gym) {
-    if (g.id == null) return
-    Alert.alert(
-      "Remove gym?",
-      `"${g.name}" will be removed from your saved gyms. Existing workouts that used this name will keep their gym text.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: () => {
-            if (g.id != null) api.deleteGym(g.id)
-          },
-        },
-      ]
-    )
-  }
-
   const [editingField, setEditingField] = useState<ProfileField | null>(null)
   const [draft, setDraft] = useState("")
   const [busy, setBusy] = useState(false)
@@ -159,6 +119,7 @@ export function SettingsScreen({ navigation }: any) {
       <ScrollView
         style={{ flex: 1, backgroundColor: theme.colors.background }}
         contentContainerStyle={styles.wrap}
+        keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.section}>Account</Text>
         <View style={styles.card}>
@@ -265,55 +226,35 @@ export function SettingsScreen({ navigation }: any) {
           </View>
         </Pressable>
 
-        <Text style={styles.section}>Gyms</Text>
-        <View style={styles.card}>
-          <View style={styles.gymAddRow}>
-            <TextInput
-              value={gymDraft}
-              onChangeText={setGymDraft}
-              placeholder="Add a gym…"
-              placeholderTextColor={theme.colors.muted}
-              autoCapitalize="words"
-              autoCorrect={false}
-              returnKeyType="done"
-              onSubmitEditing={addGym}
-              style={styles.gymInput}
-            />
-            <Button
-              label={gymBusy ? "Adding…" : "Add"}
-              onPress={addGym}
-              disabled={!gymDraft.trim() || gymBusy}
+        <Text style={styles.section}>Data</Text>
+        <Pressable
+          onPress={() => navigation.navigate("ImportExport")}
+          style={({ pressed }) => [styles.card, pressed && { opacity: 0.7 }]}
+        >
+          <View style={styles.row}>
+            <Text style={styles.rowLabel}>Import / Export</Text>
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color={theme.colors.muted}
             />
           </View>
-          {gymError && <Text style={styles.modalError}>{gymError}</Text>}
-          {gyms.length === 0 ? (
-            <Text style={styles.gymEmpty}>No gyms yet.</Text>
-          ) : (
-            <View style={{ gap: theme.spacing[2] }}>
-              {gyms.map((g) => (
-                <View key={String(g.id ?? g.name)} style={styles.gymRow}>
-                  <Text style={styles.gymName} numberOfLines={1}>
-                    {g.name}
-                  </Text>
-                  <Pressable
-                    onPress={() => confirmDeleteGym(g)}
-                    hitSlop={8}
-                    style={({ pressed }) => [
-                      styles.gymDeleteBtn,
-                      pressed && { opacity: 0.7 },
-                    ]}
-                  >
-                    <Ionicons
-                      name="trash-outline"
-                      size={16}
-                      color={theme.colors.destructive}
-                    />
-                  </Pressable>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
+        </Pressable>
+
+        <Text style={styles.section}>Gyms</Text>
+        <Pressable
+          onPress={() => navigation.navigate("Gyms")}
+          style={({ pressed }) => [styles.card, pressed && { opacity: 0.7 }]}
+        >
+          <View style={styles.row}>
+            <Text style={styles.rowLabel}>Manage gyms</Text>
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color={theme.colors.muted}
+            />
+          </View>
+        </Pressable>
 
         <Text style={styles.section}>Maintenance</Text>
         <View style={styles.card}>
@@ -419,48 +360,33 @@ function ProfileEditorModal({
   const title = field === "email" ? "Edit email" : "Edit username"
   const canSave = draft.trim().length > 0 && !busy
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onCancel}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
-      >
-        <Pressable style={styles.modalBackdrop} onPress={onCancel}>
-          <Pressable onPress={() => {}} style={styles.modalCard}>
-            <Text style={styles.modalTitle}>{title}</Text>
-            <TextInput
-              value={draft}
-              onChangeText={onChangeDraft}
-              autoFocus
-              autoCapitalize={field === "email" ? "none" : "none"}
-              autoCorrect={false}
-              keyboardType={field === "email" ? "email-address" : "default"}
-              placeholderTextColor={theme.colors.muted}
-              style={styles.modalInput}
-            />
-            {error && <Text style={styles.modalError}>{error}</Text>}
-            <View style={styles.modalActions}>
-              <Button
-                label="Cancel"
-                variant="secondary"
-                onPress={onCancel}
-                style={{ flex: 1 }}
-              />
-              <Button
-                label={busy ? "Saving…" : "Save"}
-                onPress={onSave}
-                disabled={!canSave}
-                style={{ flex: 1 }}
-              />
-            </View>
-          </Pressable>
-        </Pressable>
-      </KeyboardAvoidingView>
-    </Modal>
+    <PopupModal visible={visible} title={title} onClose={onCancel}>
+      <TextInput
+        value={draft}
+        onChangeText={onChangeDraft}
+        autoFocus
+        autoCapitalize={field === "email" ? "none" : "none"}
+        autoCorrect={false}
+        keyboardType={field === "email" ? "email-address" : "default"}
+        placeholderTextColor={theme.colors.muted}
+        style={styles.modalInput}
+      />
+      {error && <Text style={styles.modalError}>{error}</Text>}
+      <View style={styles.modalActions}>
+        <Button
+          label="Cancel"
+          variant="secondary"
+          onPress={onCancel}
+          style={{ flex: 1 }}
+        />
+        <Button
+          label={busy ? "Saving…" : "Save"}
+          onPress={onSave}
+          disabled={!canSave}
+          style={{ flex: 1 }}
+        />
+      </View>
+    </PopupModal>
   )
 }
 
@@ -491,26 +417,6 @@ const styles = StyleSheet.create({
     gap: 8,
     flexShrink: 1,
   },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    justifyContent: "center",
-    alignItems: "stretch",
-    padding: theme.spacing[4],
-  },
-  modalCard: {
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.radius.lg,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    padding: theme.spacing[4],
-    gap: theme.spacing[3],
-  },
-  modalTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.md,
-    fontWeight: "800",
-  },
   modalInput: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
@@ -528,45 +434,6 @@ const styles = StyleSheet.create({
   modalActions: {
     flexDirection: "row",
     gap: theme.spacing[3],
-  },
-  gymAddRow: {
-    flexDirection: "row",
-    gap: theme.spacing[2],
-    alignItems: "stretch",
-  },
-  gymInput: {
-    flex: 1,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    backgroundColor: "rgba(255,255,255,0.04)",
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    borderRadius: theme.radius.md,
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-  },
-  gymRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 6,
-  },
-  gymName: {
-    flex: 1,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-  },
-  gymDeleteBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: theme.radius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  gymEmpty: {
-    color: theme.colors.muted,
-    fontSize: theme.fontSize.sm,
-    fontStyle: "italic",
   },
   maintenanceHelp: {
     color: theme.colors.muted,
