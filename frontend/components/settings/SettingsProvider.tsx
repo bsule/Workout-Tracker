@@ -54,3 +54,10 @@ export function useShowPositionPrs(): boolean {
   const v = useSettings().settings.show_position_prs
   return v == null ? true : v
 }
+
+/** Whether to render time-between-sets next to each set number on the
+ *  log-set page. Defaults to true. */
+export function useShowRestTime(): boolean {
+  const v = useSettings().settings.show_rest_time
+  return v == null ? true : v
+}

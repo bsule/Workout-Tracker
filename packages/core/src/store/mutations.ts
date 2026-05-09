@@ -337,7 +337,7 @@ export function logPlannedSet(
 
 export function updateSet(
   setId: number,
-  patch: { weight?: number; reps?: number; note?: string }
+  patch: { weight?: number; reps?: number; note?: string; created_at?: string }
 ): SetRow | null {
   let updated: SetRow | null = null
   applyMutation((snap) => {
@@ -349,6 +349,7 @@ export function updateSet(
       weight: patch.weight ?? cur.weight,
       reps: patch.reps ?? cur.reps,
       note: patch.note ?? cur.note,
+      created_at: patch.created_at ?? cur.created_at,
     }
     updated = next
     const sets = snap.sets.slice()

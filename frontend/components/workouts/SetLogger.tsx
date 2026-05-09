@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils"
 import { defaultStep, formatWeight, fromKg, roundForDisplay, toKg } from "@/lib/units"
 import {
   useShowPositionPrs,
+  useShowRestTime,
   useWeightUnit,
 } from "@/components/settings/SettingsProvider"
 import type { WorkoutSet } from "@/types"
@@ -32,6 +33,20 @@ interface Props {
   repsStep?: number
   /** When true, sets are saved as planned targets (workout.status === "planned"). */
   isPlanned?: boolean
+  /** ISO timestamp of the last logged set on the most recent prior workout day
+   *  for this exercise. Used to compute rest time before the first set of the
+   *  current workout. */
+  prevWorkoutLastSetIso?: string | null
+}
+
+function formatRest(prevIso: string | null | undefined, curIso: string): string | null {
+  if (!prevIso) return null
+  const diff = (Date.parse(curIso) - Date.parse(prevIso)) / 1000
+  if (!Number.isFinite(diff) || diff <= 30) return null
+  if (diff < 60) return `${Math.round(diff)}s`
+  const m = Math.floor(diff / 60)
+  const s = Math.round(diff % 60)
+  return s === 0 ? `${m}m` : `${m}m ${s}s`
 }
 
 export function SetLogger({
@@ -41,6 +56,7 @@ export function SetLogger({
   weightStep,
   repsStep = 1,
   isPlanned = false,
+  prevWorkoutLastSetIso = null,
 }: Props) {
   const unit = useWeightUnit()
   const step = weightStep ?? defaultStep(unit)
@@ -62,8 +78,12 @@ export function SetLogger({
 
   async function save() {
     setError(null)
-    if (weight <= 0 || reps <= 0) {
-      setError("Weight and reps must be greater than zero.")
+    if (reps <= 0) {
+      setError("Add at least 1 rep to log this set.")
+      return
+    }
+    if (weight < 0) {
+      setError("Weight can’t be negative.")
       return
     }
     setSaving(true)
@@ -152,7 +172,11 @@ export function SetLogger({
         )}
       </div>
 
-      <SetList sets={sets} canHit={!isPlanned} />
+      <SetList
+        sets={sets}
+        canHit={!isPlanned}
+        prevWorkoutLastSetIso={prevWorkoutLastSetIso}
+      />
     </div>
   )
 }
@@ -219,13 +243,33 @@ function NumericField({
   )
 }
 
-function SetList({ sets, canHit }: { sets: WorkoutSet[]; canHit: boolean }) {
+function SetList({
+  sets,
+  canHit,
+  prevWorkoutLastSetIso,
+}: {
+  sets: WorkoutSet[]
+  canHit: boolean
+  prevWorkoutLastSetIso: string | null
+}) {
   if (!sets.length) {
     return (
       <div className="rounded-2xl border border-dashed border-white/10 bg-white/[.01] p-10 text-center text-sm text-muted-foreground">
         No sets logged yet. Log your first set above.
       </div>
     )
+  }
+  // Anchor each row's rest calc on the most recent prior *logged* set;
+  // planned rows have synthetic timestamps so we skip over them.
+  const restLabels: (string | null)[] = []
+  let lastRealIso: string | null = prevWorkoutLastSetIso ?? null
+  for (const s of sets) {
+    if (s.is_planned) {
+      restLabels.push(null)
+      continue
+    }
+    restLabels.push(formatRest(lastRealIso, s.created_at))
+    lastRealIso = s.created_at
   }
   return (
     <div>
@@ -238,7 +282,13 @@ function SetList({ sets, canHit }: { sets: WorkoutSet[]; canHit: boolean }) {
         </div>
         <div className="divide-y divide-white/5">
           {sets.map((s, i) => (
-            <SetRow key={s.id} index={i + 1} set={s} canHit={canHit} />
+            <SetRow
+              key={s.id}
+              index={i + 1}
+              set={s}
+              canHit={canHit}
+              restLabel={restLabels[i]}
+            />
           ))}
         </div>
       </div>
@@ -250,14 +300,17 @@ function SetRow({
   index,
   set,
   canHit,
+  restLabel,
 }: {
   index: number
   set: WorkoutSet
   canHit: boolean
+  restLabel: string | null
 }) {
   const confirm = useConfirm()
   const unit = useWeightUnit()
   const showPositionPrs = useShowPositionPrs()
+  const showRestTime = useShowRestTime()
   const [editing, setEditing] = useState(false)
   const [weight, setWeight] = useState(roundForDisplay(fromKg(set.weight, unit), unit))
   const [reps, setReps] = useState<number>(set.reps ?? 0)
@@ -272,8 +325,12 @@ function SetRow({
   const isPlannedRow = canHit && set.is_planned
 
   async function save() {
-    if (weight <= 0 || reps <= 0) {
-      setEditError("Weight and reps must be greater than zero.")
+    if (reps <= 0) {
+      setEditError("Add at least 1 rep to log this set.")
+      return
+    }
+    if (weight < 0) {
+      setEditError("Weight can’t be negative.")
       return
     }
     setEditError(null)
@@ -402,8 +459,15 @@ function SetRow({
           ) : (
             <PrIcon isPr={false} wasPr={false} className="size-4" />
           )}
-          <span className="font-mono text-base font-semibold tabular-nums text-muted-foreground">
-            {index}
+          <span className="flex flex-col leading-tight">
+            <span className="font-mono text-base font-semibold tabular-nums text-muted-foreground">
+              {index}
+            </span>
+            {showRestTime && restLabel && !set.is_planned && (
+              <span className="font-mono text-[9px] tabular-nums text-muted-foreground/60">
+                {restLabel}
+              </span>
+            )}
           </span>
           <span
             className={cn(

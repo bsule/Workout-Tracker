@@ -162,6 +162,7 @@ export function buildJson(snap: Snapshot, username = ""): string {
                 was_pr: s.was_pr,
                 note: s.note,
                 order: s.order,
+                created_at: s.created_at,
               })),
           }
         }),

@@ -28,7 +28,7 @@ type ProfileField = "username" | "email"
 export function SettingsScreen({ navigation }: any) {
   const { user, logout, updateProfile } = useAuth()
   const unit = useWeightUnit()
-  const { firstDayOfWeek, showPositionPrs } = useSettings()
+  const { firstDayOfWeek, showPositionPrs, showRestTime } = useSettings()
   // Read once on mount; the toggle prompts for restart so we don't need
   // a reactive subscription here.
   const [themeMode, setThemeMode] = useState<ThemeMode>(currentMode())
@@ -207,6 +207,25 @@ export function SettingsScreen({ navigation }: any) {
               variant={!showPositionPrs ? "primary" : "secondary"}
               style={{ flex: 1 }}
               onPress={() => api.updateSettings({ show_position_prs: false })}
+            />
+          </View>
+
+          <Row
+            label="Rest time between sets"
+            value={showRestTime ? "On" : "Off"}
+          />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Button
+              label="On"
+              variant={showRestTime ? "primary" : "secondary"}
+              style={{ flex: 1 }}
+              onPress={() => api.updateSettings({ show_rest_time: true })}
+            />
+            <Button
+              label="Off"
+              variant={!showRestTime ? "primary" : "secondary"}
+              style={{ flex: 1 }}
+              onPress={() => api.updateSettings({ show_rest_time: false })}
             />
           </View>
         </View>

@@ -139,6 +139,7 @@ export default function ExerciseLoggerPage({
             sets={we.sets}
             fallback={getPreviousFirstSet(allHistory, workout?.date)}
             isPlanned={workout?.status === "planned"}
+            prevWorkoutLastSetIso={getPriorExerciseLastSetIso(workout, we.id)}
           />
         )
       )}
@@ -196,6 +197,24 @@ function getPreviousFirstSet(
   const first = ordered[0]
   if (!first) return null
   return { weight: first.weight, reps: first.reps }
+}
+
+function getPriorExerciseLastSetIso(
+  workout: { exercises: { id: number; sets: { is_planned?: boolean; created_at: string }[] }[] } | null | undefined,
+  currentWeId: number,
+): string | null {
+  if (!workout) return null
+  let latest: string | null = null
+  for (const we of workout.exercises) {
+    if (we.id === currentWeId) continue
+    for (const s of we.sets) {
+      if (s.is_planned) continue
+      if (latest === null || Date.parse(s.created_at) > Date.parse(latest)) {
+        latest = s.created_at
+      }
+    }
+  }
+  return latest
 }
 
 function Tabs({

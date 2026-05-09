@@ -396,7 +396,7 @@ function populate(db: Database, snap: Snapshot): void {
             exPk,
             woPk,
             wePk,
-            null,
+            appleTs(s.created_at) ?? midnightUtcTs(w.date),
             midnightUtcTs(w.date),
             RIR_NULL,
             RPE_NULL,

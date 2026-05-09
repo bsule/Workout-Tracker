@@ -70,7 +70,6 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
 
   const openCalendarAtDate = useCallback(
     (date: string) => {
-      navigation.setOptions({ animation: "none" })
       navigation.navigate("Main", { screen: "Calendar", params: { date } })
     },
     [navigation]
