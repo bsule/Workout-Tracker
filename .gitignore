@@ -15,6 +15,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Wrangler / Miniflare local state
+cloudflare/.wrangler/
+
 # Expo / Metro
 .expo/
 .expo-shared/
@@ -22,6 +25,8 @@ mobile/dist/
 mobile/web-build/
 mobile/ios/
 mobile/android/
+mobile/builds/
+*.ipa
 
 # Next.js
 frontend/.next/

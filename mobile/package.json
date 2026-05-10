@@ -9,7 +9,12 @@
     "ios": "expo start --ios",
     "android": "expo start --android",
     "prebuild": "expo prebuild --platform ios --clean",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:ios": "eas build --platform ios --profile preview --non-interactive",
+    "build:ios:prod": "eas build --platform ios --profile production --non-interactive",
+    "ipa": "node scripts/download-ipa.mjs",
+    "ipa:pick": "node scripts/download-ipa.mjs --pick",
+    "ipa:gh": "node scripts/github-ipa.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
