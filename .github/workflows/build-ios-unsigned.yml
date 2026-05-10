@@ -18,7 +18,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
     defaults:
       run:
@@ -27,6 +27,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: |
+          XCODE=$(ls /Applications | grep -E '^Xcode_16' | sort -V | tail -n 1)
+          if [ -z "$XCODE" ]; then echo "No Xcode 16 found"; ls /Applications | grep Xcode; exit 1; fi
+          sudo xcode-select -s "/Applications/$XCODE/Contents/Developer"
+          xcodebuild -version
 
       - name: Setup Node
         uses: actions/setup-node@v4
