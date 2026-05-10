@@ -1,0 +1,96 @@
+name: Build iOS (unsigned IPA)
+
+# Builds an unsigned arm64 .ipa on a GitHub-hosted macOS runner. The artifact
+# is meant to be fed to Sideloadly (or similar), which re-signs it with a free
+# Apple ID before installing on your iPhone. No paid Apple Developer account
+# required.
+
+on:
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: "Xcode configuration"
+        type: choice
+        default: Release
+        options:
+          - Release
+          - Debug
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install monorepo deps
+        run: npm ci
+        working-directory: .
+
+      - name: Expo prebuild (generate ios/)
+        run: npx expo prebuild --platform ios --clean --no-install
+
+      - name: Install CocoaPods
+        run: pod install
+        working-directory: mobile/ios
+
+      - name: Discover Xcode scheme
+        id: scheme
+        run: |
+          SCHEME=$(xcodebuild -workspace ios/*.xcworkspace -list -json \
+            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);console.log(j.workspace.schemes.find(x=>!x.includes('Pods'))||j.workspace.schemes[0])})")
+          echo "scheme=$SCHEME" >> "$GITHUB_OUTPUT"
+          echo "Detected scheme: $SCHEME"
+
+      - name: Build .app (unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -workspace ios/*.xcworkspace \
+            -scheme "${{ steps.scheme.outputs.scheme }}" \
+            -configuration "${{ inputs.configuration }}" \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            PROVISIONING_PROFILE="" \
+            EXPANDED_CODE_SIGN_IDENTITY="" \
+            clean build
+
+      - name: Package unsigned .ipa
+        run: |
+          set -euo pipefail
+          APP_PATH=$(find mobile/build/Build/Products -type d -name "*.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then echo "No .app produced"; exit 1; fi
+          echo "App at: $APP_PATH"
+          STAGE=$(mktemp -d)
+          mkdir -p "$STAGE/Payload"
+          cp -R "$APP_PATH" "$STAGE/Payload/"
+          VERSION=$(node -e "console.log(require('./mobile/app.json').expo.version)")
+          OUT="mobile/build/lift-${VERSION}-unsigned.ipa"
+          (cd "$STAGE" && zip -qr "$GITHUB_WORKSPACE/$OUT" Payload)
+          ls -lh "$OUT"
+          echo "IPA_PATH=$OUT" >> "$GITHUB_ENV"
+        working-directory: .
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lift-unsigned-ipa
+          path: ${{ env.IPA_PATH }}
+          if-no-files-found: error
+          retention-days: 14
