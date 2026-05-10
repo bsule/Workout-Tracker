@@ -7,9 +7,9 @@ import {
 } from "@lift/core"
 import type { WorkoutExercise } from "@lift/core"
 import { Button } from "./Button"
+import { CategoryPill } from "./CategoryPill"
 import { SetList } from "./SetList"
 import { pressedStyle } from "../theme/pressable"
-import { useCategoryColor } from "../categories/CategoryStylesProvider"
 import { theme } from "../theme/theme"
 
 function todayString(): string {
@@ -18,13 +18,6 @@ function todayString(): string {
 }
 function pad(n: number) {
   return String(n).padStart(2, "0")
-}
-
-function tintedBg(hex: string, alpha = 0.16): string {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
-  if (!m) return `rgba(255,255,255,${alpha})`
-  const n = parseInt(m[1], 16)
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
 }
 
 interface Props {
@@ -92,23 +85,13 @@ function ExerciseRow({
   we: WorkoutExercise
   onPress: () => void
 }) {
-  const catColor = useCategoryColor(we.exercise.category)
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.exerciseCard, pressedStyle(pressed)]}>
       <View style={styles.exerciseHeader}>
         <Text style={styles.exerciseName} numberOfLines={1}>
           {we.exercise.name}
         </Text>
-        <View
-          style={[
-            styles.exerciseCatPill,
-            { backgroundColor: tintedBg(catColor) },
-          ]}
-        >
-          <Text style={[styles.exerciseCategory, { color: catColor }]}>
-            {we.exercise.category}
-          </Text>
-        </View>
+        <CategoryPill slug={we.exercise.category} />
       </View>
       {we.sets.length === 0 ? (
         <Text style={styles.addFirst}>+ Add first set</Text>
@@ -158,7 +141,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[3],
-    padding: theme.spacing[3],
+    paddingLeft: theme.spacing[3],
+    paddingRight: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
     backgroundColor: "rgba(255,255,255,0.10)",
     borderBottomColor: "rgba(255,255,255,0.18)",
     borderBottomWidth: 1,
@@ -169,18 +154,6 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.md,
     fontWeight: "800",
     letterSpacing: -0.3,
-  },
-  exerciseCatPill: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-  },
-  exerciseCategory: {
-    fontSize: 10,
-    fontWeight: "800",
-    textTransform: "uppercase",
-    letterSpacing: 1.6,
   },
   addFirst: { color: theme.colors.primary, padding: theme.spacing[4], fontSize: theme.fontSize.sm },
 })
