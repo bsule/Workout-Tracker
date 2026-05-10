@@ -1397,18 +1397,49 @@ export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "
         : opt.label
 
   if (points.length === 0) {
+    const emptyMessage =
+      metric === "per_set"
+        ? `No ${SET_INDEX_OPTIONS.find((s) => s.value === setIndex)!.label} sets logged yet.`
+        : `No data for ${opt.label.toLowerCase()} yet.`
     return (
       <View style={styles.graphWrap}>
-        <MetricSwitcher metric={metric} onChange={setMetric} />
-        {metric === "per_set" && (
-          <SetIndexSwitcher setIndex={setIndex} onChange={setSetIndex} />
-        )}
-        <View style={[styles.empty, { marginTop: theme.spacing[2] }]}>
-          <Text style={styles.emptyText}>
-            {metric === "per_set"
-              ? `No ${SET_INDEX_OPTIONS.find((s) => s.value === setIndex)!.label} sets logged yet.`
-              : "No data yet. Log a few sets and the chart will fill in."}
-          </Text>
+        <View style={styles.chartCard}>
+          <View style={styles.chartHeader}>
+            <View>
+              <Text style={styles.chartEyebrow}>{headerLabel}</Text>
+              <View style={styles.chartValueRow}>
+                <Text style={styles.chartValue}>—</Text>
+                <Text style={styles.chartUnit}>{unit}</Text>
+              </View>
+            </View>
+            <Text style={styles.chartCount}>0 workouts</Text>
+          </View>
+
+          <View style={styles.chartLegendRow}>
+            <View style={styles.chartLegendItem}>
+              <View style={[styles.statDot, { backgroundColor: theme.colors.primary }]} />
+              <Text style={styles.chartLegendText}>{opt.label}</Text>
+            </View>
+            <Text style={styles.chartLegendText}>—</Text>
+          </View>
+
+          <View style={styles.chartEmpty}>
+            <Text style={styles.emptyText}>{emptyMessage}</Text>
+          </View>
+
+          <View style={styles.chartStats}>
+            <Stat label="Peak" value="—" unit={unit} accent="green" />
+            <Stat label="Average" value="—" unit={unit} accent="muted" />
+            <Stat label="Latest" value="—" unit={unit} accent="primary" />
+          </View>
+        </View>
+
+        <View style={styles.metricPanel}>
+          <Text style={styles.metricPanelLabel}>Metric</Text>
+          <MetricSwitcher metric={metric} onChange={setMetric} />
+          {metric === "per_set" && (
+            <SetIndexSwitcher setIndex={setIndex} onChange={setSetIndex} />
+          )}
         </View>
       </View>
     )
@@ -3134,6 +3165,16 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingTop: theme.spacing[3],
     marginTop: theme.spacing[3],
+  },
+  chartEmpty: {
+    height: 220,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: theme.colors.border,
+    paddingHorizontal: theme.spacing[4],
   },
   statCard: {
     flex: 1,
