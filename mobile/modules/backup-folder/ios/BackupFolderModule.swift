@@ -31,7 +31,7 @@ public class BackupFolderModule: Module {
                   let didStart = url.startAccessingSecurityScopedResource()
                   defer { if didStart { url.stopAccessingSecurityScopedResource() } }
                   let bookmark = try url.bookmarkData(
-                    options: .withSecurityScope,
+                    options: [],
                     includingResourceValuesForKeys: nil,
                     relativeTo: nil
                   )
@@ -142,7 +142,7 @@ public class BackupFolderModule: Module {
     var isStale = false
     let url = try URL(
       resolvingBookmarkData: data,
-      options: .withSecurityScope,
+      options: [],
       relativeTo: nil,
       bookmarkDataIsStale: &isStale
     )
@@ -151,7 +151,7 @@ public class BackupFolderModule: Module {
       let didStart = url.startAccessingSecurityScopedResource()
       defer { if didStart { url.stopAccessingSecurityScopedResource() } }
       refreshed = try? url.bookmarkData(
-        options: .withSecurityScope,
+        options: [],
         includingResourceValuesForKeys: nil,
         relativeTo: nil
       )
