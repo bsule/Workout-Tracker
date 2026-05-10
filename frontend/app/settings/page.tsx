@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useEffect, useState } from "react"
 import {
   Check,
+  Cloud,
   Download,
   Loader2,
   Moon,
@@ -13,6 +14,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react"
+import { autoSync, SyncQuotaExceededError, type Quota } from "@lift/core"
 import { Button } from "@/components/ui/button"
 import { Dropdown } from "@/components/ui/Dropdown"
 import { useAuth } from "@/components/auth/AuthProvider"
@@ -53,10 +55,91 @@ export default function SettingsPage() {
       <AccountSection username={user.username} email={user.email} onSaved={refreshUser} />
       <DisplaySection />
       <GymsSection />
+      <CloudSyncSection />
       <MaintenanceSection />
       <DataSection />
     </div>
   )
+}
+
+function CloudSyncSection() {
+  const [quota, setQuota] = useState<Quota | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState<{ kind: "ok" | "error" | "info"; msg: string } | null>(null)
+
+  useEffect(() => {
+    autoSync
+      .fetchQuota()
+      .then(setQuota)
+      .catch(() => {})
+  }, [])
+
+  async function sync() {
+    setBusy(true)
+    setStatus(null)
+    try {
+      const result = await autoSync.syncNow()
+      if (result.kind === "pulled-on-stale") {
+        setStatus({ kind: "info", msg: "Remote was newer — local replaced with cloud copy." })
+      } else {
+        setStatus({ kind: "ok", msg: "Synced." })
+      }
+      // Refresh quota for the badge.
+      const q = await autoSync.fetchQuota().catch(() => null)
+      if (q) setQuota(q)
+    } catch (e) {
+      if (e instanceof SyncQuotaExceededError) {
+        setQuota(e.quota)
+        setStatus({ kind: "error", msg: e.message })
+      } else {
+        setStatus({
+          kind: "error",
+          msg: e instanceof Error ? e.message : "Sync failed.",
+        })
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const remaining = quota?.remaining
+  const limit = quota?.limit ?? 5
+  const disabled = busy || (quota != null && quota.remaining <= 0)
+  const resetsAt = quota?.resets_at ? formatResetTime(quota.resets_at) : null
+
+  return (
+    <Section
+      title="Cloud sync"
+      description="Push your local data to the cloud so you can restore it on another device. Limited to 5 syncs per day."
+    >
+      <div className="flex flex-wrap items-center gap-3">
+        <Button onClick={sync} disabled={disabled} size="sm">
+          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Cloud className="size-3.5" />}
+          Sync now
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          {remaining == null
+            ? "Loading…"
+            : `${remaining} of ${limit} syncs left today${resetsAt ? ` · resets ${resetsAt}` : ""}`}
+        </span>
+      </div>
+      {status && <StatusLine kind={status.kind} msg={status.msg} />}
+    </Section>
+  )
+}
+
+function formatResetTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return "soon"
+  const now = new Date()
+  const sameDay =
+    d.getDate() === now.getDate() &&
+    d.getMonth() === now.getMonth() &&
+    d.getFullYear() === now.getFullYear()
+  return d.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }) + (sameDay ? "" : " (next day UTC)")
 }
 
 function Section({

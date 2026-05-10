@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { InteractionManager, Pressable, ScrollView, StyleSheet, Text, View } from "react-native"
+import { useEffect, useMemo, useState } from "react"
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
-import { useFocusEffect } from "@react-navigation/native"
 import {
   getCalendarQ,
   getPlannedDatesQ,
@@ -35,51 +34,57 @@ function ymd(y: number, m: number, d: number): string {
   return `${y}-${pad(m)}-${pad(d)}`
 }
 
+function parseYear(date?: string): number {
+  if (date) {
+    const y = Number(date.slice(0, 4))
+    if (y) return y
+  }
+  return new Date().getFullYear()
+}
+
+function parseMonth(date?: string): number {
+  if (date) {
+    const m = Number(date.slice(5, 7))
+    if (m) return m
+  }
+  return new Date().getMonth() + 1
+}
+
 export function CalendarScreen({ navigation, route }: any) {
-  const today = new Date()
-  const [year, setYear] = useState(today.getFullYear())
-  const [month, setMonth] = useState(today.getMonth() + 1) // 1-indexed
-  const [selectedDate, setSelectedDate] = useState<string>(todayString())
+  const incomingDate: string | undefined = route?.params?.date
   const { setDate: setActiveDate } = useActiveDateAndSetter()
 
-  // When another screen navigates here with `{ date }`, jump to that month +
-  // select that day. This consumes the param via the "derived state" pattern
-  // (setState during render): the very first commit after the navigation
-  // already shows the correct month/date, so the user doesn't see the old
-  // month flash for a frame underneath the back-slide animation.
-  const incomingDate: string | undefined = route?.params?.date
-  const [consumedDate, setConsumedDate] = useState<string | undefined>(undefined)
-  if (incomingDate && incomingDate !== consumedDate) {
-    const y = Number(incomingDate.slice(0, 4))
-    const m = Number(incomingDate.slice(5, 7))
-    if (y && m) {
-      setYear(y)
-      setMonth(m)
-    }
-    setSelectedDate(incomingDate)
-    setConsumedDate(incomingDate)
-  }
+  // Lazy-init from the incoming date so the very first render already has
+  // the correct year/month/selected day. Without this, the screen renders
+  // once with today's month, then setState-during-render forces a second
+  // render — that second render is what the user sees "fill in".
+  const [year, setYear] = useState(() => parseYear(incomingDate))
+  const [month, setMonth] = useState(() => parseMonth(incomingDate))
+  const [selectedDate, setSelectedDate] = useState<string>(
+    () => incomingDate ?? todayString()
+  )
+  const [consumedDate, setConsumedDate] = useState<string | undefined>(incomingDate)
+
+  // On the first mount, lazy init already absorbed `incomingDate` —
+  // `incomingDate === consumedDate` here. We still need to set the global
+  // active date and clear the route param so a later re-focus doesn't
+  // re-consume it. On subsequent navigations to an already-mounted instance
+  // (Calendar tab), `incomingDate` differs from `consumedDate` and we catch
+  // local state up before clearing.
   useEffect(() => {
-    if (!incomingDate || incomingDate !== consumedDate) return
+    if (!incomingDate) return
+    if (incomingDate !== consumedDate) {
+      setYear(parseYear(incomingDate))
+      setMonth(parseMonth(incomingDate))
+      setSelectedDate(incomingDate)
+      setConsumedDate(incomingDate)
+    }
     setActiveDate(incomingDate)
     navigation.setParams({ date: undefined })
   }, [incomingDate, consumedDate])
 
   const { firstDayOfWeek } = useSettings()
   const snapshot = useStore((s) => s.snapshot)
-  // Defer the snapshot-walking queries (and DayWorkoutContent's own subscription)
-  // until the navigation animation into Calendar has settled. Without this, the
-  // back-pop from ExerciseDetail + MainTabs unfreezing + three heavy queries all
-  // land on one JS frame and the user perceives a freeze. Re-arm on every focus
-  // because Calendar is `lazy: false` and stays mounted for the app's lifetime.
-  const [dataReady, setDataReady] = useState(false)
-  useFocusEffect(
-    useCallback(() => {
-      setDataReady(false)
-      const handle = InteractionManager.runAfterInteractions(() => setDataReady(true))
-      return () => handle.cancel()
-    }, [])
-  )
   const cells = useMemo(
     () => buildMonthGrid(year, month, firstDayOfWeek),
     [year, month, firstDayOfWeek]
@@ -87,16 +92,16 @@ export function CalendarScreen({ navigation, route }: any) {
   const weekdayLabels =
     firstDayOfWeek === 1 ? WEEKDAY_LABELS_MONDAY : WEEKDAY_LABELS_SUNDAY
   const calendar = useMemo(
-    () => (dataReady ? getCalendarQ(year, month) : {}),
-    [snapshot, year, month, dataReady]
+    () => getCalendarQ(year, month),
+    [snapshot, year, month]
   )
   const plannedDates = useMemo(
-    () => (dataReady ? new Set(getPlannedDatesQ(year, month)) : new Set<string>()),
-    [snapshot, year, month, dataReady]
+    () => new Set(getPlannedDatesQ(year, month)),
+    [snapshot, year, month]
   )
   const selectedGym = useMemo(
-    () => (dataReady ? getWorkoutByDateQ(selectedDate)?.gym?.trim() || null : null),
-    [snapshot, selectedDate, dataReady]
+    () => getWorkoutByDateQ(selectedDate)?.gym?.trim() || null,
+    [snapshot, selectedDate]
   )
 
   const todayKey = todayString()
@@ -197,7 +202,17 @@ export function CalendarScreen({ navigation, route }: any) {
             <Pressable
               onPress={() => {
                 setActiveDate(selectedDate)
-                navigation.navigate("Today", { date: selectedDate })
+                // Works in both contexts:
+                //   • Tab instance (Calendar tab inside MainTabs): navigate
+                //     walks up to the parent stack, lands on Main, switches
+                //     the active tab to Today.
+                //   • Stack instance (CalendarDate pushed from ExerciseDetail):
+                //     navigating to "Main" pops both this screen and
+                //     ExerciseDetail off the stack, then switches the tab.
+                navigation.navigate("Main", {
+                  screen: "Today",
+                  params: { date: selectedDate },
+                })
               }}
               hitSlop={8}
               style={({ pressed }) => [styles.goToDateBtn, pressedStyle(pressed)]}
@@ -210,12 +225,11 @@ export function CalendarScreen({ navigation, route }: any) {
               />
             </Pressable>
           </View>
-          {dataReady && (
-            <DayWorkoutContent
-              date={selectedDate}
-              onPressExercise={openSetLogger}
-            />
-          )}
+          <DayWorkoutContent
+            date={selectedDate}
+            onPressExercise={openSetLogger}
+          />
+
         </View>
       </ScrollView>
     </StaticSafeAreaView>

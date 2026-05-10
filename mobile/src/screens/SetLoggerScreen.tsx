@@ -2958,6 +2958,7 @@ const styles = StyleSheet.create({
   },
   dayCardHeader: {
     padding: theme.spacing[3],
+    backgroundColor: "rgba(255,255,255,0.10)",
     borderBottomColor: "rgba(255,255,255,0.18)",
     borderBottomWidth: 1,
     flexDirection: "row",

@@ -38,6 +38,7 @@ export function SettingsScreen({ navigation }: any) {
     | { kind: "ok" | "error"; msg: string }
     | null
   >(null)
+
   function recomputePrs() {
     Alert.alert(
       "Recompute all PRs?",

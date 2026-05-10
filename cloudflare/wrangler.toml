@@ -1,0 +1,17 @@
+name = "lift-api"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "lift-auth"
+database_id = "97ffa2e1-4b1a-4f7b-9c78-21f90d0a281e"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "SNAPSHOTS"
+bucket_name = "lift-snapshots"
+
+[vars]
+ALLOWED_ORIGINS = "http://localhost:3215,http://localhost:3000"

@@ -2,16 +2,15 @@
  * Network API surface — auth and profile only.
  *
  * The app is local-first: workouts, exercises, sets, settings, gyms, imports,
- * and exports all live in IndexedDB (see `lib/store/`). Django is reduced to
- * the auth lane until cloud sync lands. When that happens, sync goes through
- * a separate `lib/sync/` module pushing the snapshot blob — not through these
- * RPC-style endpoints.
+ * and exports all live in IndexedDB (see `lib/store/`). The Cloudflare Worker
+ * (see `cloudflare/`) handles auth here; bulk snapshot sync goes through the
+ * `@lift/core` sync module, not these RPC-style endpoints.
  */
 
 import type { AuthResponse, User } from "@/types"
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8007/api"
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8787/api"
 
 const TOKEN_KEY = "lift.token"
 
