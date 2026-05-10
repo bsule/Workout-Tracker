@@ -52,13 +52,13 @@ jobs:
         run: pod install
         working-directory: mobile/ios
 
-      - name: Discover Xcode scheme
+      - name: Resolve Xcode scheme from app.json
         id: scheme
         run: |
-          SCHEME=$(xcodebuild -workspace ios/*.xcworkspace -list -json \
-            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);console.log(j.workspace.schemes.find(x=>!x.includes('Pods'))||j.workspace.schemes[0])})")
+          SCHEME=$(node -e "console.log(require('./app.json').expo.name)")
           echo "scheme=$SCHEME" >> "$GITHUB_OUTPUT"
-          echo "Detected scheme: $SCHEME"
+          echo "Using scheme: $SCHEME"
+          xcodebuild -workspace ios/*.xcworkspace -list 2>&1 | sed -n '/Schemes:/,/^$/p' || true
 
       - name: Build .app (unsigned)
         run: |
