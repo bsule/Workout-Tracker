@@ -5,12 +5,14 @@
     "version": "0.0.1",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
+    "icon": "./assets/icon.png",
     "splash": {
       "backgroundColor": "#0a0a0a"
     },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.lift.mobile",
+      "icon": "./assets/icon.png",
       "infoPlist": {
         "UIFileSharingEnabled": true,
         "LSSupportsOpeningDocumentsInPlace": true,
@@ -18,7 +20,14 @@
       }
     },
     "android": {
-      "package": "com.lift.mobile"
+      "package": "com.lift.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0a0a"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
     },
     "extra": {
       "apiBaseUrl": "https://lift-api.bilal-suleiman.workers.dev/api",
