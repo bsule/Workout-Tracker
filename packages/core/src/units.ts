@@ -15,11 +15,10 @@ export function toKg(value: number, unit: WeightUnit): number {
   return unit === "kg" ? value : value * KG_PER_LB
 }
 
-/** Round to a sensible precision for display: kg=1 decimal, lb=whole. */
+/** Round to a sensible precision for display: 1 decimal in either unit. */
 export function roundForDisplay(value: number, unit: WeightUnit): number {
   if (!Number.isFinite(value)) return 0
-  if (unit === "kg") return Math.round(value * 10) / 10
-  return Math.round(value)
+  return Math.round(value * 10) / 10
 }
 
 /** Display a stored kg value in the user's unit, rounded sensibly.
@@ -27,7 +26,7 @@ export function roundForDisplay(value: number, unit: WeightUnit): number {
 export function formatWeight(kg: number | null | undefined, unit: WeightUnit): string {
   if (kg == null) return "—"
   const v = roundForDisplay(fromKg(kg, unit), unit)
-  return unit === "kg" ? v.toFixed(v % 1 === 0 ? 0 : 1) : v.toString()
+  return v.toFixed(v % 1 === 0 ? 0 : 1)
 }
 
 /** Default +/- step for the unit. lb=5, kg=2.5. */

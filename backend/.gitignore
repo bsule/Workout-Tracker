@@ -1,8 +1,0 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-
-# Django
-workout_tracker/*/migrations/
-workout_tracker/db.sqlite3

@@ -15,12 +15,14 @@ import * as Q from "./queries"
 import { getState } from "./store"
 
 export {
+  addFlushListener,
   configure as configureStore,
   flushNow,
   hydrate as hydrateStore,
+  removeFlushListener,
   runBatched,
 } from "./persist"
-export { useStore, useHydrated, batchMutations } from "./store"
+export { getState, useStore, useHydrated, batchMutations } from "./store"
 export {
   getPlannedWorkoutForToday,
   getPlannedDatesQ,

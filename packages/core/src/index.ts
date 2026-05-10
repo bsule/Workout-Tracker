@@ -12,5 +12,18 @@ export {
   flushNow,
   flushOnHide,
   runBatched,
+  addFlushListener,
+  removeFlushListener,
 } from "./store/persist"
 export * as sync from "./sync"
+export * as autoSync from "./sync/autoSync"
+export type { RemotePreview } from "./sync/autoSync"
+export {
+  CloudflareTransport,
+  StaleSnapshotError,
+  SyncQuotaExceededError,
+} from "./sync/cloudflareTransport"
+export type {
+  CloudflareTransportOptions,
+  Quota,
+} from "./sync/cloudflareTransport"

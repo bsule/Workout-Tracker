@@ -18,6 +18,16 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null
 let pendingRecordingPaused = 0 // refcount; >0 disables crash log appends.
 let consecutiveFlushFailures = 0
 let flushInFlight = false
+const flushListeners = new Set<() => void>()
+
+export function addFlushListener(fn: () => void): () => void {
+  flushListeners.add(fn)
+  return () => flushListeners.delete(fn)
+}
+
+export function removeFlushListener(fn: () => void) {
+  flushListeners.delete(fn)
+}
 const FLUSH_DEBOUNCE_MS = 5000
 // Exponential backoff for retrying failed flushes — 1s, 2s, 4s, 8s, 16s,
 // then capped. Each successful flush resets the counter.
@@ -154,6 +164,13 @@ export async function flushNow(): Promise<void> {
     await s.clearPending()
     clearDirty()
     consecutiveFlushFailures = 0
+    for (const fn of flushListeners) {
+      try {
+        fn()
+      } catch (e) {
+        console.error("flush listener threw", e)
+      }
+    }
   } catch (e) {
     consecutiveFlushFailures += 1
     const delay = Math.min(
@@ -167,6 +184,26 @@ export async function flushNow(): Promise<void> {
     scheduleFlush(delay)
   } finally {
     flushInFlight = false
+  }
+}
+
+/**
+ * Replace the in-memory snapshot and on-disk storage with the given bytes
+ * (typically pulled from the cloud). Clears the crash log because pending
+ * ops are no longer meaningful against the new base. Does NOT invoke flush
+ * listeners — this isn't a local change.
+ */
+export async function replaceSnapshotFromBytes(bytes: Uint8Array): Promise<void> {
+  const s = ensureStorage()
+  const { snapshot } = await parse(bytes)
+  await s.writeSnapshot(bytes)
+  await s.clearPending()
+  markHydrated(snapshot)
+  clearDirty()
+  consecutiveFlushFailures = 0
+  if (flushTimer) {
+    clearTimeout(flushTimer)
+    flushTimer = null
   }
 }
 

@@ -1,0 +1,7 @@
+{
+  "name": "backup-folder",
+  "version": "0.0.1",
+  "description": "iOS security-scoped folder bookmarks for sideload-safe backups.",
+  "main": "index.ts",
+  "private": true
+}

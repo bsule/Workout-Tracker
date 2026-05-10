@@ -9,6 +9,15 @@ import {
 } from "react"
 import { api, getToken, setToken } from "@/lib/api"
 import type { User } from "@/types"
+import { CloudflareTransport, sync as syncModule } from "@lift/core"
+
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8787/api"
+
+const syncTransport = new CloudflareTransport({
+  apiBase: API_BASE,
+  getToken,
+})
 
 interface AuthState {
   user: User | null
@@ -34,12 +43,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!getToken()) return
+    syncModule.configureSync(syncTransport)
     api
       .me()
       .then(setUser)
       .catch(() => {
         setToken(null)
         setUser(null)
+        syncModule.configureSync(null)
       })
       .finally(() => setLoading(false))
   }, [])
@@ -49,6 +60,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const res = await api.signup(input)
       setToken(res.token)
       setUser(res.user)
+      syncTransport.setEtag(null)
+      syncModule.configureSync(syncTransport)
     },
     []
   )
@@ -58,6 +71,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const res = await api.login(input)
       setToken(res.token)
       setUser(res.user)
+      syncTransport.setEtag(null)
+      syncModule.configureSync(syncTransport)
     },
     []
   )
@@ -70,6 +85,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     setToken(null)
     setUser(null)
+    syncTransport.setEtag(null)
+    syncModule.configureSync(null)
   }, [])
 
   const refreshUser = useCallback(async () => {

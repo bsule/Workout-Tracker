@@ -42,3 +42,18 @@ export async function pullNow(): Promise<{ snapshot: Snapshot; etag: string } | 
   const { snapshot } = await parse(result.bytes)
   return { snapshot, etag: result.etag }
 }
+
+/**
+ * Internal: returns the raw remote bytes + etag without parsing. Used by
+ * autoSync.pullAndReplace so the bytes can be handed straight to
+ * replaceSnapshotFromBytes (which parses once) instead of double-parsing.
+ */
+export async function _internalPullBytes(): Promise<{ bytes: Uint8Array; etag: string } | null> {
+  if (!transport) throw new Error("sync transport not configured")
+  return transport.pullSnapshot()
+}
+
+/** Returns the currently configured transport, or null. */
+export function getTransport(): SyncTransport | null {
+  return transport
+}

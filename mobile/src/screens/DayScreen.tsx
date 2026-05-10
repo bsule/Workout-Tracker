@@ -961,6 +961,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing[4],
     paddingTop: theme.spacing[3],
     paddingBottom: theme.spacing[3],
+    backgroundColor: "rgba(255,255,255,0.10)",
   },
   exerciseName: {
     flex: 1,

@@ -1,25 +1,32 @@
 # Workout Tracker
 
-Full-stack workout tracker. Create routines, log weight/reps per session, see your estimated one-rep max climb over time, and use the standalone 1RM calculator.
+Local-first workout tracker. Plan routines, log weight/reps per set, watch your estimated 1RM trend, import from / export to FitNotes. The web and mobile apps share a single TypeScript core and sync through a Cloudflare Worker.
 
-- **Backend:** Django + Django REST Framework (token auth, SQLite)
-- **Frontend:** Next.js 16 + React 19 + Tailwind
+## Layout
+
+| Path          | What it is                                                                                                |
+|---------------|-----------------------------------------------------------------------------------------------------------|
+| `packages/core` | Shared store, sync, units, FitNotes import/export. Used by both `frontend` and `mobile`.                |
+| `frontend`    | Next.js 16 + React 19 + Tailwind. Persists to IndexedDB.                                                  |
+| `mobile`      | Expo / React Native. Persists to the app's filesystem sandbox; auto-backs-up to a user-picked Files folder. |
+| `cloudflare`  | Hono Worker on Cloudflare. Auth in D1, snapshot blob in R2. Replaces the old Django backend.              |
 
 ## Run it locally
 
-You need two terminals: one for the API, one for the web app.
+You'll typically want three terminals: the Worker, the web app, and the mobile app.
 
-### 1. Backend (port 8007)
+### 1. Cloudflare Worker (port 8787)
 
 ```bash
-cd backend
-pip install -r requirements.txt
-cd workout_tracker
-python manage.py migrate
-python manage.py runserver 8007
+cd cloudflare
+npm install
+npm run db:apply:local   # apply migrations to local D1 simulator
+npm run dev              # http://localhost:8787
 ```
 
-### 2. Frontend (port 3215)
+See [cloudflare/README.md](cloudflare/README.md) for endpoints, deploy, and smoke tests.
+
+### 2. Web (port 3215)
 
 ```bash
 cd frontend
@@ -29,12 +36,21 @@ npm run dev
 
 Open <http://localhost:3215>.
 
-## Configuration
-
-The frontend talks to `http://localhost:8007/api` by default. Override with:
+### 3. Mobile
 
 ```bash
-NEXT_PUBLIC_API_BASE_URL=https://your-api.example.com/api
+cd mobile
+npm install
+npm run start
 ```
 
-CORS origins on the backend can be customized via the `DJANGO_CORS_ORIGINS` env var (comma-separated).
+Use the Expo dev client / Expo Go to load it on a device or simulator.
+
+## Configuration
+
+Both clients default to `http://localhost:8787/api`. Override per-client:
+
+- **Web** — `frontend/.env.local`: `NEXT_PUBLIC_API_BASE_URL=https://your-worker.example.com/api`
+- **Mobile** — `mobile/app.json` → `expo.extra.apiBaseUrl`. On a real device, use your LAN IP, not `localhost`.
+
+Worker CORS origins live in `cloudflare/wrangler.toml` under `ALLOWED_ORIGINS`.

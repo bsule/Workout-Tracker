@@ -10,7 +10,7 @@ import type { AuthResponse, User } from "@lift/core"
 
 const API_BASE: string =
   (Constants.expoConfig?.extra?.apiBaseUrl as string | undefined) ??
-  "http://localhost:8007/api"
+  "http://localhost:8787/api"
 
 const TOKEN_KEY = "lift.token"
 

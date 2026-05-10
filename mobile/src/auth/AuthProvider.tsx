@@ -8,7 +8,18 @@ import {
   type ReactNode,
 } from "react"
 import type { User } from "@lift/core"
+import { CloudflareTransport, sync as syncModule } from "@lift/core"
+import Constants from "expo-constants"
 import { api, getToken, setToken, ApiError } from "./api"
+
+const API_BASE: string =
+  (Constants.expoConfig?.extra?.apiBaseUrl as string | undefined) ??
+  "http://localhost:8787/api"
+
+const syncTransport = new CloudflareTransport({
+  apiBase: API_BASE,
+  getToken,
+})
 
 interface AuthState {
   user: User | null
@@ -37,12 +48,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!cancelled) setLoading(false)
         return
       }
+      syncModule.configureSync(syncTransport)
       try {
         const me = await api.me()
         if (!cancelled) setUser(me)
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) {
           await setToken(null)
+          syncModule.configureSync(null)
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -57,6 +70,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await api.login({ username, password })
     await setToken(res.token)
     setUser(res.user)
+    syncTransport.setEtag(null)
+    syncModule.configureSync(syncTransport)
   }, [])
 
   const signup = useCallback(
@@ -64,6 +79,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const res = await api.signup(payload)
       await setToken(res.token)
       setUser(res.user)
+      syncTransport.setEtag(null)
+      syncModule.configureSync(syncTransport)
     },
     []
   )
@@ -84,6 +101,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     await setToken(null)
     setUser(null)
+    syncTransport.setEtag(null)
+    syncModule.configureSync(null)
   }, [])
 
   const value = useMemo<AuthState>(
