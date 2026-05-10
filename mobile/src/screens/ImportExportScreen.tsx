@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   ActivityIndicator,
   Alert,
@@ -11,12 +11,15 @@ import {
 import * as DocumentPicker from "expo-document-picker"
 import * as FileSystem from "expo-file-system/legacy"
 import * as Sharing from "expo-sharing"
-import { useStore } from "@lift/core"
 import {
-  buildCsv,
-  buildJson,
-  timestampedExportName,
-} from "@lift/core/export"
+  autoSync,
+  SyncQuotaExceededError,
+  useStore,
+  type Quota,
+  type RemotePreview,
+} from "@lift/core"
+import { buildJson, timestampedExportName } from "@lift/core/export"
+import { writeFitnotesDbToCache } from "../exports/fitnotesDb"
 import {
   importFitnotesCsv,
   importSnapshotJson,
@@ -26,6 +29,14 @@ import {
   type ImportResult,
 } from "@lift/core/import"
 import { useAuth } from "../auth/AuthProvider"
+import {
+  loadBackupState,
+  saveBackupState,
+  subscribeBackupState,
+  type BackupState,
+} from "../backup/backupState"
+import { folderBridge, isBackupFolderAvailable } from "../backup/folderBridge"
+import { runBackup } from "../backup/runner"
 import { Button } from "../components/Button"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { theme } from "../theme/theme"
@@ -52,7 +63,9 @@ export function ImportExportScreen() {
   const { user } = useAuth()
   const snapshot = useStore((s) => s.snapshot)
 
-  const [busy, setBusy] = useState<null | "json" | "csv" | "pick" | "import">(null)
+  const [busy, setBusy] = useState<
+    null | "json" | "fitnotesdb" | "pick" | "import"
+  >(null)
   const [pending, setPending] = useState<PendingImport | null>(null)
   const [mode, setMode] = useState<ImportMode>("merge")
   const [result, setResult] = useState<ImportResult | null>(null)
@@ -86,13 +99,24 @@ export function ImportExportScreen() {
     }
   }
 
-  async function exportCsv() {
-    setBusy("csv")
+  async function exportFitnotesDb() {
+    setBusy("fitnotesdb")
     setError(null)
     try {
-      const filename = timestampedExportName("csv")
-      const body = buildCsv(snapshot)
-      await shareFile(filename, body, "text/csv")
+      const { uri, filename } = await writeFitnotesDbToCache(snapshot)
+      const available = await Sharing.isAvailableAsync()
+      if (!available) {
+        Alert.alert(
+          "Sharing unavailable",
+          `File saved to ${uri}, but the share sheet isn't available on this device.`
+        )
+        return
+      }
+      await Sharing.shareAsync(uri, {
+        mimeType: "application/zip",
+        UTI: "public.zip-archive",
+        dialogTitle: filename,
+      })
     } catch (e) {
       setError(e instanceof Error ? e.message : "Export failed.")
     } finally {
@@ -204,12 +228,17 @@ export function ImportExportScreen() {
     <StaticSafeAreaView>
       <ScrollView contentContainerStyle={styles.wrap}>
         <Text style={styles.subtitle}>
-          Back up your workouts, share them as a spreadsheet, or restore from a
-          previous backup. Everything happens on this device, no data is sent
-          to a server.
+          Back up your workouts, share them as a file, or restore from a
+          previous backup. Cloud sync is opt-in.
         </Text>
 
         {error && <Text style={styles.error}>{error}</Text>}
+
+        <Text style={styles.section}>Cloud sync</Text>
+        <CloudSyncCard onError={setError} />
+
+        <Text style={styles.section}>Automatic backup</Text>
+        <BackupCard onError={setError} />
 
         <Text style={styles.section}>Export</Text>
         <View style={styles.card}>
@@ -229,14 +258,15 @@ export function ImportExportScreen() {
 
         <View style={styles.card}>
           <View style={{ gap: theme.spacing[2] }}>
-            <Text style={styles.rowTitle}>FitNotes-compatible CSV</Text>
+            <Text style={styles.rowTitle}>FitNotes-compatible DB</Text>
             <Text style={styles.help}>
-              One row per set. Good for spreadsheets or moving data into FitNotes.
+              A .fitnotesdb file you can side-load into FitNotes for iOS.
+              Distance, time, notes, and exercise kind are all preserved.
             </Text>
           </View>
           <Button
-            label={busy === "csv" ? "Preparing…" : "Export CSV"}
-            onPress={exportCsv}
+            label={busy === "fitnotesdb" ? "Preparing…" : "Export FitNotes DB"}
+            onPress={exportFitnotesDb}
             variant="secondary"
             disabled={exportDisabled}
           />
@@ -410,6 +440,328 @@ function ModeRow({
   )
 }
 
+function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
+  const { user } = useAuth()
+  const [quota, setQuota] = useState<Quota | null>(null)
+  const [busy, setBusy] = useState<null | "sync" | "preview" | "apply">(null)
+  const [preview, setPreview] = useState<RemotePreview | null>(null)
+  const [status, setStatus] = useState<
+    | { kind: "ok" | "info"; msg: string }
+    | null
+  >(null)
+
+  useEffect(() => {
+    if (!user) return
+    autoSync.fetchQuota().then(setQuota).catch(() => {})
+  }, [user])
+
+  if (!user) {
+    return (
+      <View style={styles.card}>
+        <Text style={styles.help}>
+          Sign in to sync your workouts to the cloud and restore them on
+          another device.
+        </Text>
+      </View>
+    )
+  }
+
+  async function syncNow() {
+    setBusy("sync")
+    setStatus(null)
+    onError(null)
+    try {
+      // Yield so React commits the busy state before serialize() blocks
+      // the JS thread (gzipSync + JSON.stringify).
+      await new Promise((r) => setTimeout(r, 0))
+      const result = await autoSync.syncNow()
+      setStatus({
+        kind: result.kind === "pulled-on-stale" ? "info" : "ok",
+        msg:
+          result.kind === "pulled-on-stale"
+            ? "Remote was newer — local replaced with cloud copy."
+            : "Synced.",
+      })
+      const q = await autoSync.fetchQuota().catch(() => null)
+      if (q) setQuota(q)
+    } catch (e) {
+      if (e instanceof SyncQuotaExceededError) {
+        setQuota(e.quota)
+        onError(e.message)
+      } else {
+        onError(e instanceof Error ? e.message : "Sync failed.")
+      }
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function loadPreview() {
+    setBusy("preview")
+    setStatus(null)
+    onError(null)
+    try {
+      const p = await autoSync.previewRemote()
+      if (!p) {
+        onError("No cloud backup yet. Sync now to upload your first snapshot.")
+        return
+      }
+      setPreview(p)
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Couldn't load cloud backup.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function applyPreview() {
+    if (!preview) return
+    const ok = await new Promise<boolean>((resolve) => {
+      Alert.alert(
+        "Replace local data with cloud?",
+        "This wipes every workout, exercise, and set on this device, then loads the cloud copy. Cannot be undone.",
+        [
+          { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+          {
+            text: "Replace",
+            style: "destructive",
+            onPress: () => resolve(true),
+          },
+        ],
+        { cancelable: true, onDismiss: () => resolve(false) }
+      )
+    })
+    if (!ok) return
+    setBusy("apply")
+    try {
+      await autoSync.applyRemoteBytes(preview.bytes)
+      setPreview(null)
+      setStatus({ kind: "ok", msg: "Loaded cloud copy." })
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Couldn't apply cloud backup.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const pushDisabled =
+    busy != null || (quota != null && quota.remaining <= 0)
+
+  return (
+    <View style={styles.card}>
+      <View style={{ gap: theme.spacing[2] }}>
+        <Text style={styles.help}>
+          Push this device's data to the cloud, or pull a previous backup down.
+          Pushing is limited to 5 syncs per day.
+        </Text>
+        <Text style={styles.help}>
+          {quota == null
+            ? "Loading quota…"
+            : `${quota.remaining} of ${quota.limit} syncs left today`}
+        </Text>
+      </View>
+
+      <View style={styles.actionsRow}>
+        <Button
+          label={busy === "sync" ? "Syncing…" : "Sync now"}
+          onPress={syncNow}
+          disabled={pushDisabled}
+          style={{ flex: 1 }}
+        />
+        <Button
+          label={busy === "preview" ? "Loading…" : "Import from cloud"}
+          variant="secondary"
+          onPress={loadPreview}
+          disabled={busy != null}
+          style={{ flex: 1 }}
+        />
+      </View>
+
+      {status && (
+        <Text style={styles.help}>{status.msg}</Text>
+      )}
+
+      {preview && (
+        <View style={styles.previewBox}>
+          <Text style={styles.rowTitle}>Cloud backup</Text>
+          <Text style={styles.help}>
+            Last saved{" "}
+            {preview.exportedAt
+              ? formatExportedAt(preview.exportedAt)
+              : "(unknown)"}
+          </Text>
+          <Text style={styles.help}>
+            {preview.workoutCount.toLocaleString()} workouts ·{" "}
+            {preview.setCount.toLocaleString()} sets ·{" "}
+            {preview.customExerciseCount.toLocaleString()} custom exercises ·{" "}
+            {preview.gymCount.toLocaleString()} gyms
+          </Text>
+          <View style={styles.actionsRow}>
+            <Button
+              label="Cancel"
+              variant="secondary"
+              style={{ flex: 1 }}
+              onPress={() => setPreview(null)}
+              disabled={busy === "apply"}
+            />
+            <Button
+              label={busy === "apply" ? "Replacing…" : "Replace local"}
+              variant="destructive"
+              style={{ flex: 1 }}
+              onPress={applyPreview}
+              disabled={busy === "apply"}
+            />
+          </View>
+        </View>
+      )}
+    </View>
+  )
+}
+
+function BackupCard({ onError }: { onError: (msg: string | null) => void }) {
+  const [state, setState] = useState<BackupState | null>(null)
+  const [busy, setBusy] = useState<null | "setup" | "backup" | "change">(null)
+
+  useEffect(() => {
+    void loadBackupState().then(setState)
+    return subscribeBackupState(setState)
+  }, [])
+
+  async function pickAndSave(after?: () => Promise<unknown>) {
+    const picked = await folderBridge.pickFolder()
+    if (!picked) return null
+    const next = await saveBackupState({
+      bookmark: picked.bookmark,
+      folderLabel: picked.label,
+      lastBackupError: null,
+    })
+    if (after) await after()
+    return next
+  }
+
+  async function setupBackups() {
+    setBusy("setup")
+    onError(null)
+    try {
+      await pickAndSave(async () => {
+        await runBackup("manual")
+      })
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Couldn't set up backups.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function backupNow() {
+    setBusy("backup")
+    onError(null)
+    try {
+      const outcome = await runBackup("manual")
+      if (outcome === "error") {
+        onError("Backup failed. Check the folder still exists in Files.")
+      }
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function changeFolder() {
+    setBusy("change")
+    onError(null)
+    try {
+      await pickAndSave(async () => {
+        await runBackup("manual")
+      })
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Couldn't change folder.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (!state) {
+    return (
+      <View style={styles.card}>
+        <ActivityIndicator color={theme.colors.muted} />
+      </View>
+    )
+  }
+
+  if (!isBackupFolderAvailable()) {
+    return (
+      <View style={styles.card}>
+        <Text style={styles.rowTitle}>Available in custom builds</Text>
+        <Text style={styles.help}>
+          Saving backups to the Files app needs a custom development build —
+          Expo Go can't load the iOS folder picker. Use Import / Export below
+          for one-off backups in the meantime.
+        </Text>
+      </View>
+    )
+  }
+
+  if (!state.bookmark) {
+    return (
+      <View style={styles.card}>
+        <View style={{ gap: theme.spacing[2] }}>
+          <Text style={styles.rowTitle}>Save backups to Files</Text>
+          <Text style={styles.help}>
+            Pick a folder in iCloud Drive or On My iPhone. The app saves a
+            full backup there after every workout, so reinstalling never loses
+            your data.
+          </Text>
+        </View>
+        <Button
+          label={busy === "setup" ? "Opening picker…" : "Set up automatic backups"}
+          onPress={setupBackups}
+          disabled={busy != null}
+        />
+      </View>
+    )
+  }
+
+  return (
+    <View style={styles.card}>
+      <View style={{ gap: theme.spacing[2] }}>
+        <Text style={styles.rowTitle}>{state.folderLabel ?? "Backup folder"}</Text>
+        <Text style={styles.help}>
+          Last backup: {formatRelativeTime(state.lastBackupAt)}
+        </Text>
+      </View>
+      {state.lastBackupError && (
+        <Text style={styles.error}>Last backup failed: {state.lastBackupError}</Text>
+      )}
+      <View style={styles.actionsRow}>
+        <Button
+          label={busy === "backup" ? "Backing up…" : "Back up now"}
+          onPress={backupNow}
+          disabled={busy != null}
+          style={{ flex: 1 }}
+        />
+        <Button
+          label={busy === "change" ? "Opening picker…" : "Change folder"}
+          variant="secondary"
+          onPress={changeFolder}
+          disabled={busy != null}
+          style={{ flex: 1 }}
+        />
+      </View>
+    </View>
+  )
+}
+
+function formatRelativeTime(iso: string | null): string {
+  if (!iso) return "never"
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return iso
+  const seconds = Math.floor((Date.now() - t) / 1000)
+  if (seconds < 60) return "just now"
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} hr ago`
+  return new Date(t).toLocaleString()
+}
+
 function looksLikeJson(text: string): boolean {
   for (let i = 0; i < text.length; i++) {
     const c = text.charCodeAt(i)
@@ -498,5 +850,12 @@ const styles = StyleSheet.create({
   busyOverlay: {
     alignItems: "center",
     paddingVertical: theme.spacing[4],
+  },
+  previewBox: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.md,
+    padding: theme.spacing[3],
+    gap: theme.spacing[2],
   },
 })

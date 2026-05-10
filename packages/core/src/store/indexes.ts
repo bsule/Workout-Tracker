@@ -10,6 +10,9 @@ export interface Indexes {
   exerciseById: Map<number, ExerciseRow>
   workoutById: Map<number, WorkoutRow>
   workoutsByDate: Map<string, WorkoutRow>
+  // Keyed by "YYYY-MM" — lets calendar/month queries skip the full workouts
+  // scan when computing per-month dot/planned data.
+  workoutsByMonth: Map<string, WorkoutRow[]>
   workoutExercisesByWorkout: Map<number, WorkoutExerciseRow[]>
   workoutExercisesByExercise: Map<number, WorkoutExerciseRow[]>
   weById: Map<number, WorkoutExerciseRow>
@@ -22,9 +25,12 @@ export function buildIndexes(snap: Snapshot): Indexes {
 
   const workoutById = new Map<number, WorkoutRow>()
   const workoutsByDate = new Map<string, WorkoutRow>()
+  const workoutsByMonth = new Map<string, WorkoutRow[]>()
   for (const w of snap.workouts) {
     workoutById.set(w.id, w)
     workoutsByDate.set(w.date, w)
+    // w.date is "YYYY-MM-DD" — slice to "YYYY-MM" for the month bucket.
+    push(workoutsByMonth, w.date.slice(0, 7), w)
   }
 
   const workoutExercisesByWorkout = new Map<number, WorkoutExerciseRow[]>()
@@ -51,6 +57,7 @@ export function buildIndexes(snap: Snapshot): Indexes {
     exerciseById,
     workoutById,
     workoutsByDate,
+    workoutsByMonth,
     workoutExercisesByWorkout,
     workoutExercisesByExercise,
     weById,

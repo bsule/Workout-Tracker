@@ -217,6 +217,20 @@ export function RootNavigator() {
               component={ExerciseDetailScreen}
               options={{ title: "" }}
             />
+            {/* Stack-pushed Calendar instance used by the calendar-outline
+              * button on ExerciseDetail's history. Pushing on the stack keeps
+              * MainTabs frozen — without this, popping ExerciseDetail to switch
+              * to the Calendar tab unfreezes every pre-mounted tab on the same
+              * JS frame as the pop animation, which the user perceives as a
+              * slow open. Reuses the existing CalendarScreen component. */}
+            <Stack.Screen
+              name="CalendarDate"
+              component={CalendarScreen}
+              // Slightly snappier than the global 180ms — the calendar
+              // renders fully before the slide finishes, so a shorter
+              // animation just gets the user to the content faster.
+              options={{ headerShown: false, animationDuration: 120 }}
+            />
             <Stack.Screen
               name="EditExercise"
               component={EditExerciseScreen}

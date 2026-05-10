@@ -1,0 +1,6 @@
+CREATE TABLE sync_quota (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  date TEXT NOT NULL, -- UTC YYYY-MM-DD
+  count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, date)
+);

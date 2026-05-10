@@ -5,7 +5,8 @@
   "workspaces": [
     "packages/*",
     "frontend",
-    "mobile"
+    "mobile",
+    "cloudflare"
   ],
   "scripts": {
     "dev:web": "npm --workspace lift-client run dev",

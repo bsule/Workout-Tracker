@@ -159,7 +159,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: theme.spacing[3],
     padding: theme.spacing[3],
-    backgroundColor: "transparent",
+    backgroundColor: "rgba(255,255,255,0.10)",
     borderBottomColor: "rgba(255,255,255,0.18)",
     borderBottomWidth: 1,
   },

@@ -137,22 +137,24 @@ export function getWorkoutByDateQ(date: string): Workout | null {
 }
 
 export function getPlannedDatesQ(year: number, month: number): string[] {
-  const { snapshot } = getState()
-  const prefix = `${year}-${String(month).padStart(2, "0")}`
+  const { indexes } = getState()
+  const key = `${year}-${String(month).padStart(2, "0")}`
+  const monthWorkouts = indexes.workoutsByMonth.get(key)
+  if (!monthWorkouts) return []
   const out: string[] = []
-  for (const w of snapshot.workouts) {
-    if (!w.date.startsWith(prefix + "-")) continue
+  for (const w of monthWorkouts) {
     if (w.status === "planned") out.push(w.date)
   }
   return out
 }
 
 export function getCalendarQ(year: number, month: number): CalendarMap {
-  const { snapshot, indexes } = getState()
-  const prefix = `${year}-${String(month).padStart(2, "0")}`
+  const { indexes } = getState()
+  const key = `${year}-${String(month).padStart(2, "0")}`
+  const monthWorkouts = indexes.workoutsByMonth.get(key)
   const out: CalendarMap = {}
-  for (const w of snapshot.workouts) {
-    if (!w.date.startsWith(prefix + "-")) continue
+  if (!monthWorkouts) return out
+  for (const w of monthWorkouts) {
     const wes = indexes.workoutExercisesByWorkout.get(w.id) ?? []
     const cats: Category[] = []
     const seen = new Set<Category>()

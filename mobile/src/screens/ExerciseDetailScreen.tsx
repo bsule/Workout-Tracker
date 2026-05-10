@@ -70,7 +70,11 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
 
   const openCalendarAtDate = useCallback(
     (date: string) => {
-      navigation.navigate("Main", { screen: "Calendar", params: { date } })
+      // Push the calendar onto the stack instead of jumping to the Calendar
+      // tab. Stack push leaves MainTabs frozen, so the destination paints
+      // without the unfreeze fan-out (DayScreen + ExercisesScreen all
+      // re-running queries on the same frame as the pop animation).
+      navigation.navigate("CalendarDate", { date })
     },
     [navigation]
   )

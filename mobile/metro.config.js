@@ -22,4 +22,27 @@ config.resolver.nodeModulesPaths = [
   path.resolve(workspaceRoot, "node_modules"),
 ]
 
+// Treat the bundled FitNotes skeleton as an asset so `require()` returns an
+// asset reference Metro can resolve at runtime.
+config.resolver.assetExts = [
+  ...config.resolver.assetExts,
+  "fitnotesdb",
+]
+
+// sql.js's asm.js build calls `require("node:fs")` and `require("node:crypto")`
+// inside a Node-only branch. The branch never runs in React Native, but Metro
+// still tries to resolve the specifiers statically and fails ("fs couldn't be
+// found"). Redirect any `node:*` builtin to an empty stub so the bundle builds.
+const NODE_BUILTIN_STUB = path.resolve(projectRoot, "node-builtin-stub.js")
+const upstreamResolveRequest = config.resolver.resolveRequest
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName.startsWith("node:")) {
+    return { type: "sourceFile", filePath: NODE_BUILTIN_STUB }
+  }
+  if (upstreamResolveRequest) {
+    return upstreamResolveRequest(context, moduleName, platform)
+  }
+  return context.resolveRequest(context, moduleName, platform)
+}
+
 module.exports = config
