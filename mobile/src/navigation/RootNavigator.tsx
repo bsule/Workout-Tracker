@@ -24,6 +24,7 @@ import { SetLoggerScreen } from "../screens/SetLoggerScreen"
 import { CategoryStylesScreen } from "../screens/CategoryStylesScreen"
 import { GymsScreen } from "../screens/GymsScreen"
 import { ImportExportScreen } from "../screens/ImportExportScreen"
+import { TabFadeIn } from "../components/TabFadeIn"
 
 const Stack = createNativeStackNavigator()
 const Tabs = createBottomTabNavigator()
@@ -81,6 +82,38 @@ function NoopScreen() {
   return null
 }
 
+// Wrap each real tab screen in TabFadeIn so its content fades in on focus.
+// Defined at module scope (not inline inside MainTabs) so React doesn't
+// remount the wrapper on every MainTabs re-render.
+function TodayTab(props: any) {
+  return (
+    <TabFadeIn>
+      <DayScreen {...props} />
+    </TabFadeIn>
+  )
+}
+function ExercisesTab(props: any) {
+  return (
+    <TabFadeIn>
+      <ExercisesScreen {...props} />
+    </TabFadeIn>
+  )
+}
+function CalendarTab(props: any) {
+  return (
+    <TabFadeIn>
+      <CalendarScreen {...props} />
+    </TabFadeIn>
+  )
+}
+function SettingsTab(props: any) {
+  return (
+    <TabFadeIn>
+      <SettingsScreen {...props} />
+    </TabFadeIn>
+  )
+}
+
 function TabIcon({
   name,
   color,
@@ -115,10 +148,12 @@ function MainTabs() {
           ...screenOptions,
           headerShown: false,
           lazy: false,
-          // Cross-fade between tabs instead of an instant cut. Mostly noticeable
-          // on "Go to date" (Calendar → Today) where the bare cut felt jarring;
-          // also smooths plain tab-bar taps.
-          animation: "fade",
+          // The built-in `animation: "fade"` was tried here to soften the bare
+          // cut on tab switches, but interrupted transitions (rapid retaps)
+          // leave the destination's opacity Animated.Value stuck near the
+          // unfocused end, painting a black tab until the user bounces off
+          // and back. The fade now lives inside each tab via TabFadeIn,
+          // driven by Reanimated, which cancels in-flight ramps cleanly.
           sceneStyle: { backgroundColor: theme.colors.background },
           tabBarStyle: {
             backgroundColor: theme.colors.background,
@@ -135,7 +170,7 @@ function MainTabs() {
       >
         <Tabs.Screen
           name="Today"
-          component={DayScreen}
+          component={TodayTab}
           options={{
             tabBarIcon: ({ color, focused }) => (
               <TabIcon name="today-outline" color={color} focused={focused} />
@@ -144,7 +179,7 @@ function MainTabs() {
         />
         <Tabs.Screen
           name="Exercises"
-          component={ExercisesScreen}
+          component={ExercisesTab}
           options={{
             tabBarIcon: ({ color, focused }) => (
               <TabIcon name="barbell-outline" color={color} focused={focused} />
@@ -174,7 +209,7 @@ function MainTabs() {
         />
         <Tabs.Screen
           name="Calendar"
-          component={CalendarScreen}
+          component={CalendarTab}
           options={{
             tabBarIcon: ({ color, focused }) => (
               <TabIcon name="calendar-outline" color={color} focused={focused} />
@@ -183,7 +218,7 @@ function MainTabs() {
         />
         <Tabs.Screen
           name="Settings"
-          component={SettingsScreen}
+          component={SettingsTab}
           options={{
             tabBarIcon: ({ color, focused }) => (
               <TabIcon name="settings-outline" color={color} focused={focused} />

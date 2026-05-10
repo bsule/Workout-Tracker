@@ -4,7 +4,7 @@
 // Requires the `gh` CLI to be installed and authenticated.
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, existsSync, readdirSync } from "node:fs";
+import { mkdirSync, existsSync, readdirSync, unlinkSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -54,6 +54,9 @@ async function main() {
   spawnSync("gh", ["run", "watch", String(runId), "--exit-status"], { cwd: repoRoot, stdio: "inherit", shell: process.platform === "win32" });
 
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
+  for (const f of readdirSync(outDir)) {
+    if (f.endsWith(".ipa")) unlinkSync(resolve(outDir, f));
+  }
   console.log("downloading artifact...");
   gh(["run", "download", String(runId), "--name", "lift-unsigned-ipa", "--dir", outDir], { stdio: "inherit" });
 

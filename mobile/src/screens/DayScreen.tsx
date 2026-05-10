@@ -35,11 +35,11 @@ import type { Workout, WorkoutExercise } from "@lift/core"
 import { Ionicons } from "@expo/vector-icons"
 import { useIsFocused } from "@react-navigation/native"
 import { Button } from "../components/Button"
+import { CategoryPill } from "../components/CategoryPill"
 import { SetList } from "../components/SetList"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
-import { useCategoryColor } from "../categories/CategoryStylesProvider"
 import { useActiveDateAndSetter } from "../state/activeDate"
 
 function todayString(): string {
@@ -53,13 +53,6 @@ function shiftDateString(date: string, delta: number): string {
   const d = new Date(date + "T00:00:00")
   d.setDate(d.getDate() + delta)
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-
-function tintedBg(hex: string, alpha = 0.16): string {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
-  if (!m) return `rgba(255,255,255,${alpha})`
-  const n = parseInt(m[1], 16)
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
 }
 
 // ~6 year sliding window (3 each side of today). Generous enough that
@@ -763,7 +756,6 @@ function ExerciseRow({
   isSelected: boolean
   selectionMode: boolean
 }) {
-  const catColor = useCategoryColor(we.exercise.category)
   const setCount = we.sets.length
   const loggedCount = we.sets.filter((s) => !s.is_planned).length
   const allPlanned = setCount > 0 && loggedCount === 0
@@ -797,16 +789,7 @@ function ExerciseRow({
                 </Text>
               </View>
             )}
-            <View
-              style={[
-                styles.exerciseCatPill,
-                { backgroundColor: tintedBg(catColor) },
-              ]}
-            >
-              <Text style={[styles.exerciseCategory, { color: catColor }]}>
-                {we.exercise.category}
-              </Text>
-            </View>
+            <CategoryPill slug={we.exercise.category} />
             {isSelected && (
               <Ionicons
                 name="checkmark-circle"
@@ -958,7 +941,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
+    paddingLeft: theme.spacing[4],
+    paddingRight: theme.spacing[2],
     paddingTop: theme.spacing[3],
     paddingBottom: theme.spacing[3],
     backgroundColor: "rgba(255,255,255,0.10)",
@@ -969,18 +953,6 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.md,
     fontWeight: "800",
     letterSpacing: -0.3,
-  },
-  exerciseCatPill: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-  },
-  exerciseCategory: {
-    fontSize: 10,
-    fontWeight: "800",
-    textTransform: "uppercase",
-    letterSpacing: 1.6,
   },
   exerciseHeaderRight: {
     flexDirection: "row",
