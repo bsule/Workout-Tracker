@@ -267,7 +267,6 @@ export function ImportExportScreen() {
           <Button
             label={busy === "fitnotesdb" ? "Preparing…" : "Export FitNotes DB"}
             onPress={exportFitnotesDb}
-            variant="secondary"
             disabled={exportDisabled}
           />
         </View>
@@ -329,7 +328,6 @@ export function ImportExportScreen() {
             <View style={styles.actionsRow}>
               <Button
                 label="Cancel"
-                variant="secondary"
                 style={{ flex: 1 }}
                 onPress={() => setPending(null)}
                 disabled={busy === "import"}
@@ -375,7 +373,7 @@ export function ImportExportScreen() {
                   .join(" · ")}
               </Text>
             )}
-            <Button label="Done" variant="secondary" onPress={clearResult} />
+            <Button label="Done" onPress={clearResult} />
           </View>
         )}
 
@@ -570,7 +568,6 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
         />
         <Button
           label={busy === "preview" ? "Loading…" : "Import from cloud"}
-          variant="secondary"
           onPress={loadPreview}
           disabled={busy != null}
           style={{ flex: 1 }}
@@ -599,7 +596,6 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
           <View style={styles.actionsRow}>
             <Button
               label="Cancel"
-              variant="secondary"
               style={{ flex: 1 }}
               onPress={() => setPreview(null)}
               disabled={busy === "apply"}
@@ -741,7 +737,6 @@ function BackupCard({ onError }: { onError: (msg: string | null) => void }) {
         />
         <Button
           label={busy === "change" ? "Opening picker…" : "Change folder"}
-          variant="secondary"
           onPress={changeFolder}
           disabled={busy != null}
           style={{ flex: 1 }}

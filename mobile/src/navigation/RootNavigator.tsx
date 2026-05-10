@@ -115,6 +115,10 @@ function MainTabs() {
           ...screenOptions,
           headerShown: false,
           lazy: false,
+          // Cross-fade between tabs instead of an instant cut. Mostly noticeable
+          // on "Go to date" (Calendar → Today) where the bare cut felt jarring;
+          // also smooths plain tab-bar taps.
+          animation: "fade",
           sceneStyle: { backgroundColor: theme.colors.background },
           tabBarStyle: {
             backgroundColor: theme.colors.background,
