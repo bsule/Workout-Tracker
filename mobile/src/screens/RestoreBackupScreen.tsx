@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native"
+import { autoSync, type RemotePreview } from "@lift/core"
 import { importSnapshotJson } from "@lift/core/import"
 import {
   loadBackupState,
@@ -14,9 +15,10 @@ import { theme } from "../theme/theme"
 
 export function RestoreBackupScreen({ onDismiss }: { onDismiss: () => void }) {
   const [state, setState] = useState<BackupState | null>(null)
-  const [busy, setBusy] = useState<null | "pick" | "restore">(null)
+  const [busy, setBusy] = useState<null | "pick" | "restore" | "cloud-preview" | "cloud-apply">(null)
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
+  const [cloudPreview, setCloudPreview] = useState<RemotePreview | null>(null)
 
   useEffect(() => {
     void loadBackupState().then(setState)
@@ -41,6 +43,39 @@ export function RestoreBackupScreen({ onDismiss }: { onDismiss: () => void }) {
       await restoreFrom(next)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't pick folder.")
+      setBusy(null)
+    }
+  }
+
+  async function loadCloudPreview() {
+    setBusy("cloud-preview")
+    setError(null)
+    setInfo(null)
+    try {
+      const p = await autoSync.previewRemote()
+      if (!p) {
+        setError("No cloud backup yet for this account.")
+        return
+      }
+      setCloudPreview(p)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't load cloud backup.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function applyCloudPreview() {
+    if (!cloudPreview) return
+    setBusy("cloud-apply")
+    setError(null)
+    try {
+      await autoSync.applyRemoteBytes(cloudPreview.bytes)
+      setInfo("Restored from cloud. Continuing…")
+      onDismiss()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't apply cloud backup.")
+    } finally {
       setBusy(null)
     }
   }
@@ -85,9 +120,55 @@ export function RestoreBackupScreen({ onDismiss }: { onDismiss: () => void }) {
       <ScrollView contentContainerStyle={styles.wrap}>
         <Text style={styles.title}>Restore from backup?</Text>
         <Text style={styles.help}>
-          This device has no workouts yet. If you previously set up automatic
-          backups in Files or iCloud Drive, you can pull that data back now.
+          This device has no workouts yet. Pull your data down from cloud sync,
+          or from a Files / iCloud Drive backup folder you set up before.
         </Text>
+
+        <View style={styles.card}>
+          <Text style={styles.rowTitle}>Sync from cloud</Text>
+          <Text style={styles.help}>
+            Pull the latest snapshot from your account on the Lift cloud.
+          </Text>
+          {cloudPreview ? (
+            <>
+              <View style={styles.previewBox}>
+                <Text style={styles.help}>
+                  Last saved{" "}
+                  {cloudPreview.exportedAt
+                    ? formatExportedAt(cloudPreview.exportedAt)
+                    : "(unknown)"}
+                </Text>
+                <Text style={styles.help}>
+                  {cloudPreview.workoutCount.toLocaleString()} workouts ·{" "}
+                  {cloudPreview.setCount.toLocaleString()} sets ·{" "}
+                  {cloudPreview.customExerciseCount.toLocaleString()} custom
+                  exercises · {cloudPreview.gymCount.toLocaleString()} gyms
+                </Text>
+              </View>
+              <View style={styles.actionsRow}>
+                <Button
+                  label="Cancel"
+                  variant="secondary"
+                  style={{ flex: 1 }}
+                  onPress={() => setCloudPreview(null)}
+                  disabled={busy != null}
+                />
+                <Button
+                  label={busy === "cloud-apply" ? "Restoring…" : "Restore"}
+                  style={{ flex: 1 }}
+                  onPress={() => void applyCloudPreview()}
+                  disabled={busy != null}
+                />
+              </View>
+            </>
+          ) : (
+            <Button
+              label={busy === "cloud-preview" ? "Loading…" : "Sync from cloud"}
+              onPress={() => void loadCloudPreview()}
+              disabled={busy != null}
+            />
+          )}
+        </View>
 
         {state.bookmark && (
           <View style={styles.card}>
@@ -136,6 +217,12 @@ export function RestoreBackupScreen({ onDismiss }: { onDismiss: () => void }) {
   )
 }
 
+function formatExportedAt(iso: string): string {
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return iso
+  return new Date(t).toLocaleString()
+}
+
 const styles = StyleSheet.create({
   wrap: {
     padding: theme.spacing[4],
@@ -182,5 +269,12 @@ const styles = StyleSheet.create({
   actionsRow: {
     flexDirection: "row",
     gap: theme.spacing[3],
+  },
+  previewBox: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.md,
+    padding: theme.spacing[3],
+    gap: theme.spacing[2],
   },
 })
