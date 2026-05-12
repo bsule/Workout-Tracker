@@ -131,6 +131,24 @@ export function deleteExercise(id: number): void {
 
 // ---- workouts -----------------------------------------------------
 
+// Most recent prior workout's gym, so a new workout defaults to where the
+// user trained last. Sorted by (date, created_at) descending.
+function findLastUsedGym(snap: Snapshot, excludeDate: string): string {
+  let best: WorkoutRow | null = null
+  for (const w of snap.workouts) {
+    if (w.date === excludeDate) continue
+    if (!w.gym) continue
+    if (
+      best === null ||
+      w.date > best.date ||
+      (w.date === best.date && (w.created_at ?? "") > (best.created_at ?? ""))
+    ) {
+      best = w
+    }
+  }
+  return best?.gym ?? ""
+}
+
 export interface CreateWorkoutResult {
   row: WorkoutRow
   /** True if we returned an existing workout that was already finished
@@ -139,7 +157,8 @@ export interface CreateWorkoutResult {
 }
 
 export function createWorkout(date: string): CreateWorkoutResult {
-  const existing = getState().snapshot.workouts.find((w) => w.date === date)
+  const snapshot = getState().snapshot
+  const existing = snapshot.workouts.find((w) => w.date === date)
   if (existing) {
     return {
       row: existing,
@@ -154,7 +173,7 @@ export function createWorkout(date: string): CreateWorkoutResult {
     status,
     started_at: status === "active" ? now : null,
     finished_at: null,
-    gym: "",
+    gym: findLastUsedGym(snapshot, date),
     notes: "",
     created_at: now,
   }

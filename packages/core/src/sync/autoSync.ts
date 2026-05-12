@@ -6,8 +6,9 @@
  * Flow on click:
  *   1. Push the in-memory snapshot. ETag/If-Match from the transport.
  *   2. On 200 → done.
- *   3. On 412 (stale) → pull remote, replace local. The user's unsynced
- *      local edits are lost; this matches the conflict policy.
+ *   3. On 412 (stale) → return { kind: "stale" } so the UI can ask the
+ *      user whether to pull cloud (pullAndReplace) or overwrite cloud
+ *      (forcePush).
  *   4. On 429 (over quota) → throw SyncQuotaExceededError so UI can show
  *      "X uses today, resets at Y".
  *
@@ -33,7 +34,7 @@ import {
 
 export type SyncOutcome =
   | { kind: "pushed"; quota: Quota | null }
-  | { kind: "pulled-on-stale" }
+  | { kind: "stale" }
 
 export interface RemotePreview {
   exportedAt: string | null
@@ -45,7 +46,8 @@ export interface RemotePreview {
 }
 
 /**
- * Run a full sync. Push first; on stale, pull and replace local. Throws
+ * Run a full sync. Push first; on stale, return { kind: "stale" } so the
+ * caller can prompt the user (pull cloud vs. overwrite cloud). Throws
  * SyncQuotaExceededError if the user is over their daily budget. Throws
  * any other transport error too — caller should surface to the UI.
  */
@@ -58,12 +60,25 @@ export async function syncNow(): Promise<SyncOutcome> {
     return { kind: "pushed", quota: null }
   } catch (e) {
     if (e instanceof StaleSnapshotError) {
-      await pullAndReplace()
-      return { kind: "pulled-on-stale" }
+      return { kind: "stale" }
     }
     if (e instanceof SyncQuotaExceededError) throw e
     throw e
   }
+}
+
+/**
+ * Push local snapshot, overwriting whatever is in the cloud. Pulls first
+ * to refresh the etag so the server accepts the push, then pushes. Use
+ * after syncNow() returns { kind: "stale" } and the user chooses to
+ * overwrite cloud.
+ */
+export async function forcePush(): Promise<void> {
+  if (!isSyncConfigured()) {
+    throw new Error("sync transport not configured (not signed in?)")
+  }
+  await _internalPullBytes()
+  await pushNow(getState().snapshot)
 }
 
 /**
