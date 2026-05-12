@@ -39,6 +39,7 @@ import {
   formatWeight,
   fromKg,
   getExerciseHistoryQ,
+  getState,
   getWorkoutByDateQ,
   getWorkoutQ,
   localApi as api,
@@ -63,6 +64,53 @@ import { theme } from "../theme/theme"
 import { useSettings, useWeightUnit } from "../settings/SettingsProvider"
 
 type SubTab = "workout" | "history" | "graph" | "records" | "settings"
+
+// Predict whether a hypothetical (weight, reps) added to `weId` would be the
+// current overall PR / position PR for `exerciseId`. Mirrors the dominance
+// logic in core's recomputePrsForExercise but runs against the live store at
+// click time — so the optimistic placeholder can render the gold star on the
+// same frame as the click, instead of waiting for the (rAF-deferred) mutation
+// and a second React commit.
+function predictPrFlags(
+  exerciseId: number,
+  weId: number,
+  weight: number,
+  reps: number
+): { isPr: boolean; isPosPr: boolean; position: number } {
+  const { indexes } = getState()
+  const wes = indexes.workoutExercisesByExercise.get(exerciseId) ?? []
+  let isPr = true
+  const targetSets = indexes.setsByWorkoutExercise.get(weId) ?? []
+  let loggedInTarget = 0
+  for (const s of targetSets) {
+    if (s.is_planned) continue
+    if (s.weight == null || s.reps == null) continue
+    loggedInTarget++
+  }
+  const position = loggedInTarget + 1
+  let isPosPr = true
+  for (const we of wes) {
+    const arr = (indexes.setsByWorkoutExercise.get(we.id) ?? [])
+      .slice()
+      .sort((a, b) => a.order - b.order || a.id - b.id)
+    let posIdx = 0
+    for (const s of arr) {
+      if (s.is_planned) continue
+      if (s.weight == null || s.reps == null) continue
+      posIdx++
+      const dominates =
+        (s.weight > weight && s.reps >= reps) ||
+        (s.weight === weight && s.reps > reps) ||
+        (s.weight === weight && s.reps === reps)
+      if (dominates) {
+        isPr = false
+        if (posIdx === position) isPosPr = false
+      }
+      if (!isPr && !isPosPr) return { isPr, isPosPr, position }
+    }
+  }
+  return { isPr, isPosPr, position }
+}
 
 function formatRest(prevIso: string | null | undefined, curIso: string): string | null {
   if (!prevIso) return null
@@ -117,6 +165,27 @@ function animateNext() {
 }
 
 const EMPTY_HISTORY: ExerciseHistoryDay[] = []
+
+// Heaviest set from the most recent prior workout for this exercise, used to
+// prefill the log-set form when there's nothing else to seed from. Skips the
+// current workout's date so the previous session is what surfaces.
+function lastWorkoutTopSet(
+  exerciseId: number,
+  currentWorkoutDate: string | null
+): { weight: number; reps: number } | null {
+  const history = getExerciseHistoryQ(exerciseId)
+  for (const day of history) {
+    if (currentWorkoutDate && day.date === currentWorkoutDate) continue
+    const candidates = day.sets.filter(
+      (s): s is typeof s & { weight: number; reps: number } =>
+        s.weight != null && s.reps != null
+    )
+    if (candidates.length === 0) continue
+    const top = candidates.reduce((b, s) => (s.weight > b.weight ? s : b))
+    return { weight: top.weight, reps: top.reps }
+  }
+  return null
+}
 
 // First-frame placeholder for the editing form. See the use site for the
 // derivation of 254. Transparent so the empty card outline doesn't flash
@@ -382,6 +451,10 @@ export function SetLoggerScreen({ route, navigation }: any) {
   const sets = we?.sets ?? []
   const isPlanned = workout?.status === "planned"
   const exerciseId = we?.exercise.id ?? null
+  // Cardio exercises store their two numerics as time-in-minutes (in the
+  // `weight` field) and a level integer (in the `reps` field). No kg/lb
+  // conversion is applied for cardio.
+  const isCardio = we?.exercise.category === "cardio"
   // Lazy: only run the history query when a tab that needs it is active.
   // The query iterates indexes and is fast, but it runs inside the same
   // synchronous React commit triggered by add/delete-set mutations, where
@@ -411,11 +484,24 @@ export function SetLoggerScreen({ route, navigation }: any) {
   const nextPlanned = !isPlanned ? sets.find((s) => s.is_planned) ?? null : null
   const lastSet = sets.length ? sets[sets.length - 1] : null
   const seed = nextPlanned ?? lastSet
-  const initialKg = seed?.weight ?? 0
-  const initialReps = seed?.reps ?? 8
 
-  const [weight, setWeight] = useState<number>(roundForDisplay(fromKg(initialKg, unit), unit))
-  const [reps, setReps] = useState<number>(initialReps)
+  // Lazy initializer: when there's nothing seeding the form yet (no planned
+  // set, no sets in this session), pull the top set (heaviest weight) from
+  // the most recent prior workout for this exercise. Runs once at mount.
+  const [weight, setWeight] = useState<number>(() => {
+    if (seed?.weight != null) {
+      return isCardio ? seed.weight : roundForDisplay(fromKg(seed.weight, unit), unit)
+    }
+    const top = exerciseId != null ? lastWorkoutTopSet(exerciseId, workout?.date ?? null) : null
+    if (isCardio) return top?.weight ?? 20
+    return roundForDisplay(fromKg(top?.weight ?? 0, unit), unit)
+  })
+  const [reps, setReps] = useState<number>(() => {
+    if (seed?.reps != null) return seed.reps
+    const top = exerciseId != null ? lastWorkoutTopSet(exerciseId, workout?.date ?? null) : null
+    if (isCardio) return top?.reps ?? 5
+    return top?.reps ?? 8
+  })
   const [error, setError] = useState<string | null>(null)
   // When non-null, Save updates this set instead of adding a new one. Set
   // by the row's swipe-Edit action, or by "Not Hit" on a planned set.
@@ -452,6 +538,9 @@ export function SetLoggerScreen({ route, navigation }: any) {
     key: number
     baseLen: number
     baseIds: Set<number>
+    isPr: boolean
+    isPosPr: boolean
+    position: number
   } | null>(null)
   const pendingAddRef = useRef(pendingAdd)
   useEffect(() => {
@@ -471,7 +560,15 @@ export function SetLoggerScreen({ route, navigation }: any) {
       const w = getWorkoutQ(workoutId)
       if (!w) return
       const currentWe = w.exercises.find((e) => e.id === weId)
-      if (!currentWe || currentWe.sets.length > 0) return
+      if (!currentWe) return
+      // Subtract sets that are mid-fade for delete — they're functionally
+      // gone, the api.deleteSet just hasn't fired yet. Without this, leaving
+      // the screen during the 180ms fade window leaves the workout/WE
+      // orphaned (the cleanup check sees a non-empty WE, the deferred
+      // deleteSet runs after we're gone).
+      const leaving = leavingIdsRef.current
+      const effectiveLen = currentWe.sets.filter((s) => !leaving.has(s.id)).length
+      if (effectiveLen > 0) return
       const isOnlyExercise = w.exercises.length === 1
       const isSideEffectWorkout =
         isOnlyExercise &&
@@ -528,7 +625,12 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // and api.deleteSet only fires after the fade completes — so the user
   // never sees the JS thread freeze before the visual response.
   const [leavingIds, setLeavingIds] = useState<Set<number>>(() => new Set())
+  const leavingIdsRef = useRef(leavingIds)
+  useEffect(() => {
+    leavingIdsRef.current = leavingIds
+  }, [leavingIds])
   function startDelete(id: number) {
+    if (editingSetId === id) cancelEdit()
     setLeavingIds((prev) => {
       const n = new Set(prev)
       n.add(id)
@@ -593,7 +695,11 @@ export function SetLoggerScreen({ route, navigation }: any) {
     // edit mode (only colors/labels flip). Wrapping in LayoutAnimation made
     // every set row in the list animate too, which felt like a freeze.
     setEditingSetId(s.id)
-    setWeight(roundForDisplay(fromKg(s.weight ?? 0, unit), unit))
+    setWeight(
+      isCardio
+        ? s.weight ?? 0
+        : roundForDisplay(fromKg(s.weight ?? 0, unit), unit)
+    )
     setReps(s.reps ?? 0)
     // Rest anchor: the most recent non-planned set before this one in the
     // current exercise, falling back to the prior-exercise iso passed in.
@@ -663,11 +769,15 @@ export function SetLoggerScreen({ route, navigation }: any) {
   function save() {
     setError(null)
     if (reps <= 0) {
-      setError("Add at least 1 rep to log this set.")
+      setError(isCardio ? "Set a level of at least 1." : "Add at least 1 rep to log this set.")
       return
     }
     if (weight < 0) {
-      setError("Weight can’t be negative.")
+      setError(isCardio ? "Time can’t be negative." : "Weight can’t be negative.")
+      return
+    }
+    if (isCardio && weight <= 0) {
+      setError("Set a time of at least 1 minute.")
       return
     }
     try {
@@ -680,7 +790,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
         // by one frame so the store update (which forces a full SetList
         // re-render and PR recompute) doesn't happen on the same frame
         // as the form transition.
-        const w = toKg(weight, unit)
+        const w = isCardio ? weight : toKg(weight, unit)
         const r = reps
         const id = editingSetId
         // Editing a planned set via "Not Hit" logs it (flips is_planned to
@@ -712,7 +822,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
         if (!resolved) return
         // Same optimistic-placeholder flow for planned-set authoring so the
         // fade starts on click instead of after the mutation commits.
-        const w = toKg(weight, unit)
+        const w = isCardio ? weight : toKg(weight, unit)
         const r = reps
         setPendingAdd({
           weight: w,
@@ -720,6 +830,9 @@ export function SetLoggerScreen({ route, navigation }: any) {
           key: Date.now(),
           baseLen: sets.length,
           baseIds: new Set(sets.map((s) => s.id)),
+          isPr: false,
+          isPosPr: false,
+          position: 0,
         })
         requestAnimationFrame(() => {
           api.addPlannedSet(weId, { weight: w, reps: r })
@@ -729,20 +842,27 @@ export function SetLoggerScreen({ route, navigation }: any) {
         if (queued) {
           // Logging against a planned set: same row, fade weight/reps update
           // would be jarring — skip animation.
-          logPlannedSet(queued.id, { weight: toKg(weight, unit), reps })
+          logPlannedSet(queued.id, { weight: isCardio ? weight : toKg(weight, unit), reps })
         } else {
           // Optimistic placeholder: render an immediate fading-in row so the
           // user sees the row on the same frame as the click, then defer the
           // store mutation to the next frame so the heavy commit doesn't
           // block the fade from starting.
-          const w = toKg(weight, unit)
+          const w = isCardio ? weight : toKg(weight, unit)
           const r = reps
+          const pr =
+            resolved && exerciseId != null
+              ? predictPrFlags(exerciseId, resolved.weId, w, r)
+              : { isPr: false, isPosPr: false, position: 0 }
           setPendingAdd({
             weight: w,
             reps: r,
             key: Date.now(),
             baseLen: sets.length,
             baseIds: new Set(sets.map((s) => s.id)),
+            isPr: pr.isPr,
+            isPosPr: pr.isPosPr,
+            position: pr.position,
           })
           // Capture resolved at click time. If still null, this is the
           // first save on a brand-new workout/exercise — lazy-create the
@@ -863,16 +983,20 @@ export function SetLoggerScreen({ route, navigation }: any) {
               style={[styles.cardEditBorder, { opacity: editAnim }]}
             />
             <NumericField
-              label={editingSetId != null ? "Weight (editing)" : "Weight"}
-              unit={unit}
+              label={
+                isCardio
+                  ? editingSetId != null ? "Time (editing)" : "Time"
+                  : editingSetId != null ? "Weight (editing)" : "Weight"
+              }
+              unit={isCardio ? "min" : unit}
               value={weight}
-              step={step}
+              step={isCardio ? 1 : step}
               min={0}
               onChange={setWeight}
               allowDecimal
             />
             <NumericField
-              label="Reps"
+              label={isCardio ? "Level" : "Reps"}
               value={reps}
               step={1}
               min={0}
@@ -936,6 +1060,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
             <SetList
               sets={sets}
               unit={unit}
+              isCardio={isCardio}
               showOneRm={showOneRm}
               showPositionPrs={showPositionPrs}
               showRestTime={showRestTime}
@@ -981,6 +1106,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
       <PlannedSetActionsModal
         set={activePlannedSet}
         unit={unit}
+        isCardio={isCardio}
         onClose={() => setActivePlannedSet(null)}
         onHit={(s) => {
           setActivePlannedSet(null)
@@ -1009,6 +1135,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
 function PlannedSetActionsModal({
   set,
   unit,
+  isCardio,
   onClose,
   onHit,
   onNotHit,
@@ -1016,6 +1143,7 @@ function PlannedSetActionsModal({
 }: {
   set: WorkoutSet | null
   unit: "kg" | "lb"
+  isCardio: boolean
   onClose: () => void
   onHit: (s: WorkoutSet) => void
   onNotHit: (s: WorkoutSet) => void
@@ -1023,7 +1151,9 @@ function PlannedSetActionsModal({
 }) {
   const title =
     set != null
-      ? `${formatWeight(set.weight ?? undefined, unit)} ${unit} × ${set.reps ?? "—"}`
+      ? isCardio
+        ? `${set.weight ?? "—"} min × Lvl ${set.reps ?? "—"}`
+        : `${formatWeight(set.weight ?? undefined, unit)} ${unit} × ${set.reps ?? "—"}`
       : ""
   return (
     <PopupModal
@@ -2174,6 +2304,7 @@ function NumericField({
 function SetList({
   sets,
   unit,
+  isCardio,
   showOneRm,
   showPositionPrs,
   showRestTime,
@@ -2191,6 +2322,7 @@ function SetList({
 }: {
   sets: WorkoutSet[]
   unit: "kg" | "lb"
+  isCardio: boolean
   showOneRm: boolean
   showPositionPrs: boolean
   showRestTime: boolean
@@ -2202,6 +2334,9 @@ function SetList({
     key: number
     baseLen: number
     baseIds: Set<number>
+    isPr: boolean
+    isPosPr: boolean
+    position: number
   } | null
   leavingIds: Set<number>
   skipFadeIds: Set<number>
@@ -2348,15 +2483,17 @@ function SetList({
               <Text
                 style={[styles.setWeight, s.is_planned && styles.dimText]}
               >
-                {formatWeight(s.weight, unit)}{" "}
-                <Text style={styles.setUnit}>{unit}</Text>
+                {isCardio
+                  ? s.weight ?? "—"
+                  : formatWeight(s.weight, unit)}{" "}
+                <Text style={styles.setUnit}>{isCardio ? "min" : unit}</Text>
               </Text>
               <Text
                 style={[styles.setReps, s.is_planned && styles.dimText]}
               >
-                {s.reps ?? "—"}
+                {isCardio ? `Lvl ${s.reps ?? "—"}` : s.reps ?? "—"}
               </Text>
-              {!s.is_planned && showOneRm && oneRm > 0 ? (
+              {!isCardio && !s.is_planned && showOneRm && oneRm > 0 ? (
                 <Text style={styles.oneRm}>
                   {formatWeight(oneRm, unit)} 1RM
                 </Text>
@@ -2547,20 +2684,48 @@ function SetList({
           </SetRowFade>
         )
       })}
-      {showPlaceholder && pendingAdd && (
+      {showPlaceholder && pendingAdd && (() => {
+        // Prefer the click-time PR prediction so the gold star renders on
+        // the same frame as the placeholder. Once the real row arrives, use
+        // its authoritative flags. The historical/silver variant is
+        // intentionally skipped — silver means "this used to be a PR and
+        // was beaten", which can't apply to a set being added right now.
+        const newRow = pendingAdd.baseIds
+          ? sets.find((s) => !pendingAdd.baseIds.has(s.id) && !s.is_planned)
+          : null
+        const phIsPr = newRow ? !!newRow.is_pr : pendingAdd.isPr
+        const phIsPosPr = newRow
+          ? !newRow.is_pr && !!newRow.is_position_pr
+          : !pendingAdd.isPr && pendingAdd.isPosPr
+        return (
         <SetRowFade key={`pending-${pendingAdd.key}`}>
           <Pressable style={styles.setRow} disabled>
             <View style={styles.setRowContent}>
-              <View style={{ width: 28, alignItems: "flex-start" }} />
+              <View style={{ width: 28, alignItems: "flex-start" }}>
+                {phIsPr ? (
+                  <PrIcon />
+                ) : showPositionPrs && phIsPosPr ? (
+                  <PrIcon
+                    variant="position"
+                    position={pendingAdd.baseLen + 1}
+                  />
+                ) : null}
+              </View>
               <View style={styles.setIndexCol}>
-                <Text style={styles.setIndex}>{pendingAdd.baseLen + 1}</Text>
+                <Text style={[styles.setIndex, phIsPr && { color: "#e0c050" }]}>
+                  {pendingAdd.baseLen + 1}
+                </Text>
               </View>
               <Text style={styles.setWeight}>
-                {formatWeight(pendingAdd.weight, unit)}{" "}
-                <Text style={styles.setUnit}>{unit}</Text>
+                {isCardio
+                  ? pendingAdd.weight
+                  : formatWeight(pendingAdd.weight, unit)}{" "}
+                <Text style={styles.setUnit}>{isCardio ? "min" : unit}</Text>
               </Text>
-              <Text style={styles.setReps}>{pendingAdd.reps}</Text>
-              {showOneRm && (
+              <Text style={styles.setReps}>
+                {isCardio ? `Lvl ${pendingAdd.reps}` : pendingAdd.reps}
+              </Text>
+              {!isCardio && showOneRm && (
                 <Text style={styles.oneRm}>
                   {formatWeight(
                     estimateOneRm(pendingAdd.weight, pendingAdd.reps),
@@ -2572,7 +2737,8 @@ function SetList({
             </View>
           </Pressable>
         </SetRowFade>
-      )}
+        )
+      })()}
     </View>
   )
 }

@@ -17,20 +17,47 @@ import { SEED_EXERCISES, isSeedId } from "./seed"
 import type { ExerciseRow } from "./schema"
 
 /**
- * Case-insensitive subsequence match: every character of `query` appears in
- * `text` in order, but not necessarily contiguously. Whitespace and other
- * non-alphanumerics in `query` are ignored so "te" → "tricep extension",
- * "bnch" → "bench press", etc.
+ * Min edit distance between `query` and any contiguous substring of `text`.
+ * Free-start / free-end DP: row 0 is all zeros so the match can begin anywhere,
+ * and we take the min of the final row so it can end anywhere.
  */
-function subsequenceMatch(text: string, query: string): boolean {
-  const t = text.toLowerCase()
-  const q = query.toLowerCase().replace(/[^a-z0-9]/g, "")
-  if (q.length === 0) return true
-  let i = 0
-  for (let j = 0; j < t.length && i < q.length; j++) {
-    if (t.charCodeAt(j) === q.charCodeAt(i)) i++
+function fuzzySubstringDistance(text: string, query: string): number {
+  const m = query.length
+  const n = text.length
+  if (m === 0) return 0
+  let prev = new Array<number>(n + 1).fill(0)
+  let curr = new Array<number>(n + 1).fill(0)
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i
+    const qc = query.charCodeAt(i - 1)
+    for (let j = 1; j <= n; j++) {
+      const cost = text.charCodeAt(j - 1) === qc ? 0 : 1
+      const sub = prev[j - 1] + cost
+      const del = prev[j] + 1
+      const ins = curr[j - 1] + 1
+      curr[j] = sub < del ? (sub < ins ? sub : ins) : (del < ins ? del : ins)
+    }
+    const tmp = prev; prev = curr; curr = tmp
   }
-  return i === q.length
+  let best = prev[0]
+  for (let j = 1; j <= n; j++) if (prev[j] < best) best = prev[j]
+  return best
+}
+
+/**
+ * Token-based fuzzy match. Splits the query on non-alphanumerics; every token
+ * must fuzzy-match somewhere in `text` independently of order. Typo tolerance
+ * scales with token length so short tokens stay strict.
+ */
+function fuzzyMatch(text: string, query: string): boolean {
+  const t = text.toLowerCase()
+  const tokens = query.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+  if (tokens.length === 0) return true
+  for (const tok of tokens) {
+    const threshold = tok.length <= 3 ? 0 : tok.length <= 5 ? 1 : 2
+    if (fuzzySubstringDistance(t, tok) > threshold) return false
+  }
+  return true
 }
 
 export function listExercisesQ(params?: {
@@ -45,7 +72,7 @@ export function listExercisesQ(params?: {
     if (e.is_deleted) return false
     if (params?.category && e.category !== params.category) return false
     if (params?.q) {
-      if (!subsequenceMatch(e.name, params.q)) return false
+      if (!fuzzyMatch(e.name, params.q)) return false
     }
     return true
   })
