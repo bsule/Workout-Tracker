@@ -441,7 +441,9 @@ function ModeRow({
 function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
   const { user } = useAuth()
   const [quota, setQuota] = useState<Quota | null>(null)
-  const [busy, setBusy] = useState<null | "sync" | "preview" | "apply">(null)
+  const [busy, setBusy] = useState<
+    null | "sync" | "preview" | "apply" | "pull-stale" | "force-push"
+  >(null)
   const [preview, setPreview] = useState<RemotePreview | null>(null)
   const [status, setStatus] = useState<
     | { kind: "ok" | "info"; msg: string }
@@ -473,13 +475,12 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
       // the JS thread (gzipSync + JSON.stringify).
       await new Promise((r) => setTimeout(r, 0))
       const result = await autoSync.syncNow()
-      setStatus({
-        kind: result.kind === "pulled-on-stale" ? "info" : "ok",
-        msg:
-          result.kind === "pulled-on-stale"
-            ? "Remote was newer — local replaced with cloud copy."
-            : "Synced.",
-      })
+      if (result.kind === "stale") {
+        setBusy(null)
+        promptStaleResolution()
+        return
+      }
+      setStatus({ kind: "ok", msg: "Synced." })
       const q = await autoSync.fetchQuota().catch(() => null)
       if (q) setQuota(q)
     } catch (e) {
@@ -488,6 +489,62 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
         onError(e.message)
       } else {
         onError(e instanceof Error ? e.message : "Sync failed.")
+      }
+    } finally {
+      setBusy((b) => (b === "sync" ? null : b))
+    }
+  }
+
+  function promptStaleResolution() {
+    Alert.alert(
+      "Cloud is newer",
+      "Your cloud backup has changes that aren't on this device. Pull cloud down (replaces local) or overwrite cloud with this device's data?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Get cloud", onPress: () => void pullCloudOverLocal() },
+        {
+          text: "Overwrite cloud",
+          style: "destructive",
+          onPress: () => void overwriteCloud(),
+        },
+      ],
+      { cancelable: true }
+    )
+  }
+
+  async function pullCloudOverLocal() {
+    setBusy("pull-stale")
+    onError(null)
+    try {
+      const applied = await autoSync.pullAndReplace()
+      setStatus({
+        kind: "info",
+        msg: applied
+          ? "Replaced local with cloud copy."
+          : "No cloud backup found.",
+      })
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Couldn't pull cloud backup.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function overwriteCloud() {
+    setBusy("force-push")
+    onError(null)
+    try {
+      await new Promise((r) => setTimeout(r, 0))
+      await autoSync.forcePush()
+      setStatus({ kind: "ok", msg: "Overwrote cloud with this device's data." })
+      const q = await autoSync.fetchQuota().catch(() => null)
+      if (q) setQuota(q)
+    } catch (e) {
+      if (e instanceof SyncQuotaExceededError) {
+        setQuota(e.quota)
+        onError(e.message)
+      } else {
+        onError(e instanceof Error ? e.message : "Couldn't overwrite cloud.")
       }
     } finally {
       setBusy(null)
@@ -561,7 +618,15 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
 
       <View style={styles.actionsRow}>
         <Button
-          label={busy === "sync" ? "Syncing…" : "Sync now"}
+          label={
+            busy === "sync"
+              ? "Syncing…"
+              : busy === "force-push"
+                ? "Overwriting…"
+                : busy === "pull-stale"
+                  ? "Pulling…"
+                  : "Sync now"
+          }
           onPress={syncNow}
           disabled={pushDisabled}
           style={{ flex: 1 }}

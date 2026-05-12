@@ -64,8 +64,9 @@ export default function SettingsPage() {
 
 function CloudSyncSection() {
   const [quota, setQuota] = useState<Quota | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<null | "sync" | "pull-stale" | "force-push">(null)
   const [status, setStatus] = useState<{ kind: "ok" | "error" | "info"; msg: string } | null>(null)
+  const [stale, setStale] = useState(false)
 
   useEffect(() => {
     autoSync
@@ -75,16 +76,16 @@ function CloudSyncSection() {
   }, [])
 
   async function sync() {
-    setBusy(true)
+    setBusy("sync")
     setStatus(null)
+    setStale(false)
     try {
       const result = await autoSync.syncNow()
-      if (result.kind === "pulled-on-stale") {
-        setStatus({ kind: "info", msg: "Remote was newer — local replaced with cloud copy." })
-      } else {
-        setStatus({ kind: "ok", msg: "Synced." })
+      if (result.kind === "stale") {
+        setStale(true)
+        return
       }
-      // Refresh quota for the badge.
+      setStatus({ kind: "ok", msg: "Synced." })
       const q = await autoSync.fetchQuota().catch(() => null)
       if (q) setQuota(q)
     } catch (e) {
@@ -98,13 +99,59 @@ function CloudSyncSection() {
         })
       }
     } finally {
-      setBusy(false)
+      setBusy(null)
+    }
+  }
+
+  async function pullCloudOverLocal() {
+    setBusy("pull-stale")
+    setStatus(null)
+    try {
+      const applied = await autoSync.pullAndReplace()
+      setStale(false)
+      setStatus({
+        kind: "info",
+        msg: applied
+          ? "Replaced local with cloud copy."
+          : "No cloud backup found.",
+      })
+    } catch (e) {
+      setStatus({
+        kind: "error",
+        msg: e instanceof Error ? e.message : "Couldn't pull cloud backup.",
+      })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function overwriteCloud() {
+    setBusy("force-push")
+    setStatus(null)
+    try {
+      await autoSync.forcePush()
+      setStale(false)
+      setStatus({ kind: "ok", msg: "Overwrote cloud with this device's data." })
+      const q = await autoSync.fetchQuota().catch(() => null)
+      if (q) setQuota(q)
+    } catch (e) {
+      if (e instanceof SyncQuotaExceededError) {
+        setQuota(e.quota)
+        setStatus({ kind: "error", msg: e.message })
+      } else {
+        setStatus({
+          kind: "error",
+          msg: e instanceof Error ? e.message : "Couldn't overwrite cloud.",
+        })
+      }
+    } finally {
+      setBusy(null)
     }
   }
 
   const remaining = quota?.remaining
   const limit = quota?.limit ?? 5
-  const disabled = busy || (quota != null && quota.remaining <= 0)
+  const syncDisabled = busy != null || (quota != null && quota.remaining <= 0)
   const resetsAt = quota?.resets_at ? formatResetTime(quota.resets_at) : null
 
   return (
@@ -113,8 +160,12 @@ function CloudSyncSection() {
       description="Push your local data to the cloud so you can restore it on another device. Limited to 5 syncs per day."
     >
       <div className="flex flex-wrap items-center gap-3">
-        <Button onClick={sync} disabled={disabled} size="sm">
-          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Cloud className="size-3.5" />}
+        <Button onClick={sync} disabled={syncDisabled} size="sm">
+          {busy === "sync" ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <Cloud className="size-3.5" />
+          )}
           Sync now
         </Button>
         <span className="text-xs text-muted-foreground">
@@ -123,6 +174,50 @@ function CloudSyncSection() {
             : `${remaining} of ${limit} syncs left today${resetsAt ? ` · resets ${resetsAt}` : ""}`}
         </span>
       </div>
+      {stale && (
+        <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+          <p className="text-sm font-medium">Cloud is newer</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Your cloud backup has changes that aren't on this device. Pull cloud
+            down (replaces local) or overwrite cloud with this device's data?
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setStale(false)}
+              disabled={busy != null}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={pullCloudOverLocal}
+              disabled={busy != null}
+            >
+              {busy === "pull-stale" ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Download className="size-3.5" />
+              )}
+              Get cloud
+            </Button>
+            <Button
+              size="sm"
+              onClick={overwriteCloud}
+              disabled={busy != null}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {busy === "force-push" ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Upload className="size-3.5" />
+              )}
+              Overwrite cloud
+            </Button>
+          </div>
+        </div>
+      )}
       {status && <StatusLine kind={status.kind} msg={status.msg} />}
     </Section>
   )

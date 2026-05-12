@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   FlatList,
   InteractionManager,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -97,6 +98,7 @@ function PickView({
 }) {
   const [search, setSearch] = useState("")
   const [category, setCategory] = useState<string | null>(null)
+  const searchRef = useRef<TextInput>(null)
   const { categories, labels, colors: catColors } = useCategoryStyles()
   function colorFor(c: string): string {
     return catColors[c] ?? theme.colors.cat[c] ?? theme.colors.muted
@@ -138,7 +140,7 @@ function PickView({
   )
 
   return (
-    <>
+    <Pressable style={{ flex: 1 }} onPress={() => Keyboard.dismiss()}>
       <View style={styles.header}>
         <Pressable onPress={onClose} hitSlop={12} style={styles.headerSideBtn}>
           <Ionicons name="close" size={28} color={theme.colors.foreground} />
@@ -149,9 +151,13 @@ function PickView({
         </Pressable>
       </View>
 
-      <View style={styles.searchWrap}>
+      <Pressable
+        style={styles.searchWrap}
+        onPress={() => searchRef.current?.focus()}
+      >
         <Ionicons name="search" size={18} color={theme.colors.muted} />
         <TextInput
+          ref={searchRef}
           value={search}
           onChangeText={setSearch}
           placeholder="Exercise Name"
@@ -160,7 +166,7 @@ function PickView({
           autoCapitalize="none"
           autoCorrect={false}
         />
-      </View>
+      </Pressable>
 
       {/* Chips + list shell are off the first commit so iOS can start the
        *  picker's slide as soon as possible. Both mount one rAF later. */}
@@ -187,6 +193,7 @@ function PickView({
           data={exercises}
           keyExtractor={(e) => String(e.id)}
           contentContainerStyle={{ paddingBottom: 40 }}
+          keyboardShouldPersistTaps="handled"
           renderItem={({ item }) => <ExerciseRow ex={item} onPress={() => onPick(item)} />}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           ListEmptyComponent={
@@ -198,7 +205,7 @@ function PickView({
           }
         />
       )}
-    </>
+    </Pressable>
   )
 }
 
@@ -345,7 +352,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
+    paddingVertical: theme.spacing[4],
     borderBottomColor: theme.colors.border,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
@@ -353,7 +360,7 @@ const styles = StyleSheet.create({
     flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
-    padding: 0,
+    paddingVertical: 6,
   },
   chipsGrid: {
     flexDirection: "row",
