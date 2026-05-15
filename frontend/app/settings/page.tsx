@@ -10,11 +10,20 @@ import {
   Moon,
   Plus,
   RefreshCw,
+  Sparkles,
   Sun,
   Trash2,
   Upload,
 } from "lucide-react"
-import { autoSync, SyncQuotaExceededError, type Quota } from "@lift/core"
+import { AI_PROVIDERS } from "@/lib/ai"
+import { clearApiKey, getApiKey, setApiKey } from "@/lib/ai/keys"
+import type { AIProviderId } from "@lift/core"
+import {
+  autoSync,
+  SyncQuotaExceededError,
+  type Quota,
+  type RemotePreview,
+} from "@lift/core"
 import { Button } from "@/components/ui/button"
 import { Dropdown } from "@/components/ui/Dropdown"
 import { useAuth } from "@/components/auth/AuthProvider"
@@ -54,6 +63,7 @@ export default function SettingsPage() {
 
       <AccountSection username={user.username} email={user.email} onSaved={refreshUser} />
       <DisplaySection />
+      <AiSection />
       <GymsSection />
       <CloudSyncSection />
       <MaintenanceSection />
@@ -62,11 +72,209 @@ export default function SettingsPage() {
   )
 }
 
+function AiSection() {
+  const { settings, update } = useSettings()
+  const activeProvider = (settings.ai_provider ?? "openai") as AIProviderId
+  const [keyPresence, setKeyPresence] = useState<Record<AIProviderId, boolean>>(
+    { openai: false, anthropic: false, gemini: false, deepseek: false },
+  )
+  const [editing, setEditing] = useState<AIProviderId | null>(null)
+  const [draft, setDraft] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState<
+    { kind: "ok" | "error"; msg: string } | null
+  >(null)
+
+  useEffect(() => {
+    const next = {} as Record<AIProviderId, boolean>
+    for (const p of AI_PROVIDERS) {
+      next[p.id] = !!getApiKey(p.id)
+    }
+    setKeyPresence(next)
+  }, [])
+
+  async function selectProvider(id: AIProviderId) {
+    if (id === activeProvider) return
+    try {
+      await update({ ai_provider: id })
+    } catch (e) {
+      setStatus({
+        kind: "error",
+        msg: e instanceof Error ? e.message : "Failed to update.",
+      })
+    }
+  }
+
+  function openEditor(id: AIProviderId) {
+    setEditing(id)
+    setDraft("")
+    setStatus(null)
+  }
+
+  function closeEditor() {
+    setEditing(null)
+    setDraft("")
+  }
+
+  function saveKey() {
+    if (!editing) return
+    const v = draft.trim()
+    if (!v) return
+    setBusy(true)
+    try {
+      setApiKey(editing, v)
+      setKeyPresence((cur) => ({ ...cur, [editing]: true }))
+      setStatus({ kind: "ok", msg: "Key saved." })
+      closeEditor()
+    } catch (e) {
+      setStatus({
+        kind: "error",
+        msg: e instanceof Error ? e.message : "Failed to save.",
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function deleteKey(id: AIProviderId) {
+    clearApiKey(id)
+    setKeyPresence((cur) => ({ ...cur, [id]: false }))
+  }
+
+  return (
+    <Section
+      title="AI"
+      description="Pick a provider and add an API key to generate planned workouts. Keys are stored locally in this browser only."
+    >
+      <div>
+        <p className="mb-2 text-xs font-medium text-muted-foreground">
+          Active provider
+        </p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {AI_PROVIDERS.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => selectProvider(p.id)}
+              className={cn(
+                "h-9 rounded-md border px-3 text-xs font-medium transition-colors",
+                activeProvider === p.id
+                  ? "border-primary/50 bg-primary/15 text-primary"
+                  : "border-border bg-foreground/[.03] hover:bg-foreground/[.06]",
+              )}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-5 space-y-2">
+        {AI_PROVIDERS.map((p) => {
+          const has = keyPresence[p.id]
+          return (
+            <div
+              key={p.id}
+              className="flex items-center justify-between gap-3 rounded-md border border-border bg-foreground/[.03] px-3 py-2"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{p.label}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {has ? "Key saved" : "No key set"}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openEditor(p.id)}
+                >
+                  {has ? "Update" : "Set"}
+                </Button>
+                {has && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => deleteKey(p.id)}
+                    className="border-destructive/40 text-destructive hover:bg-destructive/10"
+                  >
+                    Clear
+                  </Button>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="mt-4">
+        <Link
+          href="/ai-plan"
+          className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/20"
+        >
+          <Sparkles className="size-3.5" />
+          Open AI Plan
+        </Link>
+      </div>
+
+      {status && <StatusLine kind={status.kind} msg={status.msg} />}
+
+      {editing && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={closeEditor}
+        >
+          <div
+            className="w-full max-w-md rounded-xl border border-border bg-background p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-sm font-semibold">
+              {AI_PROVIDERS.find((p) => p.id === editing)?.label} API key
+            </h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Stored in this browser&apos;s localStorage. Anyone with access to
+              this device or the browser&apos;s dev tools can read it.
+            </p>
+            <input
+              type="password"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="Paste your API key"
+              autoFocus
+              className="mt-3 h-9 w-full rounded-md border border-border bg-foreground/[.03] px-3 text-sm focus:outline-none focus:border-primary/50"
+            />
+            <div className="mt-3 flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={closeEditor}
+                disabled={busy}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={saveKey}
+                disabled={!draft.trim() || busy}
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Section>
+  )
+}
+
 function CloudSyncSection() {
+  const confirm = useConfirm()
   const [quota, setQuota] = useState<Quota | null>(null)
-  const [busy, setBusy] = useState<null | "sync" | "pull-stale" | "force-push">(null)
+  const [busy, setBusy] = useState<
+    null | "sync" | "pull-stale" | "force-push" | "preview" | "apply"
+  >(null)
   const [status, setStatus] = useState<{ kind: "ok" | "error" | "info"; msg: string } | null>(null)
   const [stale, setStale] = useState(false)
+  const [preview, setPreview] = useState<RemotePreview | null>(null)
 
   useEffect(() => {
     autoSync
@@ -125,6 +333,54 @@ function CloudSyncSection() {
     }
   }
 
+  async function loadPreview() {
+    setBusy("preview")
+    setStatus(null)
+    try {
+      const p = await autoSync.previewRemote()
+      if (!p) {
+        setStatus({
+          kind: "error",
+          msg: "No cloud backup yet. Sync now to upload your first snapshot.",
+        })
+        return
+      }
+      setPreview(p)
+    } catch (e) {
+      setStatus({
+        kind: "error",
+        msg: e instanceof Error ? e.message : "Couldn't load cloud backup.",
+      })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function applyPreview() {
+    if (!preview) return
+    const ok = await confirm({
+      title: "Replace local data with cloud?",
+      message:
+        "This wipes every workout, exercise, and set on this device, then loads the cloud copy. Cannot be undone.",
+      destructive: true,
+      confirmLabel: "Replace",
+    })
+    if (!ok) return
+    setBusy("apply")
+    try {
+      await autoSync.applyRemoteBytes(preview.bytes)
+      setPreview(null)
+      setStatus({ kind: "ok", msg: "Loaded cloud copy." })
+    } catch (e) {
+      setStatus({
+        kind: "error",
+        msg: e instanceof Error ? e.message : "Couldn't apply cloud backup.",
+      })
+    } finally {
+      setBusy(null)
+    }
+  }
+
   async function overwriteCloud() {
     setBusy("force-push")
     setStatus(null)
@@ -168,12 +424,66 @@ function CloudSyncSection() {
           )}
           Sync now
         </Button>
+        <Button
+          onClick={loadPreview}
+          disabled={busy != null}
+          size="sm"
+          variant="outline"
+        >
+          {busy === "preview" ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <Download className="size-3.5" />
+          )}
+          Import from cloud
+        </Button>
         <span className="text-xs text-muted-foreground">
           {remaining == null
             ? "Loading…"
             : `${remaining} of ${limit} syncs left today${resetsAt ? ` · resets ${resetsAt}` : ""}`}
         </span>
       </div>
+
+      {preview && (
+        <div className="mt-3 rounded-md border border-white/10 bg-white/[.03] p-3">
+          <p className="text-sm font-medium">Cloud backup</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Last saved{" "}
+            {preview.exportedAt
+              ? formatExportedAt(preview.exportedAt)
+              : "(unknown)"}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {preview.workoutCount.toLocaleString()} workouts ·{" "}
+            {preview.setCount.toLocaleString()} sets ·{" "}
+            {preview.customExerciseCount.toLocaleString()} custom exercises ·{" "}
+            {preview.gymCount.toLocaleString()} gyms
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setPreview(null)}
+              disabled={busy === "apply"}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={applyPreview}
+              disabled={busy === "apply"}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {busy === "apply" ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Download className="size-3.5" />
+              )}
+              Replace local
+            </Button>
+          </div>
+        </div>
+      )}
       {stale && (
         <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
           <p className="text-sm font-medium">Cloud is newer</p>
@@ -221,6 +531,12 @@ function CloudSyncSection() {
       {status && <StatusLine kind={status.kind} msg={status.msg} />}
     </Section>
   )
+}
+
+function formatExportedAt(iso: string): string {
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return iso
+  return new Date(t).toLocaleString()
 }
 
 function formatResetTime(iso: string): string {
@@ -418,7 +734,7 @@ function DisplaySection() {
 
   return (
     <Section title="Display" description="Affects how weights, the calendar, and colors look across the app.">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
         <div>
           <FieldLabel>Weight unit</FieldLabel>
           <Dropdown
@@ -447,18 +763,22 @@ function DisplaySection() {
           <FieldLabel>Theme</FieldLabel>
           <button
             onClick={toggle}
-            className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border border-white/10 bg-white/[.03] px-3 text-sm hover:bg-white/[.06]"
+            className="inline-flex h-9 w-full items-center justify-between gap-2 rounded-md border border-white/10 bg-white/[.03] px-3 text-sm hover:bg-white/[.06]"
           >
+            <span className="capitalize">{theme}</span>
             {theme === "dark" ? (
-              <><Sun className="size-3.5" /> Switch to light</>
+              <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Sun className="size-3.5" /> Switch to light
+              </span>
             ) : (
-              <><Moon className="size-3.5" /> Switch to dark</>
+              <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Moon className="size-3.5" /> Switch to dark
+              </span>
             )}
           </button>
-          <p className="mt-1 text-[11px] text-muted-foreground/70">Defaults to dark.</p>
         </div>
         <div>
-          <FieldLabel>Show 1RM</FieldLabel>
+          <FieldLabel>Estimated 1RM</FieldLabel>
           <Dropdown
             value={(settings.show_one_rm ?? true) ? "1" : "0"}
             onChange={changeOneRm}
@@ -475,7 +795,7 @@ function DisplaySection() {
             value={(settings.show_position_prs ?? true) ? "1" : "0"}
             onChange={changePositionPrs}
             options={[
-              { value: "1", label: "Show \"{n}PR\" badges" },
+              { value: "1", label: "Show 2PR / 3PR badges" },
               { value: "0", label: "Overall PRs only" },
             ]}
           />

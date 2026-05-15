@@ -107,16 +107,17 @@ function DayBlock({
           <li key={s.id} className="px-4 py-2.5 text-sm">
             <div className="flex items-center gap-3">
               {s.is_pr || s.was_pr ? (
-                <PrIcon isPr={s.is_pr} wasPr={s.was_pr} className="size-4" />
+                <PrIcon isPr={s.is_pr} wasPr={s.was_pr} className="min-w-9" />
               ) : showPositionPrs ? (
                 <PrIcon
                   isPr={s.is_position_pr}
                   wasPr={s.was_position_pr}
                   variant="position"
                   position={i + 1}
+                  className="min-w-9"
                 />
               ) : (
-                <PrIcon isPr={false} wasPr={false} className="size-4" />
+                <PrIcon isPr={false} wasPr={false} className="min-w-9" />
               )}
               <span className="font-mono w-6 text-sm font-medium tabular-nums text-muted-foreground">
                 {i + 1}

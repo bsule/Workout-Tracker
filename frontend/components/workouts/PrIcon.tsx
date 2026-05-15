@@ -1,4 +1,3 @@
-import { Star } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface Props {
@@ -9,6 +8,12 @@ interface Props {
   className?: string
 }
 
+// Tailwind doesn't have a "PR-gold" color out of the box; matching the
+// mobile palette keeps the iconography consistent across platforms.
+const GOLD_BG = "#e0c050"
+const GOLD_FG = "#1a1a1a"
+const POSITION_BG = "#4a90e2"
+
 export function PrIcon({
   isPr,
   wasPr,
@@ -16,59 +21,42 @@ export function PrIcon({
   position,
   className,
 }: Props) {
-  if (variant === "position") {
-    if (!isPr && !wasPr) {
-      return (
-        <Star
-          className={cn("size-4 shrink-0 text-white/10", className)}
-          aria-hidden="true"
-        />
-      )
-    }
-    const label = position != null ? `${position}PR` : "PR"
-    const tone = isPr
-      ? "bg-blue-500 text-white"
-      : "bg-blue-500/40 text-blue-100 opacity-80"
-    return (
-      <span
-        className={cn(
-          "inline-flex shrink-0 items-center rounded-sm px-1 py-0 text-[9px] font-extrabold leading-none tracking-wide tabular-nums",
-          tone,
-          className
-        )}
-        aria-label={
-          isPr
-            ? "Set-position personal record"
-            : "Historical set-position personal record"
-        }
-      >
-        {label}
-      </span>
-    )
+  const isPosition = variant === "position"
+
+  if (!isPr && !wasPr) {
+    // Reserve column width so the rows stay aligned.
+    return <span className={cn("inline-block size-4", className)} aria-hidden="true" />
   }
-  if (isPr) {
-    return (
-      <Star
-        className={cn("size-5 shrink-0 fill-primary text-primary", className)}
-        aria-label="Current personal record"
-      />
-    )
-  }
-  if (wasPr) {
-    return (
-      <Star
-        className={cn(
-          "size-5 shrink-0 fill-[oklch(0.78_0.18_80)] text-[oklch(0.78_0.18_80)] opacity-80",
-          className
-        )}
-        aria-label="Historical personal record"
-      />
-    )
-  }
+
+  const label = isPosition && position != null ? `${position}PR` : "PR"
+  const historical = !isPr && wasPr
+
+  const baseClasses =
+    "inline-flex shrink-0 items-center justify-center rounded-[3px] font-bold leading-none tabular-nums"
+
+  const sizeClasses = "px-1 py-[3px] text-[9px]"
+
+  const style = historical
+    ? { background: "rgba(154,154,154,0.9)", color: "#fff" }
+    : isPosition
+      ? { background: POSITION_BG, color: "#fff" }
+      : { background: GOLD_BG, color: GOLD_FG }
+
   return (
-    <Star
-      className={cn("size-5 shrink-0 text-white/10", className)}
-      aria-hidden="true"
-    />
+    <span
+      className={cn(baseClasses, sizeClasses, className)}
+      style={style}
+      aria-label={
+        historical
+          ? isPosition
+            ? "Historical set-position personal record"
+            : "Historical personal record"
+          : isPosition
+            ? "Set-position personal record"
+            : "Current personal record"
+      }
+    >
+      {label}
+    </span>
   )
 }
