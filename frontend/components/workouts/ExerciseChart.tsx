@@ -350,27 +350,44 @@ export function ExerciseChart({ history }: Props) {
             <path d={path} fill="none" stroke="var(--primary)" strokeWidth="2" />
           )}
 
-          {positioned.map((p, i) => {
-            const isActive = hoverIdx === i
-            const isPeak = p.value === peak
-            return (
-              <g key={i}>
-                <circle
-                  cx={p.cx}
-                  cy={p.cy}
-                  r={isActive ? 5 : isPeak ? 4 : 3.5}
-                  fill={isPeak ? "oklch(0.78 0.18 80)" : "var(--primary)"}
-                />
-                <circle
-                  cx={p.cx}
-                  cy={p.cy}
-                  r={isActive ? 10 : 6}
-                  fill={isPeak ? "oklch(0.78 0.18 80)" : "var(--primary)"}
-                  opacity={isActive ? 0.25 : 0.15}
-                />
-              </g>
-            )
-          })}
+          {(() => {
+            // When dots get too close they pile into a fuzzy blob — at that
+            // density, render only the points that carry meaning (peak,
+            // latest, hovered) and let the line do the rest of the talking.
+            const pitch =
+              positioned.length > 1
+                ? (W - PAD_L - PAD_R) / (positioned.length - 1)
+                : Infinity
+            const dense = pitch < 12
+            const lastIdx = positioned.length - 1
+            return positioned.map((p, i) => {
+              const isActive = hoverIdx === i
+              const isPeak = p.value === peak
+              const isLatest = i === lastIdx
+              const showDot = !dense || isActive || isPeak || isLatest
+              if (!showDot) return null
+              const showHalo = isActive || isPeak || isLatest
+              return (
+                <g key={i}>
+                  <circle
+                    cx={p.cx}
+                    cy={p.cy}
+                    r={isActive ? 5 : isPeak || isLatest ? 4 : 3.5}
+                    fill={isPeak ? "oklch(0.78 0.18 80)" : "var(--primary)"}
+                  />
+                  {showHalo && (
+                    <circle
+                      cx={p.cx}
+                      cy={p.cy}
+                      r={isActive ? 10 : 6}
+                      fill={isPeak ? "oklch(0.78 0.18 80)" : "var(--primary)"}
+                      opacity={isActive ? 0.25 : 0.15}
+                    />
+                  )}
+                </g>
+              )
+            })
+          })()}
 
           {hoverIdx != null && positioned[hoverIdx] && (() => {
             const p = positioned[hoverIdx]

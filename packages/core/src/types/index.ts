@@ -115,7 +115,13 @@ export interface UserSettings {
   /** Optional UI flag: when true (default), the log-set page shows time
    *  rested between sets next to each set number. */
   show_rest_time?: boolean
+  /** The active AI provider used by the AI Plan screen. Defaults to
+   *  "openai" when unset. The matching API key is stored separately in
+   *  secure storage (see mobile/src/ai/keys.ts). */
+  ai_provider?: AIProviderId
 }
+
+export type AIProviderId = "openai" | "anthropic" | "gemini" | "deepseek"
 
 export interface User {
   id: number

@@ -199,31 +199,43 @@ export function CalendarScreen({ navigation, route }: any) {
                 </Text>
               )}
             </View>
-            <Pressable
-              onPress={() => {
-                setActiveDate(selectedDate)
-                // Works in both contexts:
-                //   • Tab instance (Calendar tab inside MainTabs): navigate
-                //     walks up to the parent stack, lands on Main, switches
-                //     the active tab to Today.
-                //   • Stack instance (CalendarDate pushed from ExerciseDetail):
-                //     navigating to "Main" pops both this screen and
-                //     ExerciseDetail off the stack, then switches the tab.
-                navigation.navigate("Main", {
-                  screen: "Today",
-                  params: { date: selectedDate },
-                })
-              }}
-              hitSlop={8}
-              style={({ pressed }) => [styles.goToDateBtn, pressedStyle(pressed)]}
-            >
-              <Text style={styles.goToDateText}>Go to date</Text>
-              <Ionicons
-                name="arrow-forward"
-                size={14}
-                color={theme.colors.foreground}
-              />
-            </Pressable>
+            <View style={styles.detailActions}>
+              <Pressable
+                onPress={() =>
+                  navigation.navigate("AiPlan", { startDate: selectedDate })
+                }
+                hitSlop={8}
+                style={({ pressed }) => [styles.aiPlanBtn, pressedStyle(pressed)]}
+              >
+                <Ionicons name="sparkles" size={14} color={theme.colors.foreground} />
+                <Text style={styles.goToDateText}>AI</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setActiveDate(selectedDate)
+                  // Works in both contexts:
+                  //   • Tab instance (Calendar tab inside MainTabs): navigate
+                  //     walks up to the parent stack, lands on Main, switches
+                  //     the active tab to Today.
+                  //   • Stack instance (CalendarDate pushed from ExerciseDetail):
+                  //     navigating to "Main" pops both this screen and
+                  //     ExerciseDetail off the stack, then switches the tab.
+                  navigation.navigate("Main", {
+                    screen: "Today",
+                    params: { date: selectedDate },
+                  })
+                }}
+                hitSlop={8}
+                style={({ pressed }) => [styles.goToDateBtn, pressedStyle(pressed)]}
+              >
+                <Text style={styles.goToDateText}>Go to date</Text>
+                <Ionicons
+                  name="arrow-forward"
+                  size={14}
+                  color={theme.colors.foreground}
+                />
+              </Pressable>
+            </View>
           </View>
           <DayWorkoutContent
             date={selectedDate}
@@ -444,7 +456,23 @@ const styles = StyleSheet.create({
     color: theme.colors.muted,
     fontSize: theme.fontSize.sm,
   },
+  detailActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   goToDateBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  aiPlanBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,

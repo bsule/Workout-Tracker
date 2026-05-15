@@ -11,7 +11,6 @@ const navLinks = [
   { href: "/workouts", label: "Workout" },
   { href: "/calendar", label: "Calendar" },
   { href: "/exercises", label: "Exercises" },
-  { href: "/one-rep-max", label: "1RM" },
 ]
 
 export function Navbar() {
@@ -29,10 +28,10 @@ export function Navbar() {
   }
 
   return (
-    <header className="sticky top-0 z-50 border-b border-white/8 bg-black/60 backdrop-blur-md">
+    <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-md">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
         <Link
-          href="/"
+          href="/workouts"
           className="flex items-center gap-2 text-lg font-bold tracking-tight text-foreground hover:opacity-80 transition-opacity"
         >
           <Dumbbell className="size-5 text-primary" />
@@ -48,8 +47,8 @@ export function Navbar() {
                 className={cn(
                   "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                   pathname.startsWith(link.href)
-                    ? "bg-white/8 text-foreground"
-                    : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+                    ? "bg-foreground/10 text-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
                 )}
               >
                 {link.label}
@@ -63,7 +62,7 @@ export function Navbar() {
             <>
               <Link
                 href="/settings"
-                className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
+                className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
                 title="Settings"
               >
                 <Settings className="size-4" />
@@ -71,7 +70,7 @@ export function Navbar() {
               </Link>
               <button
                 onClick={handleLogout}
-                className="inline-flex rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
+                className="inline-flex rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
               >
                 Log out
               </button>
@@ -80,7 +79,7 @@ export function Navbar() {
             <>
               <Link
                 href="/login"
-                className="hidden sm:inline-flex rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
+                className="hidden sm:inline-flex rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
               >
                 Log in
               </Link>

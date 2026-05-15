@@ -27,16 +27,29 @@ interface Props {
   visible: boolean
   onClose: () => void
   onPick: (ex: Exercise) => void
+  /** "single" (default) auto-closes on the first pick. "multi" lets the user
+   *  toggle multiple rows and confirm with Done, which fires `onPickMany`. */
+  mode?: "single" | "multi"
+  onPickMany?: (exs: Exercise[]) => void
+  /** Initial selection in multi mode. */
+  initialSelectedIds?: number[]
 }
 
-type Mode = "pick" | "new"
+type ViewMode = "pick" | "new"
 
-export function ExercisePickerSheet({ visible, onClose, onPick }: Props) {
-  const [mode, setMode] = useState<Mode>("pick")
+export function ExercisePickerSheet({
+  visible,
+  onClose,
+  onPick,
+  mode = "single",
+  onPickMany,
+  initialSelectedIds,
+}: Props) {
+  const [view, setView] = useState<ViewMode>("pick")
 
   // Reset to the pick mode each time the sheet opens — never resume mid-form.
   useEffect(() => {
-    if (visible) setMode("pick")
+    if (visible) setView("pick")
   }, [visible])
 
   return (
@@ -53,15 +66,18 @@ export function ExercisePickerSheet({ visible, onClose, onPick }: Props) {
       style={styles.modal}
     >
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }} edges={["top"]}>
-        {mode === "pick" ? (
+        {view === "pick" ? (
           <PickView
             onClose={onClose}
             onPick={onPick}
-            onCreateNew={() => setMode("new")}
+            onCreateNew={() => setView("new")}
+            mode={mode}
+            onPickMany={onPickMany}
+            initialSelectedIds={initialSelectedIds}
           />
         ) : (
           <NewExerciseView
-            onBack={() => setMode("pick")}
+            onBack={() => setView("pick")}
             onCreated={(ex) => onPick(ex)}
           />
         )}
@@ -76,10 +92,16 @@ function PickView({
   onClose,
   onPick,
   onCreateNew,
+  mode,
+  onPickMany,
+  initialSelectedIds,
 }: {
   onClose: () => void
   onPick: (ex: Exercise) => void
   onCreateNew: () => void
+  mode: "single" | "multi"
+  onPickMany?: (exs: Exercise[]) => void
+  initialSelectedIds?: number[]
 }) {
   const [search, setSearch] = useState("")
   const [category, setCategory] = useState<string | null>(null)
@@ -98,16 +120,53 @@ function PickView({
     [snapshot, search, category]
   )
 
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(
+    () => new Set(initialSelectedIds ?? [])
+  )
+
+  function toggle(ex: Exercise) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(ex.id)) next.delete(ex.id)
+      else next.add(ex.id)
+      return next
+    })
+  }
+
+  function onDone() {
+    if (!onPickMany) return
+    const chosen = exercises.filter((e) => selectedIds.has(e.id))
+    // include any selected items that aren't in the current filter view
+    if (selectedIds.size > chosen.length) {
+      const haveIds = new Set(chosen.map((e) => e.id))
+      const missing = listExercisesQ().filter(
+        (e) => selectedIds.has(e.id) && !haveIds.has(e.id)
+      )
+      chosen.push(...missing)
+    }
+    onPickMany(chosen)
+  }
+
+  const isMulti = mode === "multi"
+
   return (
     <>
       <View style={styles.header}>
         <Pressable onPress={onClose} hitSlop={12} style={styles.headerSideBtn}>
           <Ionicons name="close" size={28} color={theme.colors.foreground} />
         </Pressable>
-        <Text style={styles.title}>Choose Exercise</Text>
-        <Pressable onPress={onCreateNew} hitSlop={12} style={styles.headerSideBtn}>
-          <Ionicons name="add" size={28} color={theme.colors.foreground} />
-        </Pressable>
+        <Text style={styles.title}>
+          {isMulti ? "Choose Exercises" : "Choose Exercise"}
+        </Text>
+        {isMulti ? (
+          <Pressable onPress={onDone} hitSlop={12} style={styles.headerSideBtn}>
+            <Text style={styles.doneText}>Done</Text>
+          </Pressable>
+        ) : (
+          <Pressable onPress={onCreateNew} hitSlop={12} style={styles.headerSideBtn}>
+            <Ionicons name="add" size={28} color={theme.colors.foreground} />
+          </Pressable>
+        )}
       </View>
 
       <View style={styles.searchWrap}>
@@ -143,7 +202,14 @@ function PickView({
         data={exercises}
         keyExtractor={(e) => String(e.id)}
         contentContainerStyle={{ paddingBottom: 40 }}
-        renderItem={({ item }) => <ExerciseRow ex={item} onPress={() => onPick(item)} />}
+        renderItem={({ item }) => (
+          <ExerciseRow
+            ex={item}
+            selected={isMulti ? selectedIds.has(item.id) : false}
+            showCheckbox={isMulti}
+            onPress={() => (isMulti ? toggle(item) : onPick(item))}
+          />
+        )}
         ItemSeparatorComponent={() => <View style={styles.sep} />}
         ListEmptyComponent={
           <Text style={{ color: theme.colors.muted, padding: theme.spacing[4] }}>
@@ -155,7 +221,17 @@ function PickView({
   )
 }
 
-function ExerciseRow({ ex, onPress }: { ex: Exercise; onPress: () => void }) {
+function ExerciseRow({
+  ex,
+  onPress,
+  selected,
+  showCheckbox,
+}: {
+  ex: Exercise
+  onPress: () => void
+  selected?: boolean
+  showCheckbox?: boolean
+}) {
   const { colors: catColors } = useCategoryStyles()
   const dotColor =
     catColors[ex.category] ?? theme.colors.cat[ex.category] ?? theme.colors.muted
@@ -167,6 +243,13 @@ function ExerciseRow({ ex, onPress }: { ex: Exercise; onPress: () => void }) {
         <Text style={styles.rowName}>{ex.name}</Text>
         <Text style={styles.rowSub}>{subtitle}</Text>
       </View>
+      {showCheckbox && (
+        <Ionicons
+          name={selected ? "checkbox" : "square-outline"}
+          size={22}
+          color={selected ? theme.colors.foreground : theme.colors.muted}
+        />
+      )}
     </Pressable>
   )
 }
@@ -373,4 +456,9 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.base,
   },
   error: { color: theme.colors.destructive, fontSize: theme.fontSize.sm },
+  doneText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: "700",
+  },
 })

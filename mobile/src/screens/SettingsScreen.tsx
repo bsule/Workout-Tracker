@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   Alert,
   Pressable,
@@ -9,9 +9,12 @@ import {
   View,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
-import { localApi as api } from "@lift/core"
+import { localApi as api, useStore } from "@lift/core"
+import type { AIProviderId } from "@lift/core"
 import { useAuth } from "../auth/AuthProvider"
 import { ApiError } from "../auth/api"
+import { AI_PROVIDERS } from "../ai"
+import { clearApiKey, getApiKey, setApiKey } from "../ai/keys"
 import { Button } from "../components/Button"
 import { PopupModal } from "../components/PopupModal"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
@@ -85,6 +88,77 @@ export function SettingsScreen({ navigation }: any) {
   const [draft, setDraft] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const storedProvider: AIProviderId =
+    useStore((s) => s.snapshot.settings.ai_provider) ?? "openai"
+  const [pendingProvider, setPendingProvider] = useState<AIProviderId | null>(null)
+  const aiProvider: AIProviderId = pendingProvider ?? storedProvider
+  useEffect(() => {
+    if (pendingProvider && pendingProvider === storedProvider) {
+      setPendingProvider(null)
+    }
+  }, [pendingProvider, storedProvider])
+  function selectProvider(id: AIProviderId) {
+    if (id === aiProvider) return
+    setPendingProvider(id)
+    // applyMutation rebuilds snapshot indexes and re-renders every
+    // SettingsProvider descendant; double-RAF lets the optimistic button
+    // re-render paint before the JS thread blocks on that work.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        api.updateSettings({ ai_provider: id })
+      })
+    })
+  }
+  const [keyPresence, setKeyPresence] = useState<Record<AIProviderId, boolean>>(
+    { openai: false, anthropic: false, gemini: false, deepseek: false }
+  )
+  const [editingKey, setEditingKey] = useState<AIProviderId | null>(null)
+  const [keyDraft, setKeyDraft] = useState("")
+  const [keyBusy, setKeyBusy] = useState(false)
+  const [keyError, setKeyError] = useState<string | null>(null)
+
+  async function refreshKeyPresence() {
+    const next: Record<AIProviderId, boolean> = { ...keyPresence }
+    for (const p of AI_PROVIDERS) {
+      next[p.id] = !!(await getApiKey(p.id))
+    }
+    setKeyPresence(next)
+  }
+  useEffect(() => {
+    refreshKeyPresence()
+  }, [])
+
+  function openKeyEditor(id: AIProviderId) {
+    setEditingKey(id)
+    setKeyDraft("")
+    setKeyError(null)
+  }
+  function closeKeyEditor() {
+    setEditingKey(null)
+    setKeyDraft("")
+    setKeyError(null)
+  }
+  async function saveKey() {
+    if (!editingKey) return
+    const value = keyDraft.trim()
+    if (!value) return
+    setKeyBusy(true)
+    setKeyError(null)
+    try {
+      await setApiKey(editingKey, value)
+      await refreshKeyPresence()
+      closeKeyEditor()
+    } catch (e) {
+      setKeyError(e instanceof Error ? e.message : "Failed to save key.")
+    } finally {
+      setKeyBusy(false)
+    }
+  }
+  async function deleteKey(id: AIProviderId) {
+    await clearApiKey(id)
+    await refreshKeyPresence()
+  }
 
   function openEditor(field: ProfileField) {
     setEditingField(field)
@@ -246,6 +320,50 @@ export function SettingsScreen({ navigation }: any) {
           </View>
         </Pressable>
 
+        <Text style={styles.section}>AI</Text>
+        <View style={styles.card}>
+          <Text style={styles.rowLabel}>Active provider</Text>
+          <View style={styles.providerGrid}>
+            {AI_PROVIDERS.map((p) => (
+              <Button
+                key={p.id}
+                label={p.label}
+                variant={aiProvider === p.id ? "primary" : "secondary"}
+                style={styles.providerBtn}
+                onPress={() => selectProvider(p.id)}
+              />
+            ))}
+          </View>
+
+          {AI_PROVIDERS.map((p) => {
+            const has = keyPresence[p.id]
+            return (
+              <View key={p.id} style={styles.aiKeyRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowValue}>{p.label}</Text>
+                  <Text style={styles.maintenanceHelp}>
+                    {has ? "Key saved" : "No key set"}
+                  </Text>
+                </View>
+                <View style={styles.aiKeyActions}>
+                  <Button
+                    label={has ? "Update" : "Set"}
+                    variant="secondary"
+                    onPress={() => openKeyEditor(p.id)}
+                  />
+                  {has && (
+                    <Button
+                      label="Clear"
+                      variant="destructive"
+                      onPress={() => deleteKey(p.id)}
+                    />
+                  )}
+                </View>
+              </View>
+            )
+          })}
+        </View>
+
         <Text style={styles.section}>Data</Text>
         <Pressable
           onPress={() => navigation.navigate("ImportExport")}
@@ -316,6 +434,43 @@ export function SettingsScreen({ navigation }: any) {
         onCancel={closeEditor}
         onSave={saveProfile}
       />
+
+      <PopupModal
+        visible={editingKey != null}
+        title={
+          editingKey
+            ? `${AI_PROVIDERS.find((p) => p.id === editingKey)?.label} API key`
+            : ""
+        }
+        onClose={closeKeyEditor}
+      >
+        <TextInput
+          value={keyDraft}
+          onChangeText={setKeyDraft}
+          autoFocus
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry
+          placeholder="Paste your API key"
+          placeholderTextColor={theme.colors.muted}
+          style={styles.modalInput}
+        />
+        {keyError && <Text style={styles.modalError}>{keyError}</Text>}
+        <View style={styles.modalActions}>
+          <Button
+            label="Cancel"
+            variant="secondary"
+            onPress={closeKeyEditor}
+            style={{ flex: 1 }}
+          />
+          <Button
+            label={keyBusy ? "Saving…" : "Save"}
+            onPress={saveKey}
+            disabled={!keyDraft.trim() || keyBusy}
+            style={{ flex: 1 }}
+          />
+        </View>
+      </PopupModal>
     </StaticSafeAreaView>
   )
 }
@@ -463,5 +618,26 @@ const styles = StyleSheet.create({
   statusOk: {
     color: theme.colors.secondary,
     fontSize: theme.fontSize.xs,
+  },
+  providerGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  providerBtn: {
+    flexBasis: "48%",
+    flexGrow: 1,
+  },
+  aiKeyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingTop: theme.spacing[2],
+    borderTopColor: theme.colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  aiKeyActions: {
+    flexDirection: "row",
+    gap: 8,
   },
 })

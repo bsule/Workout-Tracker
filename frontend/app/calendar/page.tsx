@@ -1,7 +1,9 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { Sparkles } from "lucide-react"
 import { localApi as api, getPlannedDatesQ } from "@/lib/store"
 import { useAuth } from "@/components/auth/AuthProvider"
 import { CalendarMonth } from "@/components/calendar/CalendarMonth"
@@ -56,7 +58,16 @@ export default function CalendarPage() {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6 sm:py-10 space-y-4">
-      <h1 className="text-xl font-bold tracking-tight">Calendar</h1>
+      <div className="flex items-center justify-between gap-2">
+        <h1 className="text-xl font-bold tracking-tight">Calendar</h1>
+        <Link
+          href="/ai-plan"
+          className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-sm font-semibold text-primary hover:bg-primary/20"
+        >
+          <Sparkles className="size-3.5" />
+          AI Plan
+        </Link>
+      </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
       <CalendarMonth
         year={year}

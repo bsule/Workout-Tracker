@@ -274,7 +274,7 @@ function SetList({
   return (
     <div>
       <div className="overflow-hidden rounded-2xl border border-white/10 bg-card/40">
-        <div className="grid grid-cols-[1.25rem_2rem_1fr_4rem] items-center gap-x-4 border-b border-white/5 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+        <div className="grid grid-cols-[2.25rem_2rem_1fr_4rem] items-center gap-x-4 border-b border-white/5 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
           <span />
           <span>Set</span>
           <span className="text-center">Weight</span>
@@ -438,7 +438,7 @@ function SetRow({
       <div className="group relative">
         <div
           className={cn(
-            "grid grid-cols-[1.25rem_2rem_1fr_4rem] items-center gap-x-4 px-4 py-3 hover:bg-white/[.02] transition-colors",
+            "grid grid-cols-[2.25rem_2rem_1fr_4rem] items-center gap-x-4 px-4 py-3 hover:bg-white/[.02] transition-colors",
             set.is_planned && "opacity-60"
           )}
         >
@@ -448,16 +448,17 @@ function SetRow({
               aria-label="Target set"
             />
           ) : set.is_pr || set.was_pr ? (
-            <PrIcon isPr={set.is_pr} wasPr={set.was_pr} className="size-4" />
+            <PrIcon isPr={set.is_pr} wasPr={set.was_pr} className="w-7 justify-self-start" />
           ) : showPositionPrs ? (
             <PrIcon
               isPr={set.is_position_pr}
               wasPr={set.was_position_pr}
               variant="position"
               position={index}
+              className="w-7 justify-self-start"
             />
           ) : (
-            <PrIcon isPr={false} wasPr={false} className="size-4" />
+            <PrIcon isPr={false} wasPr={false} className="w-7 justify-self-start" />
           )}
           <span className="flex flex-col leading-tight">
             <span className="font-mono text-base font-semibold tabular-nums text-muted-foreground">
