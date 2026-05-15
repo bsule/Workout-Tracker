@@ -127,7 +127,7 @@ export function DayView({ date }: Props) {
       {workout === null && (
         <>
           <DateStrip date={date} />
-          <div className="rounded-md border border-dashed border-white/15 p-6 text-center text-sm text-muted-foreground">
+          <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
             No exercises yet. Add one below.
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -155,7 +155,7 @@ export function DayView({ date }: Props) {
           )}
 
           {workout.exercises.length === 0 ? (
-            <div className="rounded-md border border-dashed border-white/15 p-6 text-center text-sm text-muted-foreground">
+            <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
               No exercises yet. Add one below.
             </div>
           ) : (
@@ -200,51 +200,45 @@ function SummaryStrip({
   const hasTime = !!workout.started_at
   const lastTime = hasTime ? lastSetTimeOf(workout) : null
   const dur = hasTime ? formatDuration(workoutDurationSeconds(workout)) : null
-  const dt = parseLocalDate(workout.date)
-  const niceDate = dt.toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  })
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[.02] p-4">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-sm text-muted-foreground">{niceDate}</div>
+    <div className="rounded-lg border border-border bg-foreground/[.04] p-4">
+      <div className="flex items-start justify-between gap-2">
+        {workout.exercises.length > 0 ? (
+          <div className="flex flex-col gap-y-0.5 text-xs text-muted-foreground">
+            {workout.started_at && (
+              <span>
+                <span className="text-foreground/70">Started </span>
+                {new Date(workout.started_at).toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </span>
+            )}
+            {lastTime && (
+              <span>
+                <span className="text-foreground/70">End </span>
+                {new Date(lastTime).toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </span>
+            )}
+            {dur && (
+              <span>
+                <span className="text-foreground/70">Duration </span>
+                {dur}
+              </span>
+            )}
+          </div>
+        ) : (
+          <div />
+        )}
         <GymEditor
           workoutId={workout.id}
           gym={workout.gym}
           lastGym={lastGym}
         />
       </div>
-      {workout.exercises.length > 0 && (
-        <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          {workout.started_at && (
-            <span>
-              <span className="text-foreground/70">Started </span>
-              {new Date(workout.started_at).toLocaleTimeString("en-US", {
-                hour: "numeric",
-                minute: "2-digit",
-              })}
-            </span>
-          )}
-          {lastTime && (
-            <span>
-              <span className="text-foreground/70">End </span>
-              {new Date(lastTime).toLocaleTimeString("en-US", {
-                hour: "numeric",
-                minute: "2-digit",
-              })}
-            </span>
-          )}
-          {dur && (
-            <span>
-              <span className="text-foreground/70">Duration </span>
-              {dur}
-            </span>
-          )}
-        </div>
-      )}
     </div>
   )
 }
@@ -279,9 +273,9 @@ function ExerciseCard({
           router.push(href)
         }
       }}
-      className="overflow-hidden rounded-lg border border-white/10 bg-card cursor-pointer hover:border-white/20 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      className="overflow-hidden rounded-lg border border-border bg-card cursor-pointer hover:border-foreground/30 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
     >
-      <div className="flex items-center gap-2 border-b border-white/5 bg-white/[.02] px-4 py-3">
+      <div className="flex items-center gap-2 border-b border-border/60 bg-foreground/[.04] px-4 py-3">
         <CategoryDot category={we.exercise.category} />
         <span className="flex-1 text-base font-semibold tracking-tight">
           {we.exercise.name}
@@ -296,12 +290,12 @@ function ExerciseCard({
       </div>
 
       {we.sets.length === 0 ? (
-        <div className="block px-4 py-4 text-sm text-primary hover:bg-white/[.02]">
+        <div className="block px-4 py-4 text-sm text-primary hover:bg-foreground/[.04]">
           + Add first set
         </div>
       ) : (
         <div className="px-4 pt-3 pb-1">
-          <div className="grid grid-cols-[1.25rem_2rem_1fr_4rem] items-center gap-x-4 px-1 pb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+          <div className="grid grid-cols-[1.75rem_2rem_1fr_4rem] items-center gap-x-4 px-1 pb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
             <span />
             <span>Set</span>
             <span className="text-center">Weight</span>
@@ -312,7 +306,7 @@ function ExerciseCard({
               <li
                 key={s.id}
                 className={cn(
-                  "grid grid-cols-[1.25rem_2rem_1fr_4rem] items-center gap-x-4 px-1 py-2",
+                  "grid grid-cols-[1.75rem_2rem_1fr_4rem] items-center gap-x-4 px-1 py-2",
                   s.is_planned && "opacity-60"
                 )}
               >
@@ -325,7 +319,7 @@ function ExerciseCard({
                   <PrIcon
                     isPr={s.is_pr}
                     wasPr={s.was_pr}
-                    className="size-4"
+                    className="w-7 justify-self-start"
                   />
                 ) : showPositionPrs ? (
                   <PrIcon
@@ -333,9 +327,10 @@ function ExerciseCard({
                     wasPr={s.was_position_pr}
                     variant="position"
                     position={i + 1}
+                    className="w-7 justify-self-start"
                   />
                 ) : (
-                  <PrIcon isPr={false} wasPr={false} className="size-4" />
+                  <PrIcon isPr={false} wasPr={false} className="w-7 justify-self-start" />
                 )}
                 <span className="text-sm font-medium tabular-nums text-foreground/80">
                   {i + 1}
@@ -391,7 +386,7 @@ function PlannedBanner({
         "flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between",
         isToday
           ? "border-primary/40 bg-primary/10"
-          : "border-white/10 bg-white/[.02]"
+          : "border-border bg-foreground/[.04]"
       )}
     >
       <div className="flex items-center gap-3">
@@ -445,7 +440,7 @@ function DateStrip({ date }: { date: string }) {
     year: "numeric",
   })
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[.02] p-4">
+    <div className="rounded-lg border border-border bg-foreground/[.04] p-4">
       <div className="text-sm text-muted-foreground">{niceDate}</div>
     </div>
   )

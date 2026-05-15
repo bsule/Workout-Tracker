@@ -170,14 +170,14 @@ function Tabs({
   priorCount: number
 }) {
   const items: { id: Tab; label: string; icon: React.ReactNode; badge?: string }[] = [
-    { id: "chart", label: "Chart", icon: <Activity className="size-4" /> },
-    { id: "records", label: "Records", icon: <Trophy className="size-4" /> },
     {
       id: "history",
       label: "History",
       icon: <HistoryIcon className="size-4" />,
       badge: priorCount > 0 ? String(priorCount) : undefined,
     },
+    { id: "chart", label: "Graph", icon: <Activity className="size-4" /> },
+    { id: "records", label: "Records", icon: <Trophy className="size-4" /> },
     {
       id: "settings",
       label: "Settings",
