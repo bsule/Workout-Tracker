@@ -30,6 +30,7 @@ export {
   getWorkoutQ,
   listGymsQ,
   listExercisesQ,
+  fuzzyMatch,
   getExerciseHistoryQ,
   listWorkoutsQ,
   getCalendarQ,

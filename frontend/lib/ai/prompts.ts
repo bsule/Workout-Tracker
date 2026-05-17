@@ -4,7 +4,7 @@ import type { HistoryDay } from "./types"
 export const SYSTEM_PROMPT = [
   "You are a strength-and-conditioning coach generating planned workouts for a fitness-tracking app.",
   "Output STRICT JSON only — no markdown, no commentary, no preamble. Your entire response must be a single JSON object matching the schema the user gives you.",
-  "Use the user's preferred weight unit for every set. Generate realistic, achievable target weights and reps based on the user's history (when provided) — apply gentle progressive overload.",
+  "Use the user's preferred weight unit for every set, EXACTLY as numbered in the history — never convert between lb and kg. Base target weights directly on the user's most recent sets for that exercise (when provided) and apply only gentle progressive overload (+2.5–5%). Do NOT 'correct' weights you find surprising; trust the history numbers as given.",
   "When a recent set's exercise is in the user's library, prefer that exact `name` so the app can reuse the existing exercise. Otherwise, you may invent a new exercise; pick a sensible `category` and `kind`.",
   "Categories: abs, back, biceps, cardio, chest, legs, shoulders, triceps.",
   "Exercise kinds: weight_reps (default — fill weight + reps), bodyweight_reps (fill reps only), distance_time (fill distance_m and/or time_seconds), time_only (fill time_seconds only).",
@@ -19,6 +19,7 @@ interface BuildOpts {
   history: HistoryDay[]
   historyDisabled: boolean
   historyFiltered: boolean
+  restrictToLibrary?: boolean
   comment: string
 }
 
@@ -50,21 +51,34 @@ export function buildUserPrompt(opts: BuildOpts): string {
     history,
     historyDisabled,
     historyFiltered,
+    restrictToLibrary,
     comment,
   } = opts
 
   const libraryNames = exerciseLibrary.slice(0, 80).map((e) => `${e.name} (${e.category}, ${e.kind})`)
 
   const lines: string[] = []
-  lines.push(`Weight unit: ${weightUnit}.`)
+  lines.push(
+    `UNITS: every weight value in BOTH the history below and YOUR output is in ${weightUnit}. Do NOT convert between lb and kg under any circumstance. If the history shows 185, you output a number near 185 (in ${weightUnit}), not its kg equivalent.`,
+  )
   lines.push("")
   lines.push("Generate a planned workout for EACH of these dates:")
   for (const d of planDates) lines.push(`  - ${d}`)
   lines.push("")
 
   if (libraryNames.length) {
-    lines.push("User's existing exercise library (prefer these names when reasonable):")
-    for (const n of libraryNames) lines.push(`  - ${n}`)
+    if (restrictToLibrary) {
+      lines.push(
+        "HARD CONSTRAINT — only use the following exercises. Do NOT invent or substitute any other exercise, even if it would be appropriate. Every `name` you output must exactly match one of these:",
+      )
+      for (const n of libraryNames) lines.push(`  - ${n}`)
+      lines.push(
+        "If none of the above fit a given day, return that day with an empty `exercises` array (rest day).",
+      )
+    } else {
+      lines.push("User's existing exercise library (prefer these names when reasonable):")
+      for (const n of libraryNames) lines.push(`  - ${n}`)
+    }
     lines.push("")
   }
 
@@ -81,10 +95,19 @@ export function buildUserPrompt(opts: BuildOpts): string {
   } else {
     lines.push(
       historyFiltered
-        ? "Recent completed workouts (filtered to the exercises the user selected):"
-        : "Recent completed workouts:"
+        ? `Recent completed workouts (filtered to the exercises the user selected). Every weight value is in ${weightUnit}:`
+        : `Recent completed workouts. Every weight value is in ${weightUnit}:`,
     )
-    lines.push(JSON.stringify(history))
+    const annotated = history.map((d) => ({
+      ...d,
+      exercises: d.exercises.map((ex) => ({
+        ...ex,
+        sets: ex.sets.map((s) =>
+          s.weight != null ? { ...s, unit: weightUnit } : s,
+        ),
+      })),
+    }))
+    lines.push(JSON.stringify(annotated))
     lines.push("")
   }
 

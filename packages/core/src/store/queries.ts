@@ -49,12 +49,13 @@ function fuzzySubstringDistance(text: string, query: string): number {
  * must fuzzy-match somewhere in `text` independently of order. Typo tolerance
  * scales with token length so short tokens stay strict.
  */
-function fuzzyMatch(text: string, query: string): boolean {
+export function fuzzyMatch(text: string, query: string): boolean {
   const t = text.toLowerCase()
   const tokens = query.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
   if (tokens.length === 0) return true
   for (const tok of tokens) {
-    const threshold = tok.length <= 3 ? 0 : tok.length <= 5 ? 1 : 2
+    const threshold =
+      tok.length <= 2 ? 0 : tok.length <= 5 ? 1 : tok.length <= 8 ? 2 : 3
     if (fuzzySubstringDistance(t, tok) > threshold) return false
   }
   return true
