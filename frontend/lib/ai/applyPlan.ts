@@ -1,5 +1,5 @@
 import { listExercisesQ, localApi } from "@/lib/store"
-import { DEFAULT_CATEGORIES, type Category, type ExerciseKind } from "@lift/core"
+import { DEFAULT_CATEGORIES, toKg, type Category, type ExerciseKind, type WeightUnit } from "@lift/core"
 import type { AiPlanExercise, AiPlanResponse } from "./types"
 
 export interface ApplyResult {
@@ -7,7 +7,7 @@ export interface ApplyResult {
   errors: { date: string; message: string }[]
 }
 
-export async function applyPlan(plan: AiPlanResponse): Promise<ApplyResult> {
+export async function applyPlan(plan: AiPlanResponse, weightUnit: WeightUnit): Promise<ApplyResult> {
   const applied: string[] = []
   const errors: { date: string; message: string }[] = []
 
@@ -21,7 +21,7 @@ export async function applyPlan(plan: AiPlanResponse): Promise<ApplyResult> {
         const we = await localApi.addExerciseToWorkout(workout.id, exerciseId)
         for (const set of ex.sets ?? []) {
           await localApi.addPlannedSet(we.id, {
-            weight: set.weight ?? null,
+            weight: set.weight == null ? null : toKg(set.weight, weightUnit),
             reps: set.reps ?? null,
             distance_m: set.distance_m ?? null,
             time_seconds: set.time_seconds ?? null,

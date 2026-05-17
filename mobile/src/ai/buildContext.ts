@@ -1,13 +1,14 @@
-import { listWorkoutsQ } from "@lift/core"
+import { fromKg, listWorkoutsQ, roundForDisplay, type WeightUnit } from "@lift/core"
 import type { HistoryDay, HistoryExercise } from "./types"
 
 interface ContextOpts {
   from: string
   to: string
+  weightUnit: WeightUnit
   exerciseIds?: number[]
 }
 
-export function buildHistoryContext({ from, to, exerciseIds }: ContextOpts): HistoryDay[] {
+export function buildHistoryContext({ from, to, weightUnit, exerciseIds }: ContextOpts): HistoryDay[] {
   const filterIds = exerciseIds && exerciseIds.length > 0 ? new Set(exerciseIds) : null
 
   const all = listWorkoutsQ()
@@ -25,7 +26,7 @@ export function buildHistoryContext({ from, to, exerciseIds }: ContextOpts): His
         .filter((s) => !s.is_planned)
         .sort((a, b) => a.order - b.order)
         .map((s) => ({
-          weight: s.weight,
+          weight: s.weight == null ? s.weight : roundForDisplay(fromKg(s.weight, weightUnit), weightUnit),
           reps: s.reps,
           distance_m: s.distance_m,
           time_seconds: s.time_seconds,

@@ -4,7 +4,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Check, Pencil, Plus, Search, Trash2, X } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import { localApi as api } from "@/lib/store"
+import { fuzzyMatch, localApi as api } from "@/lib/store"
 import { type Category, type Exercise } from "@/types"
 import { categoryVar, cn } from "@/lib/utils"
 import { CategoryDot } from "./CategoryBadge"
@@ -104,10 +104,10 @@ export function ExercisePicker({ mode = "browse", onPick }: Props) {
 
   const filtered = useMemo(() => {
     if (!exercises) return []
-    const q = search.trim().toLowerCase()
+    const q = search.trim()
     return exercises.filter((e) => {
       if (activeCats.size > 0 && !activeCats.has(e.category)) return false
-      if (q && !e.name.toLowerCase().includes(q)) return false
+      if (q && !fuzzyMatch(e.name, q)) return false
       return true
     })
   }, [exercises, search, activeCats])
