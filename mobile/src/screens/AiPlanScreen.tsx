@@ -114,10 +114,17 @@ export function AiPlanScreen({ navigation, route }: any) {
         ? buildHistoryContext({
             from: historyStart,
             to: historyEnd,
+            weightUnit,
             exerciseIds: selectedExercises.map((e) => e.id),
           })
         : []
-      const exerciseLibrary = listExercisesQ({ sort: "last_performed" })
+      const fullLibrary = listExercisesQ({ sort: "last_performed" })
+      const exerciseLibrary =
+        selectedExercises.length > 0
+          ? fullLibrary.filter((e) =>
+              selectedExercises.some((s) => s.id === e.id),
+            )
+          : fullLibrary
       const userPrompt = buildUserPrompt({
         planDates,
         weightUnit,
@@ -125,6 +132,7 @@ export function AiPlanScreen({ navigation, route }: any) {
         history,
         historyDisabled: !useHistory,
         historyFiltered: selectedExercises.length > 0,
+        restrictToLibrary: selectedExercises.length > 0,
         comment,
       })
       const raw = await getProvider(providerId).generate({
@@ -152,7 +160,7 @@ export function AiPlanScreen({ navigation, route }: any) {
     if (!preview) return
     setBusy(true)
     try {
-      const res = await applyPlan(preview)
+      const res = await applyPlan(preview, weightUnit)
       if (res.errors.length > 0) {
         Alert.alert(
           "Partial success",

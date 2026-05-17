@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { ChevronLeft, Loader2, Sparkles, X } from "lucide-react"
 import { useStore } from "@/lib/store"
-import { listExercisesQ } from "@/lib/store"
+import { fuzzyMatch, listExercisesQ } from "@/lib/store"
 import type { Exercise } from "@lift/core"
 import { useAuth } from "@/components/auth/AuthProvider"
 import { FullPageLoader } from "@/components/ui/Spinner"
@@ -95,10 +95,15 @@ export default function AiPlanPage() {
   const [error, setError] = useState<string | null>(null)
   const [preview, setPreview] = useState<AiPlanResponse | null>(null)
   const [rawResponse, setRawResponse] = useState<string | null>(null)
+  const [debugPrompt, setDebugPrompt] = useState<string | null>(null)
 
   const providerId = settings.ai_provider ?? "openai"
   const providerLabel =
     AI_PROVIDERS.find((p) => p.id === providerId)?.label ?? providerId
+  const [hasKey, setHasKey] = useState(false)
+  useEffect(() => {
+    setHasKey(!!getApiKey(providerId))
+  }, [providerId])
 
   const planDates = useMemo(
     () => enumerateDates(planStart, planEnd),
@@ -107,11 +112,41 @@ export default function AiPlanPage() {
   const planDatesValid = planDates.length > 0 && planStart >= tomorrow
   const historyValid = !useHistory || historyStart <= historyEnd
 
-  // Reactive exercise list, used by the picker.
+  // Reactive exercise list, used by the picker. Matches mobile: show all
+  // exercises (sorted by recency) regardless of whether they appear in the
+  // history window.
   const allExercises = useMemo(
-    () => listExercisesQ({ sort: "name" }),
+    () => listExercisesQ({ sort: "last_performed" }),
     [snapshot],
   )
+
+  function buildCurrentPrompt(): string {
+    const history = useHistory
+      ? buildHistoryContext({
+          from: historyStart,
+          to: historyEnd,
+          weightUnit: settings.weight_unit,
+          exerciseIds: selectedExercises.map((e) => e.id),
+        })
+      : []
+    const fullLibrary = listExercisesQ({ sort: "last_performed" })
+    const exerciseLibrary =
+      selectedExercises.length > 0
+        ? fullLibrary.filter((e) =>
+            selectedExercises.some((s) => s.id === e.id),
+          )
+        : fullLibrary
+    return buildUserPrompt({
+      planDates,
+      weightUnit: settings.weight_unit,
+      exerciseLibrary,
+      history,
+      historyDisabled: !useHistory,
+      historyFiltered: selectedExercises.length > 0,
+      restrictToLibrary: selectedExercises.length > 0,
+      comment,
+    })
+  }
 
   async function onGenerate() {
     setError(null)
@@ -137,23 +172,7 @@ export default function AiPlanPage() {
 
     setBusy(true)
     try {
-      const history = useHistory
-        ? buildHistoryContext({
-            from: historyStart,
-            to: historyEnd,
-            exerciseIds: selectedExercises.map((e) => e.id),
-          })
-        : []
-      const exerciseLibrary = listExercisesQ({ sort: "last_performed" })
-      const userPrompt = buildUserPrompt({
-        planDates,
-        weightUnit: settings.weight_unit,
-        exerciseLibrary,
-        history,
-        historyDisabled: !useHistory,
-        historyFiltered: selectedExercises.length > 0,
-        comment,
-      })
+      const userPrompt = buildCurrentPrompt()
       const raw = await getProvider(providerId).generate({
         systemPrompt: SYSTEM_PROMPT,
         userPrompt,
@@ -181,7 +200,7 @@ export default function AiPlanPage() {
     if (!preview) return
     setBusy(true)
     try {
-      const res = await applyPlan(preview)
+      const res = await applyPlan(preview, settings.weight_unit)
       if (res.errors.length > 0) {
         setError(
           `Applied ${res.appliedDates.length} day(s). Failed: ${res.errors
@@ -240,7 +259,18 @@ export default function AiPlanPage() {
 
       <Section title="Provider">
         <div>
-          <p className="text-sm font-medium">{providerLabel}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium">{providerLabel}</p>
+            <span
+              className={
+                hasKey
+                  ? "rounded-full border border-secondary/40 bg-secondary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-secondary"
+                  : "rounded-full border border-destructive/40 bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-destructive"
+              }
+            >
+              {hasKey ? "Key saved" : "No key"}
+            </span>
+          </div>
           <p className="mt-1 text-xs text-muted-foreground">
             Change the provider or update API keys in{" "}
             <Link href="/settings" className="text-primary underline">
@@ -403,6 +433,17 @@ export default function AiPlanPage() {
         </Section>
       )}
 
+      {!preview && (
+        <Button
+          variant="outline"
+          className="w-full"
+          onClick={() => setDebugPrompt(buildCurrentPrompt())}
+          disabled={busy || !planDatesValid || !historyValid}
+        >
+          Show prompt (debug)
+        </Button>
+      )}
+
       <div className="flex gap-3">
         {preview ? (
           <>
@@ -433,6 +474,61 @@ export default function AiPlanPage() {
           </Button>
         )}
       </div>
+
+      {debugPrompt != null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setDebugPrompt(null)}
+        >
+          <div
+            className="flex h-[80vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-background"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <div>
+                <h3 className="text-sm font-semibold">Prompt sent to AI</h3>
+                <p className="text-[11px] text-muted-foreground">
+                  System prompt + user prompt, exactly as the provider will receive them.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    navigator.clipboard.writeText(
+                      `=== SYSTEM ===\n${SYSTEM_PROMPT}\n\n=== USER ===\n${debugPrompt}`,
+                    )
+                  }
+                >
+                  Copy
+                </Button>
+                <button
+                  onClick={() => setDebugPrompt(null)}
+                  className="rounded-md p-1 text-muted-foreground hover:bg-foreground/5"
+                  aria-label="Close"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+            </div>
+            <div className="thin-scrollbar flex-1 overflow-y-auto p-4">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                System
+              </p>
+              <pre className="mb-4 whitespace-pre-wrap rounded-md border border-border bg-foreground/[.03] p-3 font-mono text-[11px] leading-relaxed">
+                {SYSTEM_PROMPT}
+              </pre>
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                User
+              </p>
+              <pre className="whitespace-pre-wrap rounded-md border border-border bg-foreground/[.03] p-3 font-mono text-[11px] leading-relaxed">
+                {debugPrompt}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
 
       {pickerOpen && (
         <ExercisePickerModal
@@ -519,9 +615,9 @@ function ExercisePickerModal({
   }, [])
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
+    const q = query.trim()
     if (!q) return allExercises
-    return allExercises.filter((e) => e.name.toLowerCase().includes(q))
+    return allExercises.filter((e) => fuzzyMatch(e.name, q))
   }, [allExercises, query])
 
   function toggle(id: number) {
@@ -539,8 +635,14 @@ function ExercisePickerModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="flex h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-background">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="flex h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-background"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <h3 className="text-sm font-semibold">Pick exercises</h3>
           <button
@@ -560,7 +662,7 @@ function ExercisePickerModal({
             className="h-9 w-full rounded-md border border-border bg-foreground/[.03] px-3 text-sm focus:outline-none focus:border-primary/50"
           />
         </div>
-        <ul className="flex-1 overflow-y-auto">
+        <ul className="thin-scrollbar flex-1 overflow-y-auto">
           {filtered.length === 0 ? (
             <li className="p-6 text-center text-xs text-muted-foreground">
               No matches.

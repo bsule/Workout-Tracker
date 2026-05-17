@@ -2,8 +2,9 @@ import {
   DEFAULT_CATEGORIES,
   listExercisesQ,
   localApi,
+  toKg,
 } from "@lift/core"
-import type { Category, ExerciseKind } from "@lift/core"
+import type { Category, ExerciseKind, WeightUnit } from "@lift/core"
 import type { AiPlanExercise, AiPlanResponse } from "./types"
 
 export interface ApplyResult {
@@ -15,7 +16,7 @@ export interface ApplyResult {
  * Applies a parsed AI plan to the local store. One workout per day; existing
  * workouts on the same date are NOT overwritten — the new exercises append.
  */
-export async function applyPlan(plan: AiPlanResponse): Promise<ApplyResult> {
+export async function applyPlan(plan: AiPlanResponse, weightUnit: WeightUnit): Promise<ApplyResult> {
   const applied: string[] = []
   const errors: { date: string; message: string }[] = []
 
@@ -29,7 +30,7 @@ export async function applyPlan(plan: AiPlanResponse): Promise<ApplyResult> {
         const we = await localApi.addExerciseToWorkout(workout.id, exerciseId)
         for (const set of ex.sets ?? []) {
           await localApi.addPlannedSet(we.id, {
-            weight: set.weight ?? null,
+            weight: set.weight == null ? null : toKg(set.weight, weightUnit),
             reps: set.reps ?? null,
             distance_m: set.distance_m ?? null,
             time_seconds: set.time_seconds ?? null,

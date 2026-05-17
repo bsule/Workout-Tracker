@@ -231,3 +231,34 @@
 @media (prefers-reduced-motion: reduce) {
   .animate-marquee { animation: none; }
 }
+
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(1 0 0 / 18%) transparent;
+}
+.thin-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background-color: oklch(1 0 0 / 18%);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: oklch(1 0 0 / 30%);
+  background-clip: padding-box;
+}
+.light .thin-scrollbar {
+  scrollbar-color: oklch(0 0 0 / 22%) transparent;
+}
+.light .thin-scrollbar::-webkit-scrollbar-thumb {
+  background-color: oklch(0 0 0 / 22%);
+}
+.light .thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: oklch(0 0 0 / 35%);
+}
