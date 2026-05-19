@@ -115,6 +115,10 @@ export interface UserSettings {
   /** Optional UI flag: when true (default), the log-set page shows time
    *  rested between sets next to each set number. */
   show_rest_time?: boolean
+  /** Optional UI flag: when true (default), the log-set page shows a
+   *  ticking "Xs since last set" label under the set list. Hides itself
+   *  once 30 min have elapsed regardless of this setting. */
+  show_time_since_last_set?: boolean
   /** The active AI provider used by the AI Plan screen. Defaults to
    *  "openai" when unset. The matching API key is stored separately in
    *  secure storage (see mobile/src/ai/keys.ts). */

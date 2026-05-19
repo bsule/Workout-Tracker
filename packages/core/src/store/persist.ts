@@ -28,7 +28,14 @@ export function addFlushListener(fn: () => void): () => void {
 export function removeFlushListener(fn: () => void) {
   flushListeners.delete(fn)
 }
-const FLUSH_DEBOUNCE_MS = 5000
+// 30s: per-mutation appends already crash-log every write immediately, and
+// `flushOnHide` flushes synchronously on app suspend, so the only thing the
+// debounced flush adds is consolidating the crash log into a fresh snapshot
+// for faster next-boot hydrate. Doing that frequently (5s) caused the heavy
+// JSON.stringify + gzipSync to land mid-workout — visible as a ~5s freeze in
+// the SetLogger's "time since last set" ticker. 30s pushes the consolidation
+// past any normal rest interval the user is actively watching.
+const FLUSH_DEBOUNCE_MS = 30000
 // Exponential backoff for retrying failed flushes — 1s, 2s, 4s, 8s, 16s,
 // then capped. Each successful flush resets the counter.
 const FLUSH_RETRY_BASE_MS = 1000
