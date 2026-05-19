@@ -24,7 +24,7 @@ import { SetLoggerScreen } from "../screens/SetLoggerScreen"
 import { CategoryStylesScreen } from "../screens/CategoryStylesScreen"
 import { GymsScreen } from "../screens/GymsScreen"
 import { ImportExportScreen } from "../screens/ImportExportScreen"
-import { AiPlanScreen } from "../screens/AiPlanScreen"
+// import { AiPlanScreen } from "../screens/AiPlanScreen" // AI disabled for now
 import { TabFadeIn } from "../components/TabFadeIn"
 
 const Stack = createNativeStackNavigator()
@@ -310,11 +310,13 @@ export function RootNavigator() {
               component={ImportExportScreen}
               options={{ title: "Import / Export" }}
             />
+            {/* AI plan screen disabled for now.
             <Stack.Screen
               name="AiPlan"
               component={AiPlanScreen}
               options={{ headerShown: false, presentation: "modal" }}
             />
+            */}
             <Stack.Screen
               name="SetLogger"
               component={SetLoggerScreen}

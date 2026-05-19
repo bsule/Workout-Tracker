@@ -13,6 +13,7 @@ import {
   Dimensions,
   Easing,
   FlatList,
+  Keyboard,
   LayoutAnimation,
   Pressable,
   ScrollView,
@@ -110,6 +111,33 @@ function predictPrFlags(
     }
   }
   return { isPr, isPosPr, position }
+}
+
+// Ticking "Xs since last set" / "Xm Ys since last set" label. Hides when
+// elapsed > 30 min — at that point the user is presumed not mid-workout
+// anymore and the indicator is noise. Updates once a second.
+function TimeSinceLastSet({ anchorMs }: { anchorMs: number }) {
+  // Tick 10x/sec; the displayed value reads Date.now() at render time
+  // (NOT captured state), so any momentary JS-thread stall during a
+  // mutation/persist can only delay the visible second-flip by up to
+  // ~100ms before the next tick re-reads the clock. Empty deps keep the
+  // interval alive across anchorMs changes.
+  const [, force] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => force((c) => c + 1), 100)
+    return () => clearInterval(id)
+  }, [])
+  const elapsed = Math.max(0, Math.floor((Date.now() - anchorMs) / 1000))
+  if (elapsed > 1800) return null
+  let label: string
+  if (elapsed < 60) {
+    label = `${elapsed}s`
+  } else {
+    const m = Math.floor(elapsed / 60)
+    const s = elapsed % 60
+    label = `${m}m ${s}s`
+  }
+  return <Text style={styles.timeSinceLastSet}>{label} since last set</Text>
 }
 
 function formatRest(prevIso: string | null | undefined, curIso: string): string | null {
@@ -396,7 +424,8 @@ export function SetLoggerScreen({ route, navigation }: any) {
   const weId = resolved?.weId ?? -1
   const unit = useWeightUnit()
   const step = defaultStep(unit)
-  const { showOneRm, showPositionPrs, showRestTime } = useSettings()
+  const { showOneRm, showPositionPrs, showRestTime, showTimeSinceLastSet } =
+    useSettings()
   const [tab, setTab] = useState<SubTab>("workout")
 
   const snapshot = useStore((s) => s.snapshot)
@@ -916,8 +945,11 @@ export function SetLoggerScreen({ route, navigation }: any) {
           />
         </Pressable>
       </View>
-      {/* Fixed header + form so the layout doesn't reflow when sets are added. */}
-      <View style={styles.fixedTop}>
+      {/* Fixed header + form so the layout doesn't reflow when sets are added.
+       *  Pressable wrapper so a tap on empty form-area background dismisses
+       *  the keyboard — the numeric keypad has no return key, so without
+       *  this the user has to drag the list to dismiss. */}
+      <Pressable style={styles.fixedTop} onPress={() => Keyboard.dismiss()}>
         <View style={styles.titleWrap}>
           <Text style={styles.exerciseName}>{we.exercise.name}</Text>
           <Text style={styles.exerciseMeta}>{we.exercise.category}</Text>
@@ -1039,7 +1071,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
             </View>
           </Animated.View>
         )}
-      </View>
+      </Pressable>
 
       {tab === "history" ? (
         <PastHistoryList
@@ -1064,6 +1096,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
               showOneRm={showOneRm}
               showPositionPrs={showPositionPrs}
               showRestTime={showRestTime}
+              showTimeSinceLastSet={showTimeSinceLastSet}
               prevWorkoutLastSetIso={prevWorkoutLastSetIso}
               selectedIds={selectedIds}
               pendingAdd={pendingAdd}
@@ -2308,6 +2341,7 @@ function SetList({
   showOneRm,
   showPositionPrs,
   showRestTime,
+  showTimeSinceLastSet,
   prevWorkoutLastSetIso,
   selectedIds,
   pendingAdd,
@@ -2326,6 +2360,7 @@ function SetList({
   showOneRm: boolean
   showPositionPrs: boolean
   showRestTime: boolean
+  showTimeSinceLastSet: boolean
   prevWorkoutLastSetIso: string | null
   selectedIds: number[]
   pendingAdd: {
@@ -2739,6 +2774,25 @@ function SetList({
         </SetRowFade>
         )
       })()}
+      {showTimeSinceLastSet && (() => {
+        // Anchor the rest-timer to whichever is most recent: a pending-add
+        // (user just clicked Save and the real row hasn't landed yet — its
+        // `key` is Date.now() at click time) or the last logged set.
+        let anchorMs: number | null = null
+        if (pendingAdd) {
+          anchorMs = pendingAdd.key
+        } else {
+          for (let i = sets.length - 1; i >= 0; i--) {
+            const s = sets[i]
+            if (s.is_planned) continue
+            const parsed = Date.parse(s.created_at)
+            if (Number.isFinite(parsed)) anchorMs = parsed
+            break
+          }
+        }
+        if (anchorMs == null) return null
+        return <TimeSinceLastSet anchorMs={anchorMs} />
+      })()}
     </View>
   )
 }
@@ -2948,6 +3002,15 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.lg,
     marginTop: theme.spacing[2],
     overflow: "hidden",
+  },
+  timeSinceLastSet: {
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.xs,
+    textAlign: "center",
+    paddingVertical: 6,
+    paddingHorizontal: theme.spacing[3],
+    borderTopColor: "rgba(255,255,255,0.06)",
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   setRow: {
     paddingHorizontal: theme.spacing[3],

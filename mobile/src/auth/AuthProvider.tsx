@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react"
+import AsyncStorage from "@react-native-async-storage/async-storage"
 import type { User } from "@lift/core"
 import { CloudflareTransport, sync as syncModule } from "@lift/core"
 import Constants from "expo-constants"
@@ -16,9 +17,18 @@ const API_BASE: string =
   (Constants.expoConfig?.extra?.apiBaseUrl as string | undefined) ??
   "http://localhost:8787/api"
 
+const ETAG_KEY = "lift.sync.etag"
+
 const syncTransport = new CloudflareTransport({
   apiBase: API_BASE,
   getToken,
+  onEtagChange: (etag) => {
+    if (etag) {
+      AsyncStorage.setItem(ETAG_KEY, etag).catch(() => {})
+    } else {
+      AsyncStorage.removeItem(ETAG_KEY).catch(() => {})
+    }
+  },
 })
 
 interface AuthState {
@@ -48,6 +58,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!cancelled) setLoading(false)
         return
       }
+      const savedEtag = await AsyncStorage.getItem(ETAG_KEY).catch(() => null)
+      if (savedEtag) syncTransport.setEtag(savedEtag)
       syncModule.configureSync(syncTransport)
       try {
         const me = await api.me()
