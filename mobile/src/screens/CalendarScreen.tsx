@@ -200,6 +200,7 @@ export function CalendarScreen({ navigation, route }: any) {
               )}
             </View>
             <View style={styles.detailActions}>
+              {/* AI plan entry point disabled for now.
               <Pressable
                 onPress={() =>
                   navigation.navigate("AiPlan", { startDate: selectedDate })
@@ -210,6 +211,7 @@ export function CalendarScreen({ navigation, route }: any) {
                 <Ionicons name="sparkles" size={14} color={theme.colors.foreground} />
                 <Text style={styles.goToDateText}>AI</Text>
               </Pressable>
+              */}
               <Pressable
                 onPress={() => {
                   setActiveDate(selectedDate)

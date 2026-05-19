@@ -31,7 +31,8 @@ type ProfileField = "username" | "email"
 export function SettingsScreen({ navigation }: any) {
   const { user, logout, updateProfile } = useAuth()
   const unit = useWeightUnit()
-  const { firstDayOfWeek, showPositionPrs, showRestTime } = useSettings()
+  const { firstDayOfWeek, showPositionPrs, showRestTime, showTimeSinceLastSet } =
+    useSettings()
   // Read once on mount; the toggle prompts for restart so we don't need
   // a reactive subscription here.
   const [themeMode, setThemeMode] = useState<ThemeMode>(currentMode())
@@ -303,6 +304,29 @@ export function SettingsScreen({ navigation }: any) {
               onPress={() => api.updateSettings({ show_rest_time: false })}
             />
           </View>
+
+          <Row
+            label="Time since last set"
+            value={showTimeSinceLastSet ? "On" : "Off"}
+          />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Button
+              label="On"
+              variant={showTimeSinceLastSet ? "primary" : "secondary"}
+              style={{ flex: 1 }}
+              onPress={() =>
+                api.updateSettings({ show_time_since_last_set: true })
+              }
+            />
+            <Button
+              label="Off"
+              variant={!showTimeSinceLastSet ? "primary" : "secondary"}
+              style={{ flex: 1 }}
+              onPress={() =>
+                api.updateSettings({ show_time_since_last_set: false })
+              }
+            />
+          </View>
         </View>
 
         <Text style={styles.section}>Categories</Text>
@@ -320,6 +344,7 @@ export function SettingsScreen({ navigation }: any) {
           </View>
         </Pressable>
 
+        {/* AI settings disabled for now.
         <Text style={styles.section}>AI</Text>
         <View style={styles.card}>
           <Text style={styles.rowLabel}>Active provider</Text>
@@ -363,6 +388,7 @@ export function SettingsScreen({ navigation }: any) {
             )
           })}
         </View>
+        */}
 
         <Text style={styles.section}>Data</Text>
         <Pressable

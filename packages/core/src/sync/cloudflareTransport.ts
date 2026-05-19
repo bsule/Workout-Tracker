@@ -40,21 +40,32 @@ export class SyncQuotaExceededError extends Error {
 export interface CloudflareTransportOptions {
   apiBase: string
   getToken: () => string | null | Promise<string | null>
+  /**
+   * Called whenever the etag the transport believes is current changes
+   * (after push, pull, or explicit setEtag). Hosts can persist it so the
+   * next session doesn't false-positive on "cloud is newer" the first
+   * time the user pushes — see autoSync.syncNow().
+   */
+  onEtagChange?: (etag: string | null) => void
 }
 
 export class CloudflareTransport implements SyncTransport {
   private readonly apiBase: string
   private readonly getToken: CloudflareTransportOptions["getToken"]
+  private readonly onEtagChange?: CloudflareTransportOptions["onEtagChange"]
   private lastEtag: string | null = null
   private lastQuota: Quota | null = null
 
   constructor(opts: CloudflareTransportOptions) {
     this.apiBase = opts.apiBase.replace(/\/+$/, "")
     this.getToken = opts.getToken
+    this.onEtagChange = opts.onEtagChange
   }
 
   setEtag(etag: string | null): void {
+    if (this.lastEtag === etag) return
     this.lastEtag = etag
+    this.onEtagChange?.(etag)
   }
 
   getEtag(): string | null {
@@ -79,14 +90,14 @@ export class CloudflareTransport implements SyncTransport {
     const headers = await this.authHeaders()
     const res = await fetch(`${this.apiBase}/sync/snapshot`, { headers })
     if (res.status === 204) {
-      this.lastEtag = null
+      this.setEtag(null)
       return null
     }
     if (!res.ok) throw new Error(`pull failed: ${res.status}`)
     const etag = stripQuotes(res.headers.get("etag") ?? "")
     const buffer = await res.arrayBuffer()
     const bytes = new Uint8Array(buffer)
-    this.lastEtag = etag
+    this.setEtag(etag)
     return { bytes, etag }
   }
 
@@ -120,7 +131,7 @@ export class CloudflareTransport implements SyncTransport {
     }
     if (!res.ok) throw new Error(`push failed: ${res.status}`)
     const data = (await res.json()) as { etag: string; quota: Quota }
-    this.lastEtag = data.etag
+    this.setEtag(data.etag)
     this.lastQuota = data.quota
     return { etag: data.etag }
   }
