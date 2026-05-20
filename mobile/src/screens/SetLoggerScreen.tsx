@@ -495,11 +495,25 @@ export function SetLoggerScreen({ route, navigation }: any) {
     return getExerciseHistoryQ(exerciseId)
   }, [snapshot, exerciseId, needsHistory])
 
+  // Latest non-planned set timestamp from any *other* exercise in the current
+  // workout. Used for both the per-row rest labels (gated by showRestTime) and
+  // the live "since last set" ticker (gated by showTimeSinceLastSet), so this
+  // is always computed regardless of those flags.
+  //
+  // Important: during the stub phase (resolved is null), `workout` is a
+  // synthetic placeholder containing only the pending exercise. We look up
+  // the real workout from the snapshot by date so the bench → pushdowns
+  // hand-off still surfaces the prior exercise's last-set timestamp before
+  // the user saves their first pushdown set.
   const prevWorkoutLastSetIso = useMemo<string | null>(() => {
-    if (!showRestTime || !workout || we == null) return null
+    const date = workout?.date ?? route.params?.pendingCreate?.date ?? null
+    if (!date) return null
+    const realByDate = getWorkoutByDateQ(date)
+    if (!realByDate) return null
+    const skipWeId = realWe?.id ?? null
     let latest: string | null = null
-    for (const otherWe of workout.exercises) {
-      if (otherWe.id === we.id) continue
+    for (const otherWe of realByDate.exercises) {
+      if (skipWeId !== null && otherWe.id === skipWeId) continue
       for (const s of otherWe.sets) {
         if (s.is_planned) continue
         if (latest === null || Date.parse(s.created_at) > Date.parse(latest)) {
@@ -508,7 +522,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
       }
     }
     return latest
-  }, [workout, we, showRestTime])
+  }, [snapshot, workout?.date, route.params?.pendingCreate?.date, realWe?.id])
 
   const nextPlanned = !isPlanned ? sets.find((s) => s.is_planned) ?? null : null
   const lastSet = sets.length ? sets[sets.length - 1] : null
@@ -2400,11 +2414,22 @@ function SetList({
   }
 
   if (!sets.length && !pendingAdd) {
+    // Even with nothing logged here, keep the ticker visible when there's a
+    // logged set elsewhere in this workout — bench → pushdowns shouldn't
+    // reset the user's rest clock until they actually log on pushdowns.
+    const emptyAnchorMs = prevWorkoutLastSetIso
+      ? Date.parse(prevWorkoutLastSetIso)
+      : NaN
     return (
-      <View style={[styles.card, { borderStyle: "dashed", alignItems: "center" }]}>
-        <Text style={{ color: theme.colors.muted, fontSize: theme.fontSize.sm }}>
-          No sets logged yet. Log your first set above.
-        </Text>
+      <View>
+        <View style={[styles.card, { borderStyle: "dashed", alignItems: "center" }]}>
+          <Text style={{ color: theme.colors.muted, fontSize: theme.fontSize.sm }}>
+            No sets logged yet. Log your first set above.
+          </Text>
+        </View>
+        {showTimeSinceLastSet && Number.isFinite(emptyAnchorMs) && (
+          <TimeSinceLastSet anchorMs={emptyAnchorMs} />
+        )}
       </View>
     )
   }
@@ -2777,7 +2802,11 @@ function SetList({
       {showTimeSinceLastSet && (() => {
         // Anchor the rest-timer to whichever is most recent: a pending-add
         // (user just clicked Save and the real row hasn't landed yet — its
-        // `key` is Date.now() at click time) or the last logged set.
+        // `key` is Date.now() at click time), the last logged set on the
+        // current exercise, or — if neither exists — the latest logged set
+        // from any other exercise in this workout. The last fallback keeps
+        // the ticker alive when the user switches exercises before logging
+        // anything on the new one.
         let anchorMs: number | null = null
         if (pendingAdd) {
           anchorMs = pendingAdd.key
@@ -2788,6 +2817,10 @@ function SetList({
             const parsed = Date.parse(s.created_at)
             if (Number.isFinite(parsed)) anchorMs = parsed
             break
+          }
+          if (anchorMs == null && prevWorkoutLastSetIso) {
+            const parsed = Date.parse(prevWorkoutLastSetIso)
+            if (Number.isFinite(parsed)) anchorMs = parsed
           }
         }
         if (anchorMs == null) return null
