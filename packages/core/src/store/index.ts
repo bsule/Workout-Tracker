@@ -47,26 +47,31 @@ export {
 export { estimateOneRm } from "./materialize"
 
 /**
- * The ISO timestamp of the most recent logged set in a workout. The app uses
- * this as the workout's effective "end time" so the user doesn't have to
- * explicitly finish a workout — adding the last set is the end signal.
- * Returns null when there are no logged (non-planned) sets.
+ * The workout's effective "end time" — the last logged set that's still part
+ * of the same session. Sets are walked in time order from the first; the end
+ * advances to each next set only while it lands within an hour of the previous
+ * one. A set logged well after the rest (e.g. forgotten and entered the next
+ * day, or hours later the same day) sits past a >1h gap, so it never drags the
+ * end time onto that stray timestamp. Returns null with no logged sets.
  */
 export function lastSetTimeOf(workout: Workout): string | null {
-  let max: number | null = null
-  let maxIso: string | null = null
+  const times: string[] = []
   for (const we of workout.exercises) {
     for (const s of we.sets) {
       if (s.is_planned) continue
-      const t = Date.parse(s.created_at)
-      if (!Number.isFinite(t)) continue
-      if (max == null || t > max) {
-        max = t
-        maxIso = s.created_at
-      }
+      if (!Number.isFinite(Date.parse(s.created_at))) continue
+      times.push(s.created_at)
     }
   }
-  return maxIso
+  if (times.length === 0) return null
+  times.sort((a, b) => Date.parse(a) - Date.parse(b))
+  const ONE_HOUR_MS = 60 * 60 * 1000
+  let end = times[0]
+  for (let i = 1; i < times.length; i++) {
+    if (Date.parse(times[i]) - Date.parse(end) > ONE_HOUR_MS) break
+    end = times[i]
+  }
+  return end
 }
 
 /**

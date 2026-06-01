@@ -96,7 +96,7 @@ function ExerciseRow({
       {we.sets.length === 0 ? (
         <Text style={styles.addFirst}>+ Add first set</Text>
       ) : (
-        <SetList sets={we.sets} />
+        <SetList sets={we.sets} showNotes />
       )}
     </Pressable>
   )
