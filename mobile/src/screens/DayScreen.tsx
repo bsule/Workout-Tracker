@@ -148,6 +148,20 @@ export function DayScreen({ navigation, route }: any) {
     flatListRef.current?.scrollToOffset({ offset, animated: false })
   }, [date, pageWidth, indexForDate])
 
+  // Re-assert the pager offset whenever the screen regains focus. While the
+  // Today tab is inactive its native view is detached, so a scrollToOffset
+  // issued by the sync effect above — e.g. when the user picks a date on the
+  // Calendar tab, which updates the shared `date` context — is dropped. On
+  // re-focus the pager would otherwise stay parked on its previous page
+  // (often today) while the header shows the newly selected date. Snapping to
+  // the current date's offset here keeps the visible workout in sync.
+  useEffect(() => {
+    if (!isFocused) return
+    if (pageWidth <= 0) return
+    const offset = indexForDate(dateRef.current) * pageWidth
+    flatListRef.current?.scrollToOffset({ offset, animated: false })
+  }, [isFocused, pageWidth, indexForDate])
+
   const toggleSelected = useCallback((weId: number) => {
     setSelectedIds((prev) =>
       prev.includes(weId) ? prev.filter((x) => x !== weId) : [...prev, weId]
@@ -806,7 +820,7 @@ function ExerciseRow({
           </View>
         ) : (
           <View style={styles.exSetList}>
-            <SetList sets={we.sets} />
+            <SetList sets={we.sets} showNotes />
           </View>
         )}
       </View>
