@@ -143,7 +143,10 @@ function TimeSinceLastSet({ anchorMs }: { anchorMs: number }) {
 function formatRest(prevIso: string | null | undefined, curIso: string): string | null {
   if (!prevIso) return null
   const diff = (Date.parse(curIso) - Date.parse(prevIso)) / 1000
-  if (!Number.isFinite(diff) || diff <= 30) return null
+  // Mirror the live ticker's 30-min cap: a gap longer than that isn't rest
+  // between sets (e.g. set 1 anchored to another exercise logged hours
+  // earlier in the day), so suppress the label instead of showing "1951m".
+  if (!Number.isFinite(diff) || diff <= 30 || diff > 1800) return null
   if (diff < 60) return `${Math.round(diff)}s`
   const m = Math.floor(diff / 60)
   const s = Math.round(diff % 60)
@@ -810,6 +813,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
   }
 
   function save() {
+    Keyboard.dismiss()
     setError(null)
     if (reps <= 0) {
       setError(isCardio ? "Set a level of at least 1." : "Add at least 1 rep to log this set.")
@@ -1398,7 +1402,7 @@ const HistoryDayCard = memo(function HistoryDayCard({
           </Pressable>
         )}
       </View>
-      <SharedSetList sets={day.sets} />
+      <SharedSetList sets={day.sets} showNotes />
     </View>
   )
 })
