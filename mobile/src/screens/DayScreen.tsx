@@ -243,6 +243,13 @@ export function DayScreen({ navigation, route }: any) {
         initialNumToRender={3}
         removeClippedSubviews={Platform.OS === "android"}
       />
+
+      {/* Floating "Go to today" chip, hovering just above the bottom tab bar
+          whenever the viewed day isn't today. */}
+      <TodayPill
+        visible={date !== todayString()}
+        onPress={() => setDate(todayString())}
+      />
     </StaticSafeAreaView>
   )
 }
@@ -461,6 +468,84 @@ function DateNav({
         <Ionicons name="chevron-forward" size={20} color={theme.colors.foreground} />
       </Pressable>
     </View>
+  )
+}
+
+// Floating "Go to today" chip, shown only when the viewed day isn't today.
+// It's absolutely positioned (hovering just above the bottom tab bar) so it
+// never reflows the pager - that lets the whole thing run on the *native*
+// driver (opacity + slide + scale), which is what makes it feel smooth.
+// A spring on entry gives it a soft settle; exit is a quick fade. The
+// `mounted` state keeps it alive through the exit animation before unmount.
+function TodayPill({
+  visible,
+  onPress,
+}: {
+  visible: boolean
+  onPress: () => void
+}) {
+  const anim = useRef(new Animated.Value(visible ? 1 : 0)).current
+  const [mounted, setMounted] = useState(visible)
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true)
+      Animated.spring(anim, {
+        toValue: 1,
+        useNativeDriver: true,
+        friction: 8,
+        tension: 90,
+      }).start()
+      return
+    }
+    Animated.timing(anim, {
+      toValue: 0,
+      duration: 140,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setMounted(false)
+    })
+  }, [visible, anim])
+
+  if (!mounted) return null
+
+  return (
+    <Animated.View
+      pointerEvents="box-none"
+      style={[
+        styles.todayPillWrap,
+        {
+          opacity: anim,
+          transform: [
+            {
+              translateY: anim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [12, 0],
+              }),
+            },
+            {
+              scale: anim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.9, 1],
+              }),
+            },
+          ],
+        },
+      ]}
+    >
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.todayPill,
+          pressed && styles.todayPillPressed,
+        ]}
+        hitSlop={8}
+      >
+        <Ionicons name="today-outline" size={14} color={theme.colors.primary} />
+        <Text style={styles.todayPillText}>Go to today</Text>
+      </Pressable>
+    </Animated.View>
   )
 }
 
@@ -883,6 +968,42 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   dateText: { color: theme.colors.foreground, fontSize: theme.fontSize.md, fontWeight: "700" },
+  todayPillWrap: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: theme.spacing[4],
+    alignItems: "center",
+    zIndex: 11,
+    elevation: 11,
+  },
+  todayPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: 9,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    backgroundColor: theme.colors.card,
+    // Soft float over the content below.
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  // Opaque press feedback - keep a solid fill (don't drop opacity / swap to a
+  // translucent bg) so the content behind never shows through while held.
+  todayPillPressed: {
+    backgroundColor: theme.colors.cardElevated,
+    transform: [{ scale: 0.96 }],
+  },
+  todayPillText: {
+    color: theme.colors.primary,
+    fontSize: theme.fontSize.xs,
+    fontWeight: "700",
+  },
   summaryCard: {
     backgroundColor: "rgba(255,255,255,0.02)",
     borderColor: theme.colors.border,

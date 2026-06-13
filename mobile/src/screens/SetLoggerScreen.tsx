@@ -2185,7 +2185,7 @@ export const RecordsPanel = memo(function RecordsPanel({
       {
         label: "Best session volume",
         value: `${formatWeight(bestSessionVolumeKg, unit)} ${unit}`,
-        sub: bestSessionDate ? niceDate(bestSessionDate) : undefined,
+        sub: bestSessionDate ? recordDate(bestSessionDate) : undefined,
         icon: "flame",
         color: RECORD_COLORS.sessionVolume,
         date: bestSessionDate,
@@ -2339,7 +2339,7 @@ export const RecordsPanel = memo(function RecordsPanel({
             {unit}
           </Text>
         )}
-        <Text style={styles.scopeSummaryText}>
+        <Text style={[styles.scopeSummaryText, { marginLeft: "auto" }]}>
           {scoped.length} {scoped.length === 1 ? "set" : "sets"}
         </Text>
       </View>
@@ -2359,7 +2359,7 @@ export const RecordsPanel = memo(function RecordsPanel({
             <Text style={styles.repPrWeight}>
               {`${formatWeight(row.weightKg, unit)} ${unit}`}
             </Text>
-            <Text style={styles.repPrDate}>{niceDate(row.date)}</Text>
+            <Text style={styles.repPrDate}>{recordDate(row.date)}</Text>
           </View>
         ))}
       </View>
@@ -2495,6 +2495,15 @@ function niceDate(d: string): string {
     month: "short",
     day: "numeric",
   })
+}
+
+// Records show the year only when it differs from the current year (a PR can
+// be years old) — dropped the weekday to keep it compact in the By-Set rows.
+function recordDate(d: string): string {
+  const dt = new Date(d + "T00:00:00")
+  const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" }
+  if (dt.getFullYear() !== new Date().getFullYear()) opts.year = "numeric"
+  return dt.toLocaleDateString("en-US", opts)
 }
 
 function NumericField({
