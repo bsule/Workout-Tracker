@@ -20,6 +20,7 @@
     "apk:gh": "node scripts/github-apk.mjs"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.0.3",
     "@hookform/resolvers": "^5.2.2",
     "@lift/core": "*",
     "@react-native-async-storage/async-storage": "2.2.0",
