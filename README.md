@@ -46,11 +46,20 @@ npm run start
 
 Use the Expo dev client / Expo Go to load it on a device or simulator.
 
+To build an unsigned iOS `.ipa` via GitHub Actions and download it into `mobile/builds/`:
+
+```bash
+cd mobile
+npm run ipa:gh
+```
+
+Requires the `gh` CLI to be installed and authenticated; the build takes ~10–20 min.
+
 ## Configuration
 
 Both clients default to `http://localhost:8787/api`. Override per-client:
 
-- **Web** — `frontend/.env.local`: `NEXT_PUBLIC_API_BASE_URL=https://your-worker.example.com/api`
-- **Mobile** — `mobile/app.json` → `expo.extra.apiBaseUrl`. On a real device, use your LAN IP, not `localhost`.
+- **Web** - `frontend/.env.local`: `NEXT_PUBLIC_API_BASE_URL=https://your-worker.example.com/api`
+- **Mobile** - `mobile/app.json` → `expo.extra.apiBaseUrl`. On a real device, use your LAN IP, not `localhost`.
 
 Worker CORS origins live in `cloudflare/wrangler.toml` under `ALLOWED_ORIGINS`.

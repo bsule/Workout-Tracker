@@ -211,7 +211,7 @@ function ExerciseRow({
               ]}
               hitSlop={4}
             >
-              <Ionicons name="create-outline" size={18} color={theme.colors.primary} />
+              <Ionicons name="pencil" size={18} color={theme.colors.primary} />
             </Pressable>
             <Pressable
               onPress={() => closeThen(onDelete)}
