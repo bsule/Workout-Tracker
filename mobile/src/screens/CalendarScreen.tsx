@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react"
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native"
+import {
+  InteractionManager,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import {
   getCalendarQ,
@@ -65,6 +72,20 @@ export function CalendarScreen({ navigation, route }: any) {
   )
   const [consumedDate, setConsumedDate] = useState<string | undefined>(incomingDate)
 
+  // Defer the day-detail render (which materializes the whole day's workout)
+  // until the push/transition animation finishes. The calendar grid + header
+  // paint instantly with the slide; the workout list fills in a frame later.
+  // Without this, navigating here from an exercise's Records tap blocks the JS
+  // thread during the slide and feels like a freeze. The pre-mounted Calendar
+  // tab resolves this immediately on app start, so it sees no change.
+  const [detailReady, setDetailReady] = useState(false)
+  useEffect(() => {
+    const task = InteractionManager.runAfterInteractions(() =>
+      setDetailReady(true)
+    )
+    return () => task.cancel()
+  }, [])
+
   // On the first mount, lazy init already absorbed `incomingDate` —
   // `incomingDate === consumedDate` here. We still need to set the global
   // active date and clear the route param so a later re-focus doesn't
@@ -91,17 +112,28 @@ export function CalendarScreen({ navigation, route }: any) {
   )
   const weekdayLabels =
     firstDayOfWeek === 1 ? WEEKDAY_LABELS_MONDAY : WEEKDAY_LABELS_SUNDAY
+  // Gated on detailReady like selectedGym: these two scan the snapshot to build
+  // the month's category dots / planned markers. Running them on a fresh
+  // CalendarDate push's first frame blocks the slide; deferring them lets the
+  // grid chrome paint instantly and the dots pop in a frame later. The
+  // pre-mounted Calendar tab has detailReady=true from boot, so it's unchanged.
   const calendar = useMemo(
-    () => getCalendarQ(year, month),
-    [snapshot, year, month]
+    () => (detailReady ? getCalendarQ(year, month) : {}),
+    [snapshot, year, month, detailReady]
   )
   const plannedDates = useMemo(
-    () => new Set(getPlannedDatesQ(year, month)),
-    [snapshot, year, month]
+    () => new Set(detailReady ? getPlannedDatesQ(year, month) : []),
+    [snapshot, year, month, detailReady]
   )
+  // Gated on detailReady alongside DayWorkoutContent: getWorkoutByDateQ fully
+  // materializes the day's sets, so running it during the transition would
+  // reintroduce the freeze the deferral is meant to remove.
   const selectedGym = useMemo(
-    () => getWorkoutByDateQ(selectedDate)?.gym?.trim() || null,
-    [snapshot, selectedDate]
+    () =>
+      detailReady
+        ? getWorkoutByDateQ(selectedDate)?.gym?.trim() || null
+        : null,
+    [snapshot, selectedDate, detailReady]
   )
 
   const todayKey = todayString()
@@ -239,10 +271,12 @@ export function CalendarScreen({ navigation, route }: any) {
               </Pressable>
             </View>
           </View>
-          <DayWorkoutContent
-            date={selectedDate}
-            onPressExercise={openSetLogger}
-          />
+          {detailReady && (
+            <DayWorkoutContent
+              date={selectedDate}
+              onPressExercise={openSetLogger}
+            />
+          )}
 
         </View>
       </ScrollView>

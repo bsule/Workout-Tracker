@@ -15,6 +15,7 @@ import {
   FlatList,
   Keyboard,
   LayoutAnimation,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -646,6 +647,18 @@ export function SetLoggerScreen({ route, navigation }: any) {
     [navigation]
   )
 
+  // Records-tab date taps push CalendarDate on top of the stack instead of
+  // jumping to the Calendar tab. The tab jump pops SetLogger and unfreezes
+  // every pre-mounted tab on the same frame (a visible "sec" freeze); a stack
+  // push keeps MainTabs frozen, so the calendar opens instantly and the
+  // workout stays underneath. Mirrors ExerciseDetail's openCalendarAtDate.
+  const pushCalendarAtDate = useCallback(
+    (date: string) => {
+      navigation.navigate("CalendarDate", { date })
+    },
+    [navigation]
+  )
+
   const [skipFadeIds, setSkipFadeIds] = useState<Set<number>>(() => new Set())
   useEffect(() => {
     if (!pendingAdd || !pendingAdd.baseIds) return
@@ -1009,20 +1022,11 @@ export function SetLoggerScreen({ route, navigation }: any) {
           <Animated.View
             style={[
               styles.card,
-              {
-                transform: [
-                  {
-                    // 3-point interpolation gives a subtle scale dip at the
-                    // midpoint of every transition (entering or exiting
-                    // edit) — built-in tactile feedback without a separate
-                    // sequence/spring fighting the main timing.
-                    scale: editAnim.interpolate({
-                      inputRange: [0, 0.5, 1],
-                      outputRange: [1, 0.985, 1],
-                    }),
-                  },
-                ],
-              },
+              // No scale transform: a scale tied to the 0↔1 edit toggle (whose
+              // endpoints are both scale 1) can only ever pulse mid-transition,
+              // which reads as a "pop". The smooth edit cue is the white border
+              // fading in (below) + the Save↔Update label cross-fade, both
+              // riding editAnim's 280ms cubic timing.
             ]}
           >
             {/* Absolute overlay that fades a white border in/out. Using
@@ -1132,7 +1136,13 @@ export function SetLoggerScreen({ route, navigation }: any) {
             />
           )}
           {tab === "graph" && <GraphPanel days={history} unit={unit} />}
-          {tab === "records" && <RecordsPanel days={history} unit={unit} />}
+          {tab === "records" && (
+            <RecordsPanel
+              days={history}
+              unit={unit}
+              onPressDate={pushCalendarAtDate}
+            />
+          )}
           {tab === "settings" && <SettingsPanel navigation={navigation} />}
         </ScrollView>
       )}
@@ -2078,6 +2088,7 @@ interface RecordCard {
   sub?: string
   icon: keyof typeof Ionicons.glyphMap
   color: string
+  date: string | null
 }
 
 // Distinct hues per record so the page reads at a glance. These are the
@@ -2093,19 +2104,24 @@ const RECORD_COLORS = {
 export const RecordsPanel = memo(function RecordsPanel({
   days,
   unit,
+  onPressDate,
 }: {
   days: ExerciseHistoryDay[]
   unit: "kg" | "lb"
+  onPressDate?: (date: string) => void
 }) {
   const records = useMemo<RecordCard[]>(() => {
     let bestOneRmKg = 0
     let bestOneRmReps = 0
     let bestOneRmSetWeight = 0
+    let bestOneRmDate: string | null = null
     let heaviestKg = 0
     let heaviestReps = 0
+    let heaviestDate: string | null = null
     let bestSetVolumeKg = 0
     let bestSetVolumeReps = 0
     let bestSetVolumeWeight = 0
+    let bestSetVolumeDate: string | null = null
     let bestSessionVolumeKg = 0
     let bestSessionDate: string | null = null
 
@@ -2117,16 +2133,19 @@ export const RecordsPanel = memo(function RecordsPanel({
           bestOneRmKg = s.estimated_one_rm
           bestOneRmReps = s.reps
           bestOneRmSetWeight = s.weight
+          bestOneRmDate = day.date
         }
         if (s.weight > heaviestKg) {
           heaviestKg = s.weight
           heaviestReps = s.reps
+          heaviestDate = day.date
         }
         const setVol = s.weight * s.reps
         if (setVol > bestSetVolumeKg) {
           bestSetVolumeKg = setVol
           bestSetVolumeWeight = s.weight
           bestSetVolumeReps = s.reps
+          bestSetVolumeDate = day.date
         }
         sessionVolume += setVol
       }
@@ -2145,6 +2164,7 @@ export const RecordsPanel = memo(function RecordsPanel({
         sub: `from ${formatWeight(bestOneRmSetWeight, unit)} ${unit} × ${bestOneRmReps}`,
         icon: "trophy",
         color: RECORD_COLORS.oneRm,
+        date: bestOneRmDate,
       },
       {
         label: "Heaviest set",
@@ -2152,6 +2172,7 @@ export const RecordsPanel = memo(function RecordsPanel({
         sub: `× ${heaviestReps} reps`,
         icon: "barbell",
         color: RECORD_COLORS.heaviest,
+        date: heaviestDate,
       },
       {
         label: "Best set volume",
@@ -2159,6 +2180,7 @@ export const RecordsPanel = memo(function RecordsPanel({
         sub: `${formatWeight(bestSetVolumeWeight, unit)} × ${bestSetVolumeReps}`,
         icon: "flash",
         color: RECORD_COLORS.setVolume,
+        date: bestSetVolumeDate,
       },
       {
         label: "Best session volume",
@@ -2166,39 +2188,65 @@ export const RecordsPanel = memo(function RecordsPanel({
         sub: bestSessionDate ? niceDate(bestSessionDate) : undefined,
         icon: "flame",
         color: RECORD_COLORS.sessionVolume,
+        date: bestSessionDate,
       },
     ]
   }, [days, unit])
 
-  // Best weight at each exact rep count 1..15. A row is "dominated" if some
-  // higher rep count has weight >= this row's weight (strictly better lift).
-  const repRecords = useMemo(() => {
-    const bestByReps = new Map<number, number>()
+  // Flatten weight×reps sets with their set position (order is 0-based, so the
+  // set number shown to the user is order+1) and the date performed.
+  const wrSets = useMemo(() => {
+    const out: { weightKg: number; reps: number; setNum: number; date: string; oneRm: number }[] = []
     for (const day of days) {
       for (const s of day.sets) {
         if (s.weight == null || s.reps == null) continue
-        if (s.reps < 1 || s.reps > 15) continue
-        const cur = bestByReps.get(s.reps) ?? 0
-        if (s.weight > cur) bestByReps.set(s.reps, s.weight)
+        out.push({
+          weightKg: s.weight,
+          reps: s.reps,
+          setNum: s.order + 1,
+          date: day.date,
+          oneRm: s.estimated_one_rm,
+        })
       }
     }
-    const rows: { reps: number; weightKg: number | null; dominated: boolean }[] = []
-    for (let r = 1; r <= 15; r++) {
-      const w = bestByReps.get(r) ?? null
-      let dominated = false
-      if (w != null) {
-        for (let r2 = r + 1; r2 <= 15; r2++) {
-          const w2 = bestByReps.get(r2)
-          if (w2 != null && w2 >= w) {
-            dominated = true
-            break
-          }
-        }
-      }
-      rows.push({ reps: r, weightKg: w, dominated })
-    }
-    return rows
+    return out
   }, [days])
+
+  // Set numbers actually performed, ascending. Drives the picker; never padded.
+  const setNumbers = useMemo(() => {
+    const nums = new Set<number>()
+    for (const s of wrSets) nums.add(s.setNum)
+    return [...nums].sort((a, b) => a - b)
+  }, [wrSets])
+
+  // "all" pools every position; otherwise restrict to one set number.
+  const [scope, setScope] = useState<"all" | number>("all")
+  const [pickerOpen, setPickerOpen] = useState(false)
+
+  const scoped = useMemo(
+    () => (scope === "all" ? wrSets : wrSets.filter((s) => s.setNum === scope)),
+    [wrSets, scope]
+  )
+
+  // Best (heaviest) weight at each rep count actually performed in scope,
+  // sorted by rep count ascending. Only performed rep counts appear.
+  const repRows = useMemo(() => {
+    const best = new Map<number, { weightKg: number; date: string }>()
+    for (const s of scoped) {
+      const cur = best.get(s.reps)
+      if (!cur || s.weightKg > cur.weightKg) {
+        best.set(s.reps, { weightKg: s.weightKg, date: s.date })
+      }
+    }
+    return [...best.entries()]
+      .map(([reps, v]) => ({ reps, ...v }))
+      .sort((a, b) => a.reps - b.reps)
+  }, [scoped])
+
+  const scopeBest1RM = useMemo(
+    () => scoped.reduce((m, s) => (s.oneRm > m ? s.oneRm : m), 0),
+    [scoped]
+  )
 
   if (records.length === 0) {
     return (
@@ -2213,67 +2261,226 @@ export const RecordsPanel = memo(function RecordsPanel({
   return (
     <View style={{ paddingVertical: theme.spacing[3], gap: theme.spacing[3] }}>
       <Text style={styles.section}>Personal records</Text>
-      {records.map((r) => (
-        <View
-          key={r.label}
-          style={[
-            styles.recordCard,
-            {
-              borderLeftColor: r.color,
-              borderLeftWidth: 4,
-            },
-          ]}
-        >
-          <View
-            style={[
-              styles.recordIconCircle,
-              { backgroundColor: r.color + "26" },
+      {records.map((r) => {
+        const tappable = onPressDate != null && r.date != null
+        return (
+          <Pressable
+            key={r.label}
+            disabled={!tappable}
+            // Match the history calendar button: fire the press immediately
+            // instead of waiting out Pressable's default press-in delay inside
+            // the ScrollView, which made the tap feel laggy before navigating.
+            unstable_pressDelay={0}
+            onPress={tappable ? () => onPressDate!(r.date!) : undefined}
+            style={({ pressed }) => [
+              styles.recordCard,
+              { borderLeftColor: r.color, borderLeftWidth: 4 },
+              tappable && pressed && pressedStyle(pressed),
             ]}
           >
-            <Ionicons name={r.icon} size={20} color={r.color} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.recordLabel}>{r.label}</Text>
-            <View style={styles.recordValueRow}>
-              <Text style={[styles.recordValue, { color: r.color }]}>
-                {r.value}
-              </Text>
-            </View>
-            {r.sub && <Text style={styles.recordSub}>{r.sub}</Text>}
-          </View>
-        </View>
-      ))}
-
-      <Text style={[styles.section, { marginTop: theme.spacing[2] }]}>
-        Best by reps
-      </Text>
-      <View style={styles.repPrTable}>
-        {repRecords.map((row, i) => {
-          const muted = row.weightKg == null || row.dominated
-          return (
             <View
-              key={row.reps}
               style={[
-                styles.repPrRow,
-                i < repRecords.length - 1 && styles.repPrRowDivider,
-                muted && styles.repPrRowMuted,
+                styles.recordIconCircle,
+                { backgroundColor: r.color + "26" },
               ]}
             >
-              <Text style={[styles.repPrReps, muted && styles.repPrTextMuted]}>
-                {row.reps} {row.reps === 1 ? "rep" : "reps"}
-              </Text>
-              <Text style={[styles.repPrWeight, muted && styles.repPrTextMuted]}>
-                {row.weightKg != null
-                  ? `${formatWeight(row.weightKg, unit)} ${unit}`
-                  : "—"}
-              </Text>
+              <Ionicons name={r.icon} size={20} color={r.color} />
             </View>
-          )
-        })}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.recordLabel}>{r.label}</Text>
+              <View style={styles.recordValueRow}>
+                <Text style={[styles.recordValue, { color: r.color }]}>
+                  {r.value}
+                </Text>
+              </View>
+              {r.sub && <Text style={styles.recordSub}>{r.sub}</Text>}
+            </View>
+            {tappable && (
+              <Ionicons
+                name="chevron-forward"
+                size={18}
+                color={theme.colors.muted}
+              />
+            )}
+          </Pressable>
+        )
+      })}
+
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginTop: theme.spacing[2],
+        }}
+      >
+        <Text style={styles.section}>By set</Text>
+        <Pressable
+          onPress={() => setPickerOpen(true)}
+          style={({ pressed }) => [
+            styles.setPickerTrigger,
+            pressedStyle(pressed),
+          ]}
+        >
+          <Text style={styles.setPickerTriggerText}>
+            {scope === "all" ? "All sets" : `Set ${scope}`}
+          </Text>
+          <Ionicons name="chevron-down" size={14} color={theme.colors.muted} />
+        </Pressable>
       </View>
+
+      <View style={styles.scopeSummary}>
+        {scopeBest1RM > 0 && (
+          <Text style={styles.scopeSummaryText}>
+            Best 1RM ≈{" "}
+            {roundForDisplay(fromKg(scopeBest1RM, unit), unit).toFixed(
+              unit === "kg" ? 1 : 0
+            )}{" "}
+            {unit}
+          </Text>
+        )}
+        <Text style={styles.scopeSummaryText}>
+          {scoped.length} {scoped.length === 1 ? "set" : "sets"}
+        </Text>
+      </View>
+
+      <View style={styles.repPrTable}>
+        {repRows.map((row, i) => (
+          <View
+            key={row.reps}
+            style={[
+              styles.repPrRow,
+              i < repRows.length - 1 && styles.repPrRowDivider,
+            ]}
+          >
+            <Text style={styles.repPrReps}>
+              {row.reps} {row.reps === 1 ? "rep" : "reps"}
+            </Text>
+            <Text style={styles.repPrWeight}>
+              {`${formatWeight(row.weightKg, unit)} ${unit}`}
+            </Text>
+            <Text style={styles.repPrDate}>{niceDate(row.date)}</Text>
+          </View>
+        ))}
+      </View>
+
+      <SetPickerOverlay
+        visible={pickerOpen}
+        scope={scope}
+        setNumbers={setNumbers}
+        wrSets={wrSets}
+        onClose={() => setPickerOpen(false)}
+        onSelect={(opt) => {
+          setScope(opt)
+          setPickerOpen(false)
+        }}
+      />
     </View>
   )
 })
+
+// Centered, scrollable set-number picker. Mirrors NoteEditorSheet: the fade is
+// a single JS-driven Animated opacity, so there's no react-native-modal
+// backdrop transition to flicker on open/close. A core Modal hosts it only so
+// it escapes RecordsPanel's ScrollView and centers on the screen — its native
+// fade is disabled (animationType="none"); we mount it instantly and run our
+// own fade, unmounting after the fade-out completes. The dimmed backdrop and
+// the card are siblings (not nested), so a single tap closes/selects — nesting
+// Pressables is what previously needed a double tap.
+const PICKER_FADE_MS = 150
+function SetPickerOverlay({
+  visible,
+  scope,
+  setNumbers,
+  wrSets,
+  onClose,
+  onSelect,
+}: {
+  visible: boolean
+  scope: "all" | number
+  setNumbers: number[]
+  wrSets: { setNum: number }[]
+  onClose: () => void
+  onSelect: (opt: "all" | number) => void
+}) {
+  const opacity = useRef(new Animated.Value(0)).current
+  const [mounted, setMounted] = useState(visible)
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true)
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: PICKER_FADE_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start()
+      return
+    }
+    Animated.timing(opacity, {
+      toValue: 0,
+      duration: PICKER_FADE_MS,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setMounted(false)
+    })
+  }, [visible, opacity])
+
+  if (!mounted) return null
+
+  const options = ["all", ...setNumbers] as ("all" | number)[]
+
+  return (
+    <Modal transparent visible animationType="none" statusBarTranslucent onRequestClose={onClose}>
+      <Animated.View style={[styles.pickerOverlay, { opacity }]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        {/* onStartShouldSetResponder absorbs taps on empty card area so they
+            don't fall through to the backdrop; option Pressables still claim
+            their own taps first. */}
+        <View style={styles.pickerCard} onStartShouldSetResponder={() => true}>
+          <Text style={styles.pickerTitle}>Show set</Text>
+          <ScrollView
+            style={styles.pickerScroll}
+            contentContainerStyle={styles.pickerScrollContent}
+            showsVerticalScrollIndicator
+          >
+            {options.map((opt) => {
+              const active = opt === scope
+              const count =
+                opt === "all"
+                  ? wrSets.length
+                  : wrSets.filter((s) => s.setNum === opt).length
+              return (
+                <Pressable
+                  key={String(opt)}
+                  onPress={() => onSelect(opt)}
+                  style={({ pressed }) => [
+                    styles.setPickerOption,
+                    active && styles.setPickerOptionActive,
+                    pressedStyle(pressed),
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.setPickerOptionText,
+                      active && { color: theme.colors.primary },
+                    ]}
+                  >
+                    {opt === "all" ? "All sets" : `Set ${opt}`}
+                  </Text>
+                  <Text style={styles.setPickerOptionCount}>
+                    {count} {count === 1 ? "time" : "times"}
+                  </Text>
+                </Pressable>
+              )
+            })}
+          </ScrollView>
+        </View>
+      </Animated.View>
+    </Modal>
+  )
+}
 
 function todayString(): string {
   const d = new Date()
@@ -2704,7 +2911,7 @@ function SetList({
                     hitSlop={4}
                   >
                     <Ionicons
-                      name="create-outline"
+                      name="pencil"
                       size={18}
                       color={theme.colors.primary}
                     />
@@ -3592,6 +3799,87 @@ const styles = StyleSheet.create({
   },
   repPrTextMuted: {
     color: theme.colors.muted,
+  },
+  repPrDate: {
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.xs,
+  },
+  setPickerTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+  },
+  setPickerTriggerText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "700",
+  },
+  scopeSummary: {
+    flexDirection: "row",
+    gap: theme.spacing[3],
+    marginTop: theme.spacing[2],
+    marginBottom: theme.spacing[1],
+  },
+  scopeSummaryText: {
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: "600",
+  },
+  pickerOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: theme.spacing[5],
+  },
+  pickerCard: {
+    width: "100%",
+    maxWidth: 360,
+    maxHeight: "70%",
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.radius.lg,
+    borderColor: theme.colors.border,
+    borderWidth: 1,
+    padding: theme.spacing[4],
+    gap: theme.spacing[2],
+  },
+  pickerTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.md,
+    fontWeight: "800",
+  },
+  pickerScroll: {
+    flexGrow: 0,
+    flexShrink: 1,
+  },
+  pickerScrollContent: {
+    gap: theme.spacing[1],
+  },
+  setPickerOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[3],
+    borderRadius: theme.radius.md,
+  },
+  setPickerOptionActive: {
+    backgroundColor: "rgba(0,119,188,0.12)",
+  },
+  setPickerOptionText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.md,
+    fontWeight: "700",
+  },
+  setPickerOptionCount: {
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.sm,
   },
   swipeDeleteText: {
     color: "#fff",
