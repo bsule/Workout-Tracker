@@ -19,26 +19,28 @@ export function parseAiPlanResponse(raw: string): AiPlanResponse {
     if (Array.isArray(exsRaw)) {
       for (const e of exsRaw) {
         if (!e || typeof e !== "object") continue
-        const name = (e as { name?: unknown }).name
+        const eo = e as Record<string, unknown>
+        const name = eo.name
         if (typeof name !== "string" || !name.trim()) continue
-        const setsRaw = (e as { sets?: unknown }).sets
+        const setsRaw = eo.sets
         const sets: AiPlanSet[] = []
         if (Array.isArray(setsRaw)) {
           for (const s of setsRaw) {
             if (!s || typeof s !== "object") continue
+            const so = s as Record<string, unknown>
             sets.push({
-              weight: numOrNull((s as any).weight),
-              reps: numOrNull((s as any).reps),
-              distance_m: numOrNull((s as any).distance_m),
-              time_seconds: numOrNull((s as any).time_seconds),
-              note: typeof (s as any).note === "string" ? (s as any).note : undefined,
+              weight: numOrNull(so.weight),
+              reps: numOrNull(so.reps),
+              distance_m: numOrNull(so.distance_m),
+              time_seconds: numOrNull(so.time_seconds),
+              note: typeof so.note === "string" ? so.note : undefined,
             })
           }
         }
         exercises.push({
           name: name.trim(),
-          category: optStr((e as any).category) as any,
-          kind: optStr((e as any).kind) as any,
+          category: optStr(eo.category) as AiPlanExercise["category"],
+          kind: optStr(eo.kind) as AiPlanExercise["kind"],
           sets,
         })
       }

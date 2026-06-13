@@ -488,8 +488,9 @@ function CloudSyncSection() {
         <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
           <p className="text-sm font-medium">Cloud is newer</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Your cloud backup has changes that aren't on this device. Pull cloud
-            down (replaces local) or overwrite cloud with this device's data?
+            Your cloud backup has changes that aren&apos;t on this device. Pull
+            cloud down (replaces local) or overwrite cloud with this
+            device&apos;s data?
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button
