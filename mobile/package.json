@@ -12,9 +12,12 @@
     "typecheck": "tsc --noEmit",
     "build:ios": "eas build --platform ios --profile preview --non-interactive",
     "build:ios:prod": "eas build --platform ios --profile production --non-interactive",
+    "build:android": "eas build --platform android --profile preview --non-interactive",
+    "build:android:prod": "eas build --platform android --profile production --non-interactive",
     "ipa": "node scripts/download-ipa.mjs",
     "ipa:pick": "node scripts/download-ipa.mjs --pick",
-    "ipa:gh": "node scripts/github-ipa.mjs"
+    "ipa:gh": "node scripts/github-ipa.mjs",
+    "apk:gh": "node scripts/github-apk.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

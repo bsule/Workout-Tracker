@@ -53,7 +53,16 @@ cd mobile
 npm run ipa:gh
 ```
 
-Requires the `gh` CLI to be installed and authenticated; the build takes ~10–20 min.
+To build an installable Android `.apk` via GitHub Actions and download it into `mobile/builds/`:
+
+```bash
+cd mobile
+npm run apk:gh
+```
+
+Both require the `gh` CLI to be installed and authenticated; each build takes ~10–20 min. The iOS `.ipa` is unsigned — re-sign it with Sideloadly (or similar) and a free Apple ID before installing. The Android `.apk` is debug-signed and installs directly (`adb install <file>.apk`, or just open it on the device).
+
+You can also build through EAS instead of GitHub Actions (`npm run build:ios` / `npm run build:android`, plus `:prod` variants).
 
 ## Configuration
 
