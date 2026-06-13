@@ -111,7 +111,13 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
           />
         )}
         {tab === "graph" && <GraphPanel days={history} unit={unit} />}
-        {tab === "records" && <RecordsPanel days={history} unit={unit} />}
+        {tab === "records" && (
+          <RecordsPanel
+            days={history}
+            unit={unit}
+            onPressDate={openCalendarAtDate}
+          />
+        )}
         {tab === "settings" && <SettingsPanel navigation={navigation} />}
       </ScrollView>
 

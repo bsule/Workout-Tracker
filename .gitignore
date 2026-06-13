@@ -4,9 +4,6 @@
 .DS_Store
 Thumbs.db
 
-# Claude memory
-.claude/
-
 # Node — pattern matches every nested node_modules across all workspaces
 node_modules/
 *.log

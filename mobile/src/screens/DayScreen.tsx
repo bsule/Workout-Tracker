@@ -57,7 +57,7 @@ function shiftDateString(date: string, delta: number): string {
 
 // ~6 year sliding window (3 each side of today). Generous enough that
 // the user effectively never hits the edge in normal use, and the
-// `data` array is just integers so the memory cost is trivial — only
+// `data` array is just integers so the memory cost is trivial - only
 // ~3 pages of `DayContent` are rendered at a time thanks to FlatList
 // virtualization.
 const TOTAL_DAYS = 365 * 6
@@ -66,12 +66,12 @@ const INITIAL_INDEX = Math.floor(TOTAL_DAYS / 2)
 const noop = () => {}
 
 export function DayScreen({ navigation, route }: any) {
-  // Date lives in the shared ActiveDate context — that way the global "+"
+  // Date lives in the shared ActiveDate context - that way the global "+"
   // tab reads the same value DayScreen displays, with zero sync lag. Any
   // initial date param wins on first mount.
   const { date, setDate } = useActiveDateAndSetter()
   // useIsFocused returns false while a stack child (e.g. ExercisePicker) is
-  // on top — including during the back-swipe gesture. Gating the horizontal
+  // on top - including during the back-swipe gesture. Gating the horizontal
   // pager's scroll on this prevents the tail end of an edge-swipe-back from
   // being caught by the date pager once the picker dismisses.
   const isFocused = useIsFocused()
@@ -84,7 +84,7 @@ export function DayScreen({ navigation, route }: any) {
 
   // Anchor: today as of mount. FlatList index N maps to anchor +
   // (N - INITIAL_INDEX) days. The pager is now a single virtualized
-  // horizontal list — every swipe just shifts the FlatList's content
+  // horizontal list - every swipe just shifts the FlatList's content
   // offset by one page, no mid-flight recenter. That removes the
   // entire class of spam-swipe bugs the 3-page version had.
   const anchorRef = useRef(todayString())
@@ -118,7 +118,7 @@ export function DayScreen({ navigation, route }: any) {
   }, [date])
 
   // When `date` changes from a swipe, FlatList is *already* at the
-  // correct offset — we should not call scrollToOffset again, otherwise
+  // correct offset - we should not call scrollToOffset again, otherwise
   // a rapid follow-up gesture gets jolted. This flag lets the
   // sync-effect skip swipe-driven changes; only external sources
   // (Today button, calendar nav, route param) trigger a programmatic
@@ -150,8 +150,8 @@ export function DayScreen({ navigation, route }: any) {
 
   // Re-assert the pager offset whenever the screen regains focus. While the
   // Today tab is inactive its native view is detached, so a scrollToOffset
-  // issued by the sync effect above — e.g. when the user picks a date on the
-  // Calendar tab, which updates the shared `date` context — is dropped. On
+  // issued by the sync effect above - e.g. when the user picks a date on the
+  // Calendar tab, which updates the shared `date` context - is dropped. On
   // re-focus the pager would otherwise stay parked on its previous page
   // (often today) while the header shows the newly selected date. Snapping to
   // the current date's offset here keeps the visible workout in sync.
@@ -270,7 +270,7 @@ function DayContent({
     () => (hydrated ? getWorkoutByDateQ(date) : undefined),
     [hydrated, date, snapshot]
   )
-  // Hide WEs that have no sets yet — they're transient placeholders that only
+  // Hide WEs that have no sets yet - they're transient placeholders that only
   // exist while the user is in SetLogger from the picker flow. If a backwards
   // navigation drops them, we don't want a half-second flash of an empty
   // "Add first set" card. The cleanup hook in SetLoggerScreen still purges
@@ -393,9 +393,26 @@ function DayContent({
             })}
           </View>
         ) : (
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>No exercises yet. Add one below.</Text>
-          </View>
+          <Pressable
+            onPress={() => {
+              if (interactive) navigation.navigate("ExercisePicker")
+            }}
+            disabled={!interactive}
+            style={({ pressed }) => [
+              styles.emptyAdd,
+              pressedStyle(pressed && interactive),
+            ]}
+          >
+            <Ionicons name="add-circle" size={56} color={theme.colors.primary} />
+            <Text style={styles.emptyAddTitle}>
+              {workout ? "Add exercise" : "Add workout"}
+            </Text>
+            <Text style={styles.emptyAddSub}>
+              {workout
+                ? "No exercises yet - tap to add one."
+                : "No workout logged for this day yet."}
+            </Text>
+          </Pressable>
         )}
       </ScrollView>
       {workout && interactive && (
@@ -475,7 +492,7 @@ function SummaryStrip({
   workout: Workout
   onOpenPicker: () => void
 }) {
-  // Show start/end/duration whenever the workout has a real `started_at` —
+  // Show start/end/duration whenever the workout has a real `started_at` -
   // that's set when the workout was originally created on its own day. Past
   // workouts that were logged retroactively (createWorkout for a past date)
   // start with started_at=null, so they stay clean. This way, today's
@@ -516,7 +533,7 @@ function SummaryStrip({
 }
 
 // Custom Animated.View overlay (not react-native-modal) for picking
-// the workout's gym. Same pattern as SetLogger's NoteEditorSheet —
+// the workout's gym. Same pattern as SetLogger's NoteEditorSheet -
 // react-native-modal's keyboard handling caused visible stutter on
 // close, and mutations during the exit animation made it appear to
 // "double-animate". This implementation runs a single native-driven
@@ -657,7 +674,7 @@ function GymPickerModal({
           <>
             {gymNames.length === 0 ? (
               <Text style={styles.gymSheetEmpty}>
-                No gyms yet — tap "Add gym" to create one.
+                No gyms yet - tap "Add gym" to create one.
               </Text>
             ) : (
               <ScrollView
@@ -927,15 +944,27 @@ const styles = StyleSheet.create({
   },
   bannerTitle: { color: theme.colors.foreground, fontWeight: "700", fontSize: theme.fontSize.sm },
   bannerSub: { color: theme.colors.muted, fontSize: theme.fontSize.xs },
-  empty: {
+  emptyAdd: {
     borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderWidth: 2,
+    borderColor: theme.colors.primary,
     borderStyle: "dashed",
-    padding: theme.spacing[6],
+    paddingVertical: theme.spacing[10],
+    paddingHorizontal: theme.spacing[6],
     alignItems: "center",
+    gap: theme.spacing[2],
+    backgroundColor: "rgba(0,119,188,0.06)",
   },
-  emptyText: { color: theme.colors.muted, fontSize: theme.fontSize.sm },
+  emptyAddTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.md,
+    fontWeight: "800",
+  },
+  emptyAddSub: {
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
+  },
   exerciseCard: {
     flexDirection: "row",
     backgroundColor: theme.colors.background,
