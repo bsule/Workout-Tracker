@@ -18,9 +18,7 @@
     "test:ui": "vitest --ui"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.2.4",
     "concurrently": "^9.1.0",
-    "tailwindcss": "^4.2.4",
     "vitest": "^3.0.5"
   }
 }
