@@ -49,6 +49,12 @@ export function configure(subPath: string) {
       "lift/core: storage factory not set. Call setStorageFactory(...) before configure()."
     )
   }
+  // A flush armed by the previous sub-path would write the outgoing user's
+  // in-memory snapshot into the incoming user's file. Their ops replay anyway.
+  if (flushTimer) {
+    clearTimeout(flushTimer)
+    flushTimer = null
+  }
   storage = storageFactory(subPath)
   storageKey = subPath
   hydratePromise = null

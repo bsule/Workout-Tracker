@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest"
+import { describe, it, expect, beforeEach, vi } from "vitest"
 import {
   setStorageFactory,
   configure,
@@ -190,5 +190,31 @@ describe("runBatched", () => {
     await flushNow()
     const { snapshot } = await parse(store.lastWritten!)
     expect(snapshot.exercises.map((e) => e.name).sort()).toEqual(["Bulk A", "Bulk B"])
+  })
+})
+
+describe("configure: user switch", () => {
+  it("does not flush the outgoing user's snapshot into the incoming user's storage", async () => {
+    vi.useFakeTimers()
+    try {
+      const keyA = `users/${freshKey()}`
+      const keyB = `users/${freshKey()}`
+
+      // User A hydrates, then makes a change — arming the 30s debounced flush.
+      configure(keyA)
+      await hydrate()
+      M.createExercise({ name: "A-only exercise", category: "chest" })
+
+      // Switching to user B repoints storage while A's timer is still armed.
+      configure(keyB)
+
+      // Let the debounce window elapse. A stale timer fires flushNow(), which
+      // serializes whatever is in memory — still A's snapshot — into B's file.
+      await vi.advanceTimersByTimeAsync(31_000)
+
+      expect(storageFor(keyB).lastWritten).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
