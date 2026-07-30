@@ -13,8 +13,11 @@ const workspaceRoot = path.resolve(projectRoot, "..")
 
 const config = getDefaultConfig(projectRoot)
 
-// Watch the whole monorepo so Metro reloads when @lift/core changes.
-config.watchFolders = [workspaceRoot]
+// Watch the whole monorepo so Metro reloads when @lift/core changes. Union with
+// Expo's defaults (not replace) so expo-doctor passes and none get dropped.
+config.watchFolders = [
+  ...new Set([workspaceRoot, ...(config.watchFolders ?? [])]),
+]
 
 // Resolve from both the project's node_modules and the hoisted root one.
 config.resolver.nodeModulesPaths = [
