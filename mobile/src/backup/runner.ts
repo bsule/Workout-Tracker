@@ -1,5 +1,6 @@
 import { getState } from "@lift/core"
 import { buildJson } from "@lift/core/export"
+import type { Snapshot } from "@lift/core/store/schema"
 import { folderBridge, isBackupFolderAvailable } from "./folderBridge"
 import { loadBackupState, saveBackupState } from "./backupState"
 
@@ -25,6 +26,13 @@ export function scheduleDebouncedBackup() {
   }, DEBOUNCE_MS)
 }
 
+// Mirrors isStoreEmpty in src/store/StoreProvider.tsx: no workouts and only
+// soft-deleted exercises is the seeded-but-unused state.
+function isSnapshotEmpty(snap: Snapshot): boolean {
+  if (snap.workouts.length > 0) return false
+  return snap.exercises.every((e) => e.is_deleted)
+}
+
 export async function runBackup(
   reason: "open" | "write" | "manual"
 ): Promise<BackupOutcome> {
@@ -42,6 +50,9 @@ export async function runBackup(
 
     const { snapshot, hydrated } = getState()
     if (!hydrated) return "not-configured"
+    // The filename is fixed and the bookmark global, so one write from an empty
+    // store destroys the very backup you'd be restoring from. Never do it.
+    if (isSnapshotEmpty(snapshot)) return "not-configured"
 
     const json = buildJson(snapshot, getUsername())
     const res = await folderBridge.writeFile(state.bookmark, "lift-backup.json", json)
