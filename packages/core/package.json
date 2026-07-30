@@ -16,6 +16,7 @@
     "./store/queries": "./src/store/queries.ts",
     "./store/ids": "./src/store/ids.ts",
     "./store/mutations": "./src/store/mutations.ts",
+    "./store/prs": "./src/store/prs.ts",
     "./store/store": "./src/store/store.ts",
     "./store/blob": "./src/store/blob.ts",
     "./store/indexes": "./src/store/indexes.ts",

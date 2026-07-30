@@ -1,5 +1,6 @@
 import { parse, serialize } from "./blob"
 import { newDeviceId } from "./ids"
+import { recomputePrsForExercises } from "./prs"
 import { emptySnapshot, type Snapshot } from "./schema"
 import type { BlobStorage } from "./storage/types"
 import { clearDirty, getState, markHydrated } from "./store"
@@ -234,6 +235,44 @@ interface OpEnvelope {
   [k: string]: unknown
 }
 
+/**
+ * Exercise ids whose PR flags an op invalidates. Must be read from the
+ * snapshot *before* the op is applied, because deletions remove the rows we
+ * need to walk (set -> workout_exercise -> exercise).
+ */
+function prAffectedExercises(snap: Snapshot, op: OpEnvelope): number[] {
+  const exerciseOfWe = (weId: number): number[] => {
+    const we = snap.workout_exercises.find((x) => x.id === weId)
+    return we ? [we.exercise_id] : []
+  }
+  const exerciseOfSet = (setId: number): number[] => {
+    const s = snap.sets.find((x) => x.id === setId)
+    return s ? exerciseOfWe(s.workout_exercise_id) : []
+  }
+  switch (op.op) {
+    case "add_set": {
+      const row = op.row as Snapshot["sets"][number]
+      // Mirrors addSet: a planned set is not a PR candidate, so it can't
+      // change anyone's flags. Skipping matters for AI-generated plans,
+      // which append one add_set op per planned set.
+      if (row.is_planned) return []
+      return exerciseOfWe(row.workout_exercise_id)
+    }
+    case "update_set":
+    case "log_planned_set":
+    case "delete_set":
+      return exerciseOfSet(op.setId as number)
+    case "remove_exercise":
+      return exerciseOfWe(op.weId as number)
+    case "delete_workout":
+      return snap.workout_exercises
+        .filter((we) => we.workout_id === (op.id as number))
+        .map((we) => we.exercise_id)
+    default:
+      return []
+  }
+}
+
 function applyPendingOps(snap: Snapshot, lines: string[]): Snapshot {
   let out = snap
   for (const line of lines) {
@@ -243,7 +282,17 @@ function applyPendingOps(snap: Snapshot, lines: string[]): Snapshot {
     } catch {
       continue
     }
+    // Read the affected exercises before the op deletes the rows we'd need
+    // to walk to find them.
+    const affected = prAffectedExercises(out, parsed)
     out = applyOne(out, parsed)
+    // Set-level ops carry no PR flags of their own (an `add_set` row is
+    // recorded pre-recompute, and `delete_set` is just an id), so replaying
+    // them raw leaves is_pr / is_position_pr pointing at the wrong rows —
+    // a deleted PR leaves no crown behind, and a new PR never gets one.
+    // Recomputing per-op rather than once at the end keeps the sticky
+    // was_pr / was_position_pr flags identical to the live mutation path.
+    out = recomputePrsForExercises(out, affected)
   }
   return out
 }
