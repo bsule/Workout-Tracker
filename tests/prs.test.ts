@@ -118,3 +118,107 @@ describe("recomputeAllPrs (historical derivation)", () => {
     expect(earlier.was_pr).toBe(true)
   })
 })
+
+describe("PR flags survive the other set-destroying mutations", () => {
+  // Every mutation that adds or removes rows from snap.sets has to rerun the
+  // PR pass, not just addSet/deleteSet. These three used to skip it, so
+  // deleting a workout (or backing out of an exercise on mobile, which calls
+  // removeExerciseFromWorkout) left the gold star on a row that no longer
+  // existed — the record simply vanished from the UI until something else
+  // happened to trigger a recompute.
+  function twoDays() {
+    const ex = M.createExercise({ name: "Bench", category: "chest" })
+    const w1 = M.createWorkout("2026-01-01").row
+    const we1 = M.addExerciseToWorkout(w1.id, ex.id)
+    const light = M.addSet(we1.id, { weight: 100, reps: 5 })
+    const w2 = M.createWorkout("2026-01-08").row
+    const we2 = M.addExerciseToWorkout(w2.id, ex.id)
+    const heavy = M.addSet(we2.id, { weight: 110, reps: 5 })
+    return { ex, w1, we1, light, w2, we2, heavy }
+  }
+
+  it("removeExerciseFromWorkout moves the crown to the runner-up", () => {
+    const { w2, we2, light, heavy } = twoDays()
+    expect(flags(heavy.id).is_pr).toBe(true)
+
+    M.removeExerciseFromWorkout(w2.id, we2.id)
+
+    expect(currentSnapshot().sets.some((s) => s.id === heavy.id)).toBe(false)
+    expect(flags(light.id).is_pr).toBe(true)
+    expect(flags(light.id).is_position_pr).toBe(true)
+  })
+
+  it("deleteWorkout moves the crown to the runner-up", () => {
+    const { w2, light, heavy } = twoDays()
+    M.deleteWorkout(w2.id)
+
+    expect(currentSnapshot().sets.some((s) => s.id === heavy.id)).toBe(false)
+    expect(flags(light.id).is_pr).toBe(true)
+  })
+
+  it("deleteWorkout recomputes every exercise on the deleted day", () => {
+    const bench = M.createExercise({ name: "Bench", category: "chest" })
+    const squat = M.createExercise({ name: "Squat", category: "legs" })
+    const w1 = M.createWorkout("2026-01-01").row
+    const b1 = M.addSet(M.addExerciseToWorkout(w1.id, bench.id).id, {
+      weight: 100,
+      reps: 5,
+    })
+    const s1 = M.addSet(M.addExerciseToWorkout(w1.id, squat.id).id, {
+      weight: 140,
+      reps: 5,
+    })
+    const w2 = M.createWorkout("2026-01-08").row
+    M.addSet(M.addExerciseToWorkout(w2.id, bench.id).id, {
+      weight: 110,
+      reps: 5,
+    })
+    M.addSet(M.addExerciseToWorkout(w2.id, squat.id).id, {
+      weight: 150,
+      reps: 5,
+    })
+
+    M.deleteWorkout(w2.id)
+
+    expect(flags(b1.id).is_pr).toBe(true)
+    expect(flags(s1.id).is_pr).toBe(true)
+  })
+
+  it("copyFromWorkout onto an earlier date gives the copy the tie-break", () => {
+    const ex = M.createExercise({ name: "Deadlift", category: "back" })
+    const src = M.createWorkout("2026-03-01").row
+    const orig = M.addSet(M.addExerciseToWorkout(src.id, ex.id).id, {
+      weight: 300,
+      reps: 5,
+    })
+    expect(flags(orig.id).is_pr).toBe(true)
+
+    // Exact ties are broken by "earliest wins", so a copy back-filled onto an
+    // earlier day takes the record off the original.
+    const dst = M.createWorkout("2026-02-01").row
+    M.copyFromWorkout(dst.id, src.id, true)
+
+    const copy = currentSnapshot().sets.find(
+      (s) => s.weight === 300 && s.id !== orig.id
+    )!
+    expect(copy.is_pr).toBe(true)
+    expect(flags(orig.id).is_pr).toBe(false)
+  })
+
+  it("copyFromWorkout leaves a same-day copy dominated by its original", () => {
+    const ex = M.createExercise({ name: "Press", category: "shoulders" })
+    const src = M.createWorkout("2026-03-01").row
+    const orig = M.addSet(M.addExerciseToWorkout(src.id, ex.id).id, {
+      weight: 60,
+      reps: 5,
+    })
+    const dst = M.createWorkout("2026-03-08").row
+    M.copyFromWorkout(dst.id, src.id, true)
+
+    const copy = currentSnapshot().sets.find(
+      (s) => s.weight === 60 && s.id !== orig.id
+    )!
+    expect(flags(orig.id).is_pr).toBe(true)
+    expect(copy.is_pr).toBe(false)
+  })
+})
