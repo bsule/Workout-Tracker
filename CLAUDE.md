@@ -30,15 +30,18 @@ Run from the repo root (workspace-aware) or from inside each folder.
 npm run dev:web            # from root; or: cd frontend && npm run dev
 cd frontend && npm run build
 cd frontend && npm run lint        # eslint — the only configured lint
+cd frontend && npx tsc --noEmit    # frontend has NO typecheck script — run tsc directly
 
 # Mobile
 npm run dev:mobile         # from root; or: cd mobile && npm run start  (expo start)
-cd mobile && npm run typecheck     # tsc --noEmit — there is no separate web typecheck script; use `npx tsc --noEmit`
+cd mobile && npm run typecheck     # tsc --noEmit
 cd mobile && npm run ipa:gh        # build unsigned iOS .ipa via GitHub Actions into mobile/builds/ (needs gh CLI, ~10-20 min)
+cd mobile && npm run apk:gh        # same, Android .apk
 
 # Cloudflare Worker — http://localhost:8787
 cd cloudflare && npm run db:apply:local   # apply D1 migrations to the local simulator (run before first dev)
 cd cloudflare && npm run dev
+cd cloudflare && npm run typecheck        # tsc --noEmit
 cd cloudflare && npm run db:apply:remote && npm run deploy   # production
 
 # Both clients at once
@@ -116,4 +119,3 @@ Both clients have a parallel `ai/` layer (`frontend/lib/ai`, `mobile/src/ai`) �
 - The web app has **no `typecheck` npm script** — run `npx tsc --noEmit` in `frontend/` manually.
 - `fflate`'s **synchronous** gzip API is used on purpose: the async variant spawns a Web Worker that doesn't exist in React Native.
 - Mobile uses `expo-file-system/legacy` deliberately; don't "upgrade" it to the class-based `File`/`Directory` API without reason.
-- The `.claude copy/` folder in the repo root is a stray copy, not part of the project.
