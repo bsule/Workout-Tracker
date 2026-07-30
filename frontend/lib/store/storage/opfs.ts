@@ -84,18 +84,22 @@ export class OpfsStorage implements BlobStorage {
     })
   }
 
+  // Enqueued: hydrate() reads, replays, then clears. An append landing between
+  // an unqueued read and the queued clearPending is lost on truncate.
   async readPending(): Promise<string[]> {
-    try {
-      const dir = await this.dir()
-      const fh = await dir.getFileHandle(PENDING_NAME, { create: false })
-      const file = await fh.getFile()
-      if (file.size === 0) return []
-      const text = await file.text()
-      return text.split("\n").filter((l) => l.length > 0)
-    } catch (e) {
-      if (isNotFound(e)) return []
-      throw e
-    }
+    return this.enqueue(async () => {
+      try {
+        const dir = await this.dir()
+        const fh = await dir.getFileHandle(PENDING_NAME, { create: false })
+        const file = await fh.getFile()
+        if (file.size === 0) return []
+        const text = await file.text()
+        return text.split("\n").filter((l) => l.length > 0)
+      } catch (e) {
+        if (isNotFound(e)) return []
+        throw e
+      }
+    })
   }
 
   async clearPending(): Promise<void> {

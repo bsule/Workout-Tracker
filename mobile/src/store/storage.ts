@@ -50,11 +50,15 @@ export class RnFsStorage implements BlobStorage {
   private writeQueue: Promise<unknown> = Promise.resolve()
   private readonly dir: string
   private readonly snapshotPath: string
+  private readonly snapshotTmpPath: string
+  private readonly snapshotBakPath: string
   private readonly pendingPath: string
 
   constructor(subPath: string) {
     this.dir = dirFor(subPath)
     this.snapshotPath = this.dir + "snapshot.bin"
+    this.snapshotTmpPath = this.dir + "snapshot.bin.tmp"
+    this.snapshotBakPath = this.dir + "snapshot.bin.bak"
     this.pendingPath = this.dir + "pending.log"
   }
 
@@ -65,23 +69,46 @@ export class RnFsStorage implements BlobStorage {
   }
 
   async readSnapshot(): Promise<Uint8Array | null> {
-    const info = await FileSystem.getInfoAsync(this.snapshotPath)
-    if (!info.exists) return null
-    const b64 = await FileSystem.readAsStringAsync(this.snapshotPath, {
-      encoding: FileSystem.EncodingType.Base64,
-    })
-    if (!b64) return null
-    return base64ToBytes(b64)
+    // Live snapshot, then .bak. Returning the backup beats returning null:
+    // hydrate() treats an unreadable snapshot as "start fresh", losing history.
+    for (const path of [this.snapshotPath, this.snapshotBakPath]) {
+      const info = await FileSystem.getInfoAsync(path)
+      if (!info.exists) continue
+      try {
+        const b64 = await FileSystem.readAsStringAsync(path, {
+          encoding: FileSystem.EncodingType.Base64,
+        })
+        if (!b64) continue
+        return base64ToBytes(b64)
+      } catch (e) {
+        console.error(`Failed to read snapshot at ${path}`, e)
+      }
+    }
+    return null
   }
 
+  // Atomic: fill tmp, rotate current to .bak, move tmp into place — a kill
+  // never leaves a torn file, which flushNow() would then clear the log after.
   async writeSnapshot(bytes: Uint8Array): Promise<void> {
     await this.enqueue(async () => {
       await ensureDir(this.dir)
       await FileSystem.writeAsStringAsync(
-        this.snapshotPath,
+        this.snapshotTmpPath,
         bytesToBase64(bytes),
         { encoding: FileSystem.EncodingType.Base64 }
       )
+      const current = await FileSystem.getInfoAsync(this.snapshotPath)
+      if (current.exists) {
+        await FileSystem.deleteAsync(this.snapshotBakPath, { idempotent: true })
+        await FileSystem.moveAsync({
+          from: this.snapshotPath,
+          to: this.snapshotBakPath,
+        })
+      }
+      await FileSystem.moveAsync({
+        from: this.snapshotTmpPath,
+        to: this.snapshotPath,
+      })
     })
   }
 
@@ -99,11 +126,15 @@ export class RnFsStorage implements BlobStorage {
     })
   }
 
+  // Enqueued: hydrate() reads, replays, then clears. An append landing between
+  // an unqueued read and the queued clearPending is dropped silently.
   async readPending(): Promise<string[]> {
-    const info = await FileSystem.getInfoAsync(this.pendingPath)
-    if (!info.exists) return []
-    const text = await FileSystem.readAsStringAsync(this.pendingPath)
-    return text.split("\n").filter((l) => l.length > 0)
+    return this.enqueue(async () => {
+      const info = await FileSystem.getInfoAsync(this.pendingPath)
+      if (!info.exists) return []
+      const text = await FileSystem.readAsStringAsync(this.pendingPath)
+      return text.split("\n").filter((l) => l.length > 0)
+    })
   }
 
   async clearPending(): Promise<void> {

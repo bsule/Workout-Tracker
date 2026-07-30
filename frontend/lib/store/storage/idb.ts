@@ -92,12 +92,16 @@ export class IdbStorage implements BlobStorage {
     })
   }
 
+  // Enqueued: hydrate() reads, replays, then clears. An append landing between
+  // an unqueued read and the queued clearPending is lost.
   async readPending(): Promise<string[]> {
-    const text = await tx<string | undefined>("readonly", (s) =>
-      s.get(this.pendingKey())
-    )
-    if (!text) return []
-    return text.split("\n").filter((l) => l.length > 0)
+    return this.enqueue(async () => {
+      const text = await tx<string | undefined>("readonly", (s) =>
+        s.get(this.pendingKey())
+      )
+      if (!text) return []
+      return text.split("\n").filter((l) => l.length > 0)
+    })
   }
 
   async clearPending(): Promise<void> {
