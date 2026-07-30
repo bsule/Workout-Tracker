@@ -9,7 +9,12 @@ import {
 import { serialize, parse } from "@lift/core/store/blob"
 import { emptySnapshot } from "@lift/core/store/schema"
 import * as M from "@lift/core/store/mutations"
-import { currentSnapshot, memoryStorage, type MemoryStorage } from "./helpers/store"
+import {
+  currentSnapshot,
+  memoryStorage,
+  resetStore,
+  type MemoryStorage,
+} from "./helpers/store"
 
 // A factory whose instances we keep a handle on, so each test can pre-seed and
 // inspect the bytes for its own namespaced sub-path.
@@ -26,6 +31,9 @@ function storageFor(subPath: string): MemoryStorage {
 beforeEach(() => {
   storages.clear()
   setStorageFactory(storageFor)
+  // Tests that hydrate() leave the replayed snapshot in the singleton store;
+  // without this the next test's flushNow() writes the previous test's rows.
+  resetStore()
 })
 
 // Unique sub-path per test resets persist's cached hydratePromise (configure()
@@ -99,6 +107,69 @@ describe("hydrate: crash-log replay", () => {
     configure(key)
     await hydrate()
     expect(currentSnapshot()).toBeTruthy()
+  })
+
+  // Set-level ops carry no PR flags: `add_set` records the row as it was
+  // built (is_pr false, pre-recompute) and `delete_set` records only an id.
+  // Replaying them raw used to leave the crown on the wrong row — a deleted
+  // PR left no gold star anywhere, a new PR never got one — until something
+  // else triggered a recompute. Replay must reproduce the live mutation.
+  it("recomputes PR flags after replaying a delete_set", async () => {
+    const key = freshKey()
+    configure(key)
+    const store = storageFor(key)
+
+    const ex = M.createExercise({ name: "Replay Bench", category: "chest" })
+    const w1 = M.createWorkout("2026-01-01").row
+    const we1 = M.addExerciseToWorkout(w1.id, ex.id)
+    const light = M.addSet(we1.id, { weight: 100, reps: 5 })
+    const w2 = M.createWorkout("2026-01-08").row
+    const we2 = M.addExerciseToWorkout(w2.id, ex.id)
+    const heavy = M.addSet(we2.id, { weight: 110, reps: 5 })
+
+    // Everything so far is safely on disk; the log is empty.
+    await flushNow()
+    expect(store.pending.length).toBe(0)
+
+    // User deletes the PR set, then the app dies before the 30s flush.
+    M.deleteSet(heavy.id)
+    expect(store.pending.length).toBe(1)
+
+    // Reboot: replay the log on top of the last good snapshot.
+    resetStore()
+    configure(key)
+    await hydrate()
+
+    const after = currentSnapshot().sets
+    expect(after.length).toBe(1)
+    expect(after[0].id).toBe(light.id)
+    expect(after[0].is_pr).toBe(true) // crown moved back to the runner-up
+    expect(after[0].is_position_pr).toBe(true)
+  })
+
+  it("recomputes PR flags after replaying an add_set", async () => {
+    const key = freshKey()
+    configure(key)
+
+    const ex = M.createExercise({ name: "Replay Row", category: "back" })
+    const w1 = M.createWorkout("2026-03-01").row
+    const we1 = M.addExerciseToWorkout(w1.id, ex.id)
+    const light = M.addSet(we1.id, { weight: 100, reps: 5 })
+    await flushNow()
+
+    const w2 = M.createWorkout("2026-03-08").row
+    const we2 = M.addExerciseToWorkout(w2.id, ex.id)
+    const heavy = M.addSet(we2.id, { weight: 120, reps: 5 })
+
+    resetStore()
+    configure(key)
+    await hydrate()
+
+    const byId = new Map(currentSnapshot().sets.map((s) => [s.id, s]))
+    expect(byId.get(heavy.id)!.is_pr).toBe(true)
+    expect(byId.get(heavy.id)!.was_pr).toBe(true)
+    expect(byId.get(light.id)!.is_pr).toBe(false)
+    expect(byId.get(light.id)!.was_pr).toBe(true) // sticky, as when logged
   })
 })
 
