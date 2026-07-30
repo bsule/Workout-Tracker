@@ -25,6 +25,37 @@ export function setToken(token: string | null) {
   else window.localStorage.removeItem(TOKEN_KEY)
 }
 
+const USER_KEY = "lift.user"
+
+// Cached profile. The token is the credential; this is only {id, username,
+// email}, so a no-network boot can render instead of showing the login screen.
+export function getCachedUser(): User | null {
+  if (typeof window === "undefined") return null
+  const raw = window.localStorage.getItem(USER_KEY)
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as Partial<User>
+    // username drives the storage namespace, so an entry without it is worse
+    // than none: it would point the store at `users/undefined`.
+    if (typeof parsed.username !== "string") return null
+    return parsed as User
+  } catch {
+    return null
+  }
+}
+
+// Best-effort: the cache is an optimization, so a failed write (quota, Safari
+// private mode) must never fail the login/logout it rides along with.
+export function setCachedUser(user: User | null) {
+  if (typeof window === "undefined") return
+  try {
+    if (user) window.localStorage.setItem(USER_KEY, JSON.stringify(user))
+    else window.localStorage.removeItem(USER_KEY)
+  } catch (e) {
+    console.error("Failed to write cached user", e)
+  }
+}
+
 export class ApiError extends Error {
   status: number
   data: unknown

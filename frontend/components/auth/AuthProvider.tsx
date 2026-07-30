@@ -7,7 +7,14 @@ import {
   useEffect,
   useState,
 } from "react"
-import { api, getToken, setToken } from "@/lib/api"
+import {
+  api,
+  ApiError,
+  getCachedUser,
+  getToken,
+  setCachedUser,
+  setToken,
+} from "@/lib/api"
 import type { User } from "@/types"
 import { CloudflareTransport, sync as syncModule } from "@lift/core"
 
@@ -35,10 +42,17 @@ interface AuthState {
 const AuthContext = createContext<AuthState | null>(null)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
   // Lazy init so SSR renders without a flash; client refines once mounted.
+  const [user, setUser] = useState<User | null>(() =>
+    typeof window !== "undefined" && getToken() ? getCachedUser() : null
+  )
+  // Only block on the network with a token but no cached profile to render
+  // from. On a cache hit we render now and revalidate in the background.
   const [loading, setLoading] = useState(
-    () => typeof window !== "undefined" && getToken() !== null
+    () =>
+      typeof window !== "undefined" &&
+      getToken() !== null &&
+      getCachedUser() === null
   )
 
   useEffect(() => {
@@ -46,11 +60,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     syncModule.configureSync(syncTransport)
     api
       .me()
-      .then(setUser)
-      .catch(() => {
-        setToken(null)
-        setUser(null)
-        syncModule.configureSync(null)
+      .then((u) => {
+        setUser(u)
+        setCachedUser(u)
+      })
+      .catch((e) => {
+        // Tokens never expire server-side, so only a 401 means truly revoked.
+        // Clearing on a 5xx or offline fetch logged users out for our own bug.
+        if (e instanceof ApiError && e.status === 401) {
+          setToken(null)
+          setCachedUser(null)
+          setUser(null)
+          syncModule.configureSync(null)
+        }
       })
       .finally(() => setLoading(false))
   }, [])
@@ -60,6 +82,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const res = await api.signup(input)
       setToken(res.token)
       setUser(res.user)
+      setCachedUser(res.user)
       syncTransport.setEtag(null)
       syncModule.configureSync(syncTransport)
     },
@@ -71,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const res = await api.login(input)
       setToken(res.token)
       setUser(res.user)
+      setCachedUser(res.user)
       syncTransport.setEtag(null)
       syncModule.configureSync(syncTransport)
     },
@@ -85,6 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     setToken(null)
     setUser(null)
+    setCachedUser(null)
     syncTransport.setEtag(null)
     syncModule.configureSync(null)
   }, [])
@@ -93,6 +118,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!getToken()) return
     const u = await api.me()
     setUser(u)
+    setCachedUser(u)
   }, [])
 
   return (

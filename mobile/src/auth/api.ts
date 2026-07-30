@@ -23,6 +23,35 @@ export async function setToken(token: string | null): Promise<void> {
   else await AsyncStorage.removeItem(TOKEN_KEY)
 }
 
+const USER_KEY = "lift.user"
+
+// Cached profile (web twin: frontend/lib/api.ts). Without it an offline launch
+// has no `user`, so RootNavigator shows Login despite a valid token on disk.
+export async function getCachedUser(): Promise<User | null> {
+  try {
+    const raw = await AsyncStorage.getItem(USER_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<User>
+    // username drives the storage namespace, so an entry without it is worse
+    // than none: it would point the store at `users/undefined`.
+    if (typeof parsed.username !== "string") return null
+    return parsed as User
+  } catch {
+    return null
+  }
+}
+
+// Best-effort: the cache is an optimization, so a failed write must never fail
+// the login/logout it rides along with. Worst case is one online-only launch.
+export async function setCachedUser(user: User | null): Promise<void> {
+  try {
+    if (user) await AsyncStorage.setItem(USER_KEY, JSON.stringify(user))
+    else await AsyncStorage.removeItem(USER_KEY)
+  } catch (e) {
+    console.error("Failed to write cached user", e)
+  }
+}
+
 export class ApiError extends Error {
   status: number
   data: unknown

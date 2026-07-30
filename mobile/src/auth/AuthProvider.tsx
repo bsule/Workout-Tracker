@@ -11,7 +11,14 @@ import AsyncStorage from "@react-native-async-storage/async-storage"
 import type { User } from "@lift/core"
 import { CloudflareTransport, sync as syncModule } from "@lift/core"
 import Constants from "expo-constants"
-import { api, getToken, setToken, ApiError } from "./api"
+import {
+  api,
+  getToken,
+  setToken,
+  getCachedUser,
+  setCachedUser,
+  ApiError,
+} from "./api"
 
 const API_BASE: string =
   (Constants.expoConfig?.extra?.apiBaseUrl as string | undefined) ??
@@ -61,14 +68,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const savedEtag = await AsyncStorage.getItem(ETAG_KEY).catch(() => null)
       if (savedEtag) syncTransport.setEtag(savedEtag)
       syncModule.configureSync(syncTransport)
+
+      // Tokens never expire server-side, so a stored token is a valid session.
+      // Render from cache first; waiting on /auth/me means no network, no app.
+      const cached = await getCachedUser()
+      if (cached && !cancelled) {
+        setUser(cached)
+        setLoading(false)
+      }
+
       try {
         const me = await api.me()
         if (!cancelled) setUser(me)
+        await setCachedUser(me)
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) {
+          // Genuinely revoked or deleted — drop the whole local session.
           await setToken(null)
+          await setCachedUser(null)
+          if (!cancelled) setUser(null)
           syncModule.configureSync(null)
         }
+        // Network / 5xx: keep the cached session exactly as it is.
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -81,6 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (username: string, password: string) => {
     const res = await api.login({ username, password })
     await setToken(res.token)
+    await setCachedUser(res.user)
     setUser(res.user)
     syncTransport.setEtag(null)
     syncModule.configureSync(syncTransport)
@@ -90,6 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (payload: { username: string; email: string; password: string }) => {
       const res = await api.signup(payload)
       await setToken(res.token)
+      await setCachedUser(res.user)
       setUser(res.user)
       syncTransport.setEtag(null)
       syncModule.configureSync(syncTransport)
@@ -100,6 +123,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const updateProfile = useCallback(
     async (patch: Partial<Pick<User, "username" | "email">>) => {
       const updated = await api.updateProfile(patch)
+      await setCachedUser(updated)
       setUser(updated)
     },
     []
@@ -112,6 +136,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // best-effort; we still clear local token
     }
     await setToken(null)
+    await setCachedUser(null)
     setUser(null)
     syncTransport.setEtag(null)
     syncModule.configureSync(null)
