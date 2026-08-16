@@ -32,6 +32,13 @@ describe("buildCsv", () => {
     // is_pr column is "1"
     expect(row).toContain(",1,")
   })
+
+  it("writes the day's note into the workout_notes column", () => {
+    const snap = sample()
+    snap.day_notes = [{ date: "2026-01-05", text: "felt strong" }]
+    const row = buildCsv(snap).trim().split("\n")[1]
+    expect(row.endsWith(",felt strong")).toBe(true)
+  })
 })
 
 describe("buildJson", () => {
@@ -57,6 +64,20 @@ describe("buildJson", () => {
       "Bench, Press"
     )
     expect(json.saved_gyms).toContain("Gym A")
+  })
+
+  it("exports day notes, including dates with no workout", () => {
+    const snap = sample()
+    snap.day_notes = [
+      { date: "2026-01-05", text: "felt strong" },
+      { date: "2026-01-06", text: "rest day" },
+    ]
+    const json = JSON.parse(buildJson(snap))
+    expect(json.day_notes).toEqual([
+      { date: "2026-01-05", text: "felt strong" },
+      { date: "2026-01-06", text: "rest day" },
+    ])
+    expect(json.workouts[0].notes).toBe("felt strong")
   })
 })
 
