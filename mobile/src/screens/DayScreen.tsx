@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
 } from "react"
 import {
   Alert,
@@ -28,7 +29,11 @@ import {
   startPlannedWorkout,
   useHydrated,
   useStore,
+  getState,
   getWorkoutByDateQ,
+  getDayNoteQ,
+  setDayNote,
+  deleteWorkout,
   workoutDurationSeconds,
 } from "@lift/core"
 import type { Workout, WorkoutExercise } from "@lift/core"
@@ -64,6 +69,7 @@ const TOTAL_DAYS = 365 * 6
 const INITIAL_INDEX = Math.floor(TOTAL_DAYS / 2)
 
 const noop = () => {}
+const MENU_FADE_MS = 160
 
 export function DayScreen({ navigation, route }: any) {
   // Date lives in the shared ActiveDate context - that way the global "+"
@@ -169,6 +175,46 @@ export function DayScreen({ navigation, route }: any) {
   }, [])
   const clearSelection = useCallback(() => setSelectedIds([]), [])
 
+  const [dateMenuOpen, setDateMenuOpen] = useState(false)
+  const [noteEditorOpen, setNoteEditorOpen] = useState(false)
+  const [noteDraft, setNoteDraft] = useState("")
+  const [noteOriginal, setNoteOriginal] = useState("")
+  const [menuCtx, setMenuCtx] = useState({
+    note: "",
+    hasExercises: false,
+    workoutId: null as number | null,
+  })
+
+  useEffect(() => {
+    setDateMenuOpen(false)
+    setNoteEditorOpen(false)
+  }, [date])
+
+  const openNoteEditor = useCallback(() => {
+    const n = getDayNoteQ(date)
+    setNoteDraft(n)
+    setNoteOriginal(n)
+    setNoteEditorOpen(true)
+  }, [date])
+
+  function openDateMenu() {
+    const { indexes } = getState()
+    const w = indexes.workoutsByDate.get(date)
+    let hasExercises = false
+    if (w) {
+      const wes = indexes.workoutExercisesByWorkout.get(w.id) ?? []
+      hasExercises = wes.some(
+        (we) => (indexes.setsByWorkoutExercise.get(we.id) ?? []).length > 0
+      )
+    }
+    setMenuCtx({
+      note: getDayNoteQ(date),
+      hasExercises,
+      workoutId: w?.id ?? null,
+    })
+    setDateMenuOpen(true)
+  }
+
   const data = useMemo(
     () => Array.from({ length: TOTAL_DAYS }, (_, i) => i),
     []
@@ -199,6 +245,7 @@ export function DayScreen({ navigation, route }: any) {
             selectionMode={isCurrent ? selectionMode : false}
             onToggleSelected={isCurrent ? toggleSelected : noop}
             onClearSelection={isCurrent ? clearSelection : noop}
+            onOpenNotes={isCurrent ? openNoteEditor : noop}
           />
         </View>
       )
@@ -212,6 +259,7 @@ export function DayScreen({ navigation, route }: any) {
       navigation,
       toggleSelected,
       clearSelection,
+      openNoteEditor,
     ]
   )
 
@@ -219,36 +267,87 @@ export function DayScreen({ navigation, route }: any) {
     <StaticSafeAreaView>
       {/* Pinned date header, never scrolls. */}
       <View style={styles.pinnedHeader}>
-        <DateNav date={date} onShift={shiftDay} onToday={() => setDate(todayString())} />
+        <DateNav date={date} onShift={shiftDay} onPressDate={openDateMenu} />
       </View>
 
-      <FlatList
-        ref={flatListRef}
-        data={data}
-        keyExtractor={keyExtractor}
-        renderItem={renderItem}
-        getItemLayout={getItemLayout}
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        decelerationRate={0.9}
-        disableIntervalMomentum={true}
-        scrollEnabled={!selectionMode && isFocused}
-        initialScrollIndex={indexForDate(date)}
-        onMomentumScrollEnd={handleMomentumEnd}
-        keyboardShouldPersistTaps="handled"
-        style={styles.pager}
-        windowSize={3}
-        maxToRenderPerBatch={3}
-        initialNumToRender={3}
-        removeClippedSubviews={Platform.OS === "android"}
-      />
+      <View style={styles.body}>
+        <FlatList
+          ref={flatListRef}
+          data={data}
+          keyExtractor={keyExtractor}
+          renderItem={renderItem}
+          getItemLayout={getItemLayout}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          decelerationRate={0.9}
+          disableIntervalMomentum={true}
+          scrollEnabled={!selectionMode && isFocused}
+          initialScrollIndex={indexForDate(date)}
+          onMomentumScrollEnd={handleMomentumEnd}
+          keyboardShouldPersistTaps="handled"
+          style={styles.pager}
+          windowSize={3}
+          maxToRenderPerBatch={3}
+          initialNumToRender={3}
+          removeClippedSubviews={Platform.OS === "android"}
+        />
 
-      {/* Floating "Go to today" chip, hovering just above the bottom tab bar
-          whenever the viewed day isn't today. */}
-      <TodayPill
-        visible={date !== todayString()}
-        onPress={() => setDate(todayString())}
+        {/* Floating "Go to today" chip, hovering just above the bottom tab bar
+            whenever the viewed day isn't today. */}
+        <TodayPill
+          visible={date !== todayString()}
+          onPress={() => setDate(todayString())}
+        />
+        <DateMenu
+          date={date}
+          visible={dateMenuOpen}
+          ctx={menuCtx}
+        onClose={() => setDateMenuOpen(false)}
+        onAddNote={() => {
+          setDateMenuOpen(false)
+          setTimeout(openNoteEditor, MENU_FADE_MS + 40)
+        }}
+        onClearNote={() => {
+          setDateMenuOpen(false)
+          setTimeout(() => setDayNote(date, ""), MENU_FADE_MS + 40)
+        }}
+        onOpenCalendar={() => {
+          setDateMenuOpen(false)
+          setTimeout(() => {
+            // Sibling tab — not a stack push. CalendarScreen already
+            // consumes route.params.date and jumps the grid to that day.
+            navigation.navigate("Calendar", { date })
+          }, MENU_FADE_MS + 40)
+        }}
+        onDeleteWorkout={() => {
+          const id = menuCtx.workoutId
+          setDateMenuOpen(false)
+          if (id == null) return
+          setTimeout(() => {
+            Alert.alert(
+              "Delete workout?",
+              "All exercises and sets logged this day will be removed. Notes are kept.",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Delete",
+                  style: "destructive",
+                  onPress: () => deleteWorkout(id),
+                },
+              ]
+            )
+          }, MENU_FADE_MS + 40)
+        }}
+      />
+      </View>
+      <DayNoteEditorSheet
+        visible={noteEditorOpen}
+        draft={noteDraft}
+        original={noteOriginal}
+        onChangeDraft={setNoteDraft}
+        onClose={() => setNoteEditorOpen(false)}
+        onSave={() => setDayNote(date, noteDraft)}
       />
     </StaticSafeAreaView>
   )
@@ -262,6 +361,7 @@ function DayContent({
   selectionMode,
   onToggleSelected,
   onClearSelection,
+  onOpenNotes,
 }: {
   date: string
   navigation: any
@@ -270,6 +370,7 @@ function DayContent({
   selectionMode: boolean
   onToggleSelected: (weId: number) => void
   onClearSelection: () => void
+  onOpenNotes: () => void
 }) {
   const hydrated = useHydrated()
   const snapshot = useStore((s) => s.snapshot)
@@ -335,6 +436,10 @@ function DayContent({
   }
 
   const [gymPickerOpen, setGymPickerOpen] = useState(false)
+  const dayNote = useMemo(
+    () => (hydrated ? getDayNoteQ(date) : ""),
+    [hydrated, date, snapshot]
+  )
 
   return (
     <View style={{ flex: 1 }}>
@@ -364,9 +469,11 @@ function DayContent({
           </View>
         ) : (
           <>
-            {workout && (
+            {(workout || dayNote) && (
               <SummaryStrip
-                workout={workout}
+                workout={workout ?? null}
+                note={dayNote}
+                onOpenNotes={onOpenNotes}
                 onOpenPicker={() => setGymPickerOpen(true)}
               />
             )}
@@ -436,11 +543,11 @@ function DayContent({
 function DateNav({
   date,
   onShift,
-  onToday,
+  onPressDate,
 }: {
   date: string
   onShift: (delta: number) => void
-  onToday: () => void
+  onPressDate: () => void
 }) {
   return (
     <View style={styles.dateNav}>
@@ -454,8 +561,12 @@ function DateNav({
       >
         <Ionicons name="chevron-back" size={20} color={theme.colors.foreground} />
       </Pressable>
-      <Pressable onPress={onToday} style={({ pressed }) => [styles.dateLabel, pressedStyle(pressed)]}>
+      <Pressable
+        onPress={onPressDate}
+        style={({ pressed }) => [styles.dateLabel, pressedStyle(pressed)]}
+      >
         <Text style={styles.dateText}>{labelForDate(date)}</Text>
+        <Ionicons name="chevron-down" size={14} color={theme.colors.muted} />
       </Pressable>
       <Pressable
         onPress={() => onShift(1)}
@@ -468,6 +579,165 @@ function DateNav({
         <Ionicons name="chevron-forward" size={20} color={theme.colors.foreground} />
       </Pressable>
     </View>
+  )
+}
+
+function noteActionLabel(date: string, hasNote: boolean): string {
+  const t = todayString()
+  if (date === t) return hasNote ? "Edit today's note" : "Add a note for today"
+  const named = labelForDate(date)
+  if (named === "Yesterday") {
+    return hasNote ? "Edit yesterday's note" : "Add a note for yesterday"
+  }
+  if (named === "Tomorrow") {
+    return hasNote ? "Edit tomorrow's note" : "Add a note for tomorrow"
+  }
+  return hasNote ? "Edit this day's note" : "Add a note for this day"
+}
+
+function DateMenu({
+  date,
+  visible,
+  ctx,
+  onClose,
+  onAddNote,
+  onClearNote,
+  onOpenCalendar,
+  onDeleteWorkout,
+}: {
+  date: string
+  visible: boolean
+  ctx: {
+    note: string
+    hasExercises: boolean
+    workoutId: number | null
+  }
+  onClose: () => void
+  onAddNote: () => void
+  onClearNote: () => void
+  onOpenCalendar: () => void
+  onDeleteWorkout: () => void
+}) {
+  const opacity = useRef(new Animated.Value(0)).current
+  const [mounted, setMounted] = useState(visible)
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true)
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: MENU_FADE_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start()
+      return
+    }
+    Animated.timing(opacity, {
+      toValue: 0,
+      duration: MENU_FADE_MS,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setMounted(false)
+    })
+  }, [visible, opacity])
+
+  if (!mounted) return null
+
+  const hasNote = !!ctx.note.trim()
+
+  return (
+    <Animated.View
+      pointerEvents={visible ? "auto" : "none"}
+      style={[styles.dateMenuOverlay, { opacity }]}
+    >
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      <View
+        style={styles.dateMenuCardWrap}
+        onStartShouldSetResponder={() => true}
+      >
+        <View style={styles.dateMenuCard}>
+        <DateMenuRow
+          icon="create-outline"
+          label={noteActionLabel(date, hasNote)}
+          hint={hasNote ? "Only this date" : "How this day went"}
+          onPress={onAddNote}
+        />
+        {hasNote && (
+          <DateMenuRow
+            icon="close-circle-outline"
+            label="Remove this day's note"
+            onPress={onClearNote}
+          />
+        )}
+        <DateMenuRow
+          icon="calendar-outline"
+          label="Open calendar"
+          onPress={onOpenCalendar}
+          last={!ctx.hasExercises}
+        />
+        {ctx.hasExercises && (
+          <DateMenuRow
+            icon="trash-outline"
+            label="Delete this day's workout"
+            destructive
+            last
+            onPress={onDeleteWorkout}
+          />
+        )}
+        </View>
+      </View>
+    </Animated.View>
+  )
+}
+
+function DateMenuRow({
+  icon,
+  label,
+  hint,
+  onPress,
+  destructive,
+  last,
+}: {
+  icon: ComponentProps<typeof Ionicons>["name"]
+  label: string
+  hint?: string
+  onPress: () => void
+  destructive?: boolean
+  last?: boolean
+}) {
+  const color = destructive ? theme.colors.destructive : theme.colors.foreground
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.dateMenuRow,
+        !last && styles.dateMenuRowBorder,
+        pressed && styles.dateMenuRowPressed,
+      ]}
+    >
+      <View
+        style={[
+          styles.dateMenuIcon,
+          destructive && styles.dateMenuIconDestructive,
+        ]}
+      >
+        <Ionicons name={icon} size={16} color={color} />
+      </View>
+      <View style={styles.dateMenuRowBody}>
+        <Text
+          style={[styles.dateMenuRowText, destructive && { color }]}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+        {hint ? (
+          <Text style={styles.dateMenuRowHint} numberOfLines={1}>
+            {hint}
+          </Text>
+        ) : null}
+      </View>
+    </Pressable>
   )
 }
 
@@ -572,9 +842,13 @@ function labelForDate(d: string): string {
 
 function SummaryStrip({
   workout,
+  note,
+  onOpenNotes,
   onOpenPicker,
 }: {
-  workout: Workout
+  workout: Workout | null
+  note: string
+  onOpenNotes: () => void
   onOpenPicker: () => void
 }) {
   // Show start/end/duration whenever the workout has a real `started_at` -
@@ -582,11 +856,14 @@ function SummaryStrip({
   // workouts that were logged retroactively (createWorkout for a past date)
   // start with started_at=null, so they stay clean. This way, today's
   // recorded times persist into future views forever.
-  const hasTime = !!workout.started_at
-  const lastTime = hasTime ? lastSetTimeOf(workout) : null
-  const started = hasTime ? formatTime(workout.started_at!) : null
+  const hasTime = !!workout?.started_at
+  const lastTime = hasTime && workout ? lastSetTimeOf(workout) : null
+  const started = hasTime && workout?.started_at ? formatTime(workout.started_at) : null
   const finished = lastTime ? formatTime(lastTime) : null
-  const duration = hasTime ? formatDuration(workoutDurationSeconds(workout)) : null
+  const duration =
+    hasTime && workout
+      ? formatDuration(workoutDurationSeconds(workout))
+      : null
 
   return (
     <View style={styles.summaryCard}>
@@ -595,23 +872,45 @@ function SummaryStrip({
           {started && <SummaryMeta label="Started" value={started} />}
           {finished && <SummaryMeta label="End" value={finished} />}
           {duration && <SummaryMeta label="Duration" value={duration} />}
+          {!!note && (
+            <Pressable
+              onPress={onOpenNotes}
+              unstable_pressDelay={0}
+              style={({ pressed }) => [
+                styles.summaryNoteHit,
+                pressedStyle(pressed),
+              ]}
+              hitSlop={8}
+            >
+              <Text style={styles.summaryMetaLabel}>Notes</Text>
+              <Text
+                style={styles.summaryNoteText}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {note.replace(/\s+/g, " ").trim()}
+              </Text>
+            </Pressable>
+          )}
         </View>
-        <Pressable
-          onPress={onOpenPicker}
-          style={({ pressed }) => [styles.summaryGymRow, pressedStyle(pressed)]}
-          hitSlop={8}
-        >
-          <Text style={styles.summaryGymLabel}>📍</Text>
-          <Text
-            style={[
-              styles.summaryGym,
-              !workout.gym && { color: theme.colors.muted, fontStyle: "italic" },
-            ]}
-            numberOfLines={1}
+        {workout && (
+          <Pressable
+            onPress={onOpenPicker}
+            style={({ pressed }) => [styles.summaryGymRow, pressedStyle(pressed)]}
+            hitSlop={8}
           >
-            {workout.gym || "Add gym"}
-          </Text>
-        </Pressable>
+            <Text style={styles.summaryGymLabel}>📍</Text>
+            <Text
+              style={[
+                styles.summaryGym,
+                !workout.gym && { color: theme.colors.muted, fontStyle: "italic" },
+              ]}
+              numberOfLines={1}
+            >
+              {workout.gym || "Add gym"}
+            </Text>
+          </Pressable>
+        )}
       </View>
     </View>
   )
@@ -815,6 +1114,97 @@ function GymPickerModal({
   )
 }
 
+const NOTE_FADE_MS = 180
+function DayNoteEditorSheet({
+  visible,
+  original,
+  draft,
+  onChangeDraft,
+  onClose,
+  onSave,
+}: {
+  visible: boolean
+  original: string
+  draft: string
+  onChangeDraft: (s: string) => void
+  onClose: () => void
+  onSave: () => void
+}) {
+  const dirty = draft.trim() !== (original ?? "").trim()
+  const inputRef = useRef<TextInput | null>(null)
+  const opacity = useRef(new Animated.Value(0)).current
+  const [mounted, setMounted] = useState(visible)
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true)
+      const f = requestAnimationFrame(() => inputRef.current?.focus())
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: NOTE_FADE_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start()
+      return () => cancelAnimationFrame(f)
+    }
+    Animated.timing(opacity, {
+      toValue: 0,
+      duration: NOTE_FADE_MS,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setMounted(false)
+    })
+  }, [visible, opacity])
+
+  function handleSave() {
+    if (!dirty) return
+    const save = onSave
+    onClose()
+    setTimeout(save, NOTE_FADE_MS + 40)
+  }
+
+  if (!mounted) return null
+
+  return (
+    <Animated.View
+      pointerEvents={visible ? "auto" : "none"}
+      style={[styles.noteOverlay, { opacity }]}
+    >
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      <View
+        style={styles.noteOverlayCard}
+        onStartShouldSetResponder={() => true}
+      >
+        <Text style={styles.noteOverlayTitle}>Day notes</Text>
+        <TextInput
+          ref={inputRef}
+          value={draft}
+          onChangeText={onChangeDraft}
+          placeholder="How did today go?"
+          placeholderTextColor={theme.colors.muted}
+          multiline
+          style={styles.noteSheetInput}
+        />
+        <View style={styles.noteSheetActions}>
+          <Button
+            label="Cancel"
+            variant="secondary"
+            onPress={onClose}
+            style={{ flex: 1 }}
+          />
+          <Button
+            label="Save"
+            onPress={handleSave}
+            disabled={!dirty}
+            style={{ flex: 1 }}
+          />
+        </View>
+      </View>
+    </Animated.View>
+  )
+}
+
 function SummaryMeta({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.summaryMetaItem}>
@@ -938,6 +1328,10 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.background,
     borderBottomColor: theme.colors.border,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    zIndex: 2,
+  },
+  body: {
+    flex: 1,
   },
   pager: {
     flex: 1,
@@ -963,11 +1357,81 @@ const styles = StyleSheet.create({
   },
   dateLabel: {
     flex: 1,
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
     borderRadius: theme.radius.md,
     paddingVertical: 8,
   },
   dateText: { color: theme.colors.foreground, fontSize: theme.fontSize.md, fontWeight: "700" },
+  dateMenuOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    paddingTop: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    justifyContent: "flex-start",
+    zIndex: 50,
+    elevation: 50,
+  },
+  dateMenuCardWrap: {
+    width: "100%",
+    borderRadius: theme.radius.lg,
+    shadowColor: "#000",
+    shadowOpacity: 0.45,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 16,
+  },
+  dateMenuCard: {
+    width: "100%",
+    backgroundColor: theme.colors.inputBg,
+    borderRadius: theme.radius.lg,
+    borderColor: theme.colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingVertical: 4,
+    overflow: "hidden",
+  },
+  dateMenuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: 12,
+  },
+  dateMenuRowBorder: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.border,
+  },
+  dateMenuRowPressed: {
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  dateMenuIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dateMenuIconDestructive: {
+    backgroundColor: "rgba(239,68,68,0.12)",
+  },
+  dateMenuRowBody: {
+    flex: 1,
+    gap: 1,
+    minWidth: 0,
+  },
+  dateMenuRowText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "600",
+  },
+  dateMenuRowHint: {
+    color: theme.colors.muted,
+    fontSize: 11,
+    fontWeight: "500",
+  },
   todayPillWrap: {
     position: "absolute",
     left: 0,
@@ -1047,6 +1511,57 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
   },
   summaryMetaValue: { color: theme.colors.foreground, fontSize: theme.fontSize.xs, fontWeight: "600" },
+  summaryNoteHit: {
+    gap: 4,
+    borderRadius: theme.radius.md,
+    paddingVertical: 2,
+    flexShrink: 1,
+  },
+  summaryNoteText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.xs,
+    fontWeight: "600",
+    lineHeight: 16,
+    flexShrink: 1,
+  },
+  noteOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    paddingTop: 80,
+    paddingHorizontal: theme.spacing[4],
+    zIndex: 50,
+    elevation: 50,
+  },
+  noteOverlayCard: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.radius.lg,
+    borderColor: theme.colors.border,
+    borderWidth: 1,
+    padding: theme.spacing[4],
+    gap: theme.spacing[3],
+  },
+  noteOverlayTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.md,
+    fontWeight: "800",
+  },
+  noteSheetInput: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderColor: theme.colors.border,
+    borderWidth: 1,
+    borderRadius: theme.radius.md,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[3],
+    height: 96,
+    maxHeight: 160,
+    textAlignVertical: "top",
+  },
+  noteSheetActions: {
+    flexDirection: "row",
+    gap: theme.spacing[3],
+  },
   banner: {
     flexDirection: "row",
     alignItems: "center",

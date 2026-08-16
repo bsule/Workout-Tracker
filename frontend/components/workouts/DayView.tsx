@@ -12,6 +12,8 @@ import {
   useHydrated,
   useStore,
   getWorkoutByDateQ,
+  getDayNoteQ,
+  setDayNote,
   listGymsQ,
   workoutDurationSeconds,
 } from "@/lib/store"
@@ -75,6 +77,10 @@ export function DayView({ date }: Props) {
     () => (hydrated ? listGymsQ()[0]?.name ?? null : null),
     [hydrated, snapshot]
   )
+  const dayNote = useMemo(
+    () => (hydrated ? getDayNoteQ(date) : ""),
+    [hydrated, date, snapshot]
+  )
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -126,7 +132,7 @@ export function DayView({ date }: Props) {
 
       {workout === null && (
         <>
-          <DateStrip date={date} />
+          <DateStrip date={date} note={dayNote} />
           <Link
             href={`/exercises?forDate=${date}`}
             className="flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed border-primary/40 bg-primary/[.06] px-6 py-12 text-center transition-colors hover:border-primary/60 hover:bg-primary/10"
@@ -146,7 +152,7 @@ export function DayView({ date }: Props) {
 
       {workout && (
         <>
-          <SummaryStrip workout={workout} lastGym={lastGym} />
+          <SummaryStrip workout={workout} lastGym={lastGym} note={dayNote} />
 
           {workout.status === "planned" && (
             <PlannedBanner
@@ -191,9 +197,11 @@ export function DayView({ date }: Props) {
 function SummaryStrip({
   workout,
   lastGym,
+  note,
 }: {
   workout: Workout
   lastGym: string | null
+  note: string
 }) {
   // Show start/end/duration whenever the workout has a real `started_at` -
   // that's only set when the workout was originally created on its own day.
@@ -206,7 +214,7 @@ function SummaryStrip({
     <div className="rounded-lg border border-border bg-foreground/[.04] p-4">
       <div className="flex items-start justify-between gap-2">
         {workout.exercises.length > 0 ? (
-          <div className="flex flex-col gap-y-0.5 text-xs text-muted-foreground">
+          <div className="flex min-w-0 flex-col gap-y-0.5 text-xs text-muted-foreground">
             {workout.started_at && (
               <span>
                 <span className="text-foreground/70">Started </span>
@@ -231,9 +239,10 @@ function SummaryStrip({
                 {dur}
               </span>
             )}
+            <DayNotes key={workout.date} date={workout.date} note={note} />
           </div>
         ) : (
-          <div />
+          <DayNotes key={workout.date} date={workout.date} note={note} />
         )}
         <GymEditor
           workoutId={workout.id}
@@ -433,7 +442,7 @@ function pad(n: number) {
   return String(n).padStart(2, "0")
 }
 
-function DateStrip({ date }: { date: string }) {
+function DateStrip({ date, note }: { date: string; note: string }) {
   const dt = parseLocalDate(date)
   const niceDate = dt.toLocaleDateString("en-US", {
     weekday: "long",
@@ -444,6 +453,91 @@ function DateStrip({ date }: { date: string }) {
   return (
     <div className="rounded-lg border border-border bg-foreground/[.04] p-4">
       <div className="text-sm text-muted-foreground">{niceDate}</div>
+      <div className="mt-2">
+        <DayNotes key={date} date={date} note={note} />
+      </div>
+    </div>
+  )
+}
+
+function DayNotes({ date, note }: { date: string; note: string }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(note)
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setDraft(note)
+          setEditing(true)
+        }}
+        className="block w-full min-w-0 rounded-md px-1 py-0.5 text-left hover:bg-white/5"
+        aria-label={note ? "Edit day notes" : "Add day notes"}
+      >
+        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+          Notes
+        </span>
+        <span
+          className={
+            note
+              ? "mt-0.5 block truncate text-xs text-foreground/80"
+              : "mt-0.5 block truncate text-xs italic text-muted-foreground"
+          }
+        >
+          {note ? note.replace(/\s+/g, " ").trim() : "Add notes"}
+        </span>
+      </button>
+    )
+  }
+
+  function save() {
+    setDayNote(date, draft)
+    setEditing(false)
+  }
+
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+        Notes
+      </span>
+      <textarea
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault()
+            setDraft(note)
+            setEditing(false)
+          } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault()
+            save()
+          }
+        }}
+        placeholder="How did today go?"
+        rows={3}
+        className="w-full resize-y rounded-md border border-white/10 bg-white/[.03] px-2 py-1.5 text-xs text-foreground focus:border-primary/50 focus:outline-none"
+      />
+      <div className="flex gap-1.5">
+        <button
+          type="button"
+          onClick={save}
+          className="rounded-md bg-emerald-500/15 px-2 py-1 text-[11px] font-semibold text-emerald-400 hover:bg-emerald-500/25"
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(note)
+            setEditing(false)
+          }}
+          className="rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-white/5"
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   )
 }
