@@ -45,6 +45,7 @@ function migrate(snap: Snapshot): ParseResult {
     )
   }
   let s = snap
+  let migrated = v < SCHEMA_VERSION
   if (v < 2) {
     // v1 → v2: add kind to exercises (default by category), add nullable
     // distance/time fields to sets. Existing fields take precedence in the
@@ -74,8 +75,36 @@ function migrate(snap: Snapshot): ParseResult {
       })),
     }
   }
+  if (v < 5) {
+    // v4 → v5: lift per-workout notes onto the date. Empty / whitespace-only
+    // notes are dropped so we don't keep blank rows. If a snapshot already
+    // has day_notes (hand-built / partial), keep those and only fill gaps.
+    const existing = new Map(
+      (s.day_notes ?? []).map((n) => [n.date, n.text] as const)
+    )
+    for (const w of s.workouts) {
+      const text = (w.notes ?? "").trim()
+      if (!text || existing.has(w.date)) continue
+      existing.set(w.date, text)
+    }
+    s = {
+      ...s,
+      day_notes: [...existing].map(([date, text]) => ({ date, text })),
+    }
+  }
+  // workout.notes is no longer canonical. Blank leftovers so a deleted day
+  // note cannot resurrect on export, and empty-workout cleanup (`!w.notes`)
+  // still treats picker-created days as disposable. Do not copy leftovers
+  // on already-v5 snapshots — the user may have cleared the day note.
+  if (s.workouts.some((w) => w.notes)) {
+    s = {
+      ...s,
+      workouts: s.workouts.map((w) => (w.notes ? { ...w, notes: "" } : w)),
+    }
+    migrated = true
+  }
   return {
     snapshot: { ...s, schema_version: SCHEMA_VERSION },
-    migrated: v < SCHEMA_VERSION,
+    migrated,
   }
 }

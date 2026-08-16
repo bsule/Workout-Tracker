@@ -1,4 +1,5 @@
 import type {
+  DayNoteRow,
   ExerciseRow,
   SetRow,
   Snapshot,
@@ -17,6 +18,7 @@ export interface Indexes {
   workoutExercisesByExercise: Map<number, WorkoutExerciseRow[]>
   weById: Map<number, WorkoutExerciseRow>
   setsByWorkoutExercise: Map<number, SetRow[]>
+  dayNoteByDate: Map<string, DayNoteRow>
 }
 
 export function buildIndexes(snap: Snapshot): Indexes {
@@ -53,6 +55,9 @@ export function buildIndexes(snap: Snapshot): Indexes {
     list.sort((a, b) => a.order - b.order)
   }
 
+  const dayNoteByDate = new Map<string, DayNoteRow>()
+  for (const n of snap.day_notes ?? []) dayNoteByDate.set(n.date, n)
+
   return {
     exerciseById,
     workoutById,
@@ -62,6 +67,7 @@ export function buildIndexes(snap: Snapshot): Indexes {
     workoutExercisesByExercise,
     weById,
     setsByWorkoutExercise,
+    dayNoteByDate,
   }
 }
 

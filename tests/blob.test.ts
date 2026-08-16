@@ -124,6 +124,77 @@ describe("blob: migrations", () => {
     expect(snapshot.sets[0].was_position_pr).toBe(false)
   })
 
+  it("migrates a v4 snapshot by copying workout notes into day_notes", async () => {
+    const v4 = {
+      schema_version: 4,
+      exported_at: "2026-08-01T00:00:00.000Z",
+      device_id: "old",
+      settings: { weight_unit: "lb", first_day_of_week: 0 },
+      exercises: [],
+      workouts: [
+        {
+          id: 1,
+          date: "2026-08-01",
+          status: "done",
+          started_at: null,
+          finished_at: null,
+          gym: "",
+          notes: "felt strong",
+          created_at: "2026-08-01T08:00:00.000Z",
+        },
+        {
+          id: 2,
+          date: "2026-08-02",
+          status: "done",
+          started_at: null,
+          finished_at: null,
+          gym: "",
+          notes: "   ",
+          created_at: "2026-08-02T08:00:00.000Z",
+        },
+      ],
+      workout_exercises: [],
+      sets: [],
+      gyms: [],
+    }
+
+    const { snapshot, migrated } = await parse(gzipJson(v4))
+
+    expect(migrated).toBe(true)
+    expect(snapshot.schema_version).toBe(SCHEMA_VERSION)
+    expect(snapshot.day_notes).toEqual([
+      { date: "2026-08-01", text: "felt strong" },
+    ])
+    expect(snapshot.workouts[0].notes).toBe("")
+    expect(snapshot.workouts[1].notes).toBe("")
+  })
+
+  it("blanks leftover workout.notes on a v5 snapshot without resurrecting a cleared day note", async () => {
+    const v5 = {
+      ...emptySnapshot("dev"),
+      schema_version: 5,
+      workouts: [
+        {
+          id: 1,
+          date: "2026-08-01",
+          status: "done" as const,
+          started_at: null,
+          finished_at: null,
+          gym: "",
+          notes: "old leftover",
+          created_at: "2026-08-01T08:00:00.000Z",
+        },
+      ],
+      day_notes: [],
+    }
+
+    const { snapshot, migrated } = await parse(gzipJson(v5))
+
+    expect(migrated).toBe(true)
+    expect(snapshot.day_notes).toEqual([])
+    expect(snapshot.workouts[0].notes).toBe("")
+  })
+
   it("does not mark a current-version snapshot as migrated", async () => {
     const cur = emptySnapshot("dev")
     const { migrated } = await parse(gzipJson(cur))

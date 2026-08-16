@@ -1,10 +1,11 @@
 import type { Category, ExerciseKind, UserSettings, WorkoutStatus } from "../types"
 
+// v5: add day_notes (per-date notes, independent of workouts).
 // v4: add is_position_pr / was_position_pr to SetRow.
 // v3: add soft-delete support to ExerciseRow.
 // v2: add kind to ExerciseRow, distance/time fields to SetRow.
 // Older snapshots are migrated in blob.ts:migrate().
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 export interface ExerciseRow {
   id: number
@@ -59,6 +60,12 @@ export interface GymRow {
   name: string
 }
 
+/** A free-text note attached to a calendar date, not to a workout. */
+export interface DayNoteRow {
+  date: string
+  text: string
+}
+
 export interface Snapshot {
   schema_version: number
   exported_at: string
@@ -69,6 +76,7 @@ export interface Snapshot {
   workout_exercises: WorkoutExerciseRow[]
   sets: SetRow[]
   gyms: GymRow[]
+  day_notes: DayNoteRow[]
 }
 
 export function emptySnapshot(deviceId: string): Snapshot {
@@ -82,5 +90,6 @@ export function emptySnapshot(deviceId: string): Snapshot {
     workout_exercises: [],
     sets: [],
     gyms: [],
+    day_notes: [],
   }
 }
