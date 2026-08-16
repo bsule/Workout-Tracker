@@ -176,7 +176,8 @@ export function DayScreen({ navigation, route }: any) {
   const clearSelection = useCallback(() => setSelectedIds([]), [])
 
   const [dateMenuOpen, setDateMenuOpen] = useState(false)
-  const [noteEditorOpen, setNoteEditorOpen] = useState(false)
+  const [noteSheetOpen, setNoteSheetOpen] = useState(false)
+  const [noteSheetMode, setNoteSheetMode] = useState<"view" | "edit">("view")
   const [noteDraft, setNoteDraft] = useState("")
   const [noteOriginal, setNoteOriginal] = useState("")
   const [menuCtx, setMenuCtx] = useState({
@@ -187,15 +188,18 @@ export function DayScreen({ navigation, route }: any) {
 
   useEffect(() => {
     setDateMenuOpen(false)
-    setNoteEditorOpen(false)
+    setNoteSheetOpen(false)
   }, [date])
 
-  const openNoteEditor = useCallback(() => {
+  const openNoteSheet = useCallback((mode: "view" | "edit") => {
     const n = getDayNoteQ(date)
     setNoteDraft(n)
     setNoteOriginal(n)
-    setNoteEditorOpen(true)
+    setNoteSheetMode(mode)
+    setNoteSheetOpen(true)
   }, [date])
+  const openNoteViewer = useCallback(() => openNoteSheet("view"), [openNoteSheet])
+  const openNoteEditor = useCallback(() => openNoteSheet("edit"), [openNoteSheet])
 
   function openDateMenu() {
     const { indexes } = getState()
@@ -245,7 +249,7 @@ export function DayScreen({ navigation, route }: any) {
             selectionMode={isCurrent ? selectionMode : false}
             onToggleSelected={isCurrent ? toggleSelected : noop}
             onClearSelection={isCurrent ? clearSelection : noop}
-            onOpenNotes={isCurrent ? openNoteEditor : noop}
+            onOpenNotes={isCurrent ? openNoteViewer : noop}
           />
         </View>
       )
@@ -259,7 +263,7 @@ export function DayScreen({ navigation, route }: any) {
       navigation,
       toggleSelected,
       clearSelection,
-      openNoteEditor,
+      openNoteViewer,
     ]
   )
 
@@ -342,11 +346,13 @@ export function DayScreen({ navigation, route }: any) {
       />
       </View>
       <DayNoteEditorSheet
-        visible={noteEditorOpen}
+        visible={noteSheetOpen}
+        mode={noteSheetMode}
         draft={noteDraft}
         original={noteOriginal}
         onChangeDraft={setNoteDraft}
-        onClose={() => setNoteEditorOpen(false)}
+        onEdit={() => setNoteSheetMode("edit")}
+        onClose={() => setNoteSheetOpen(false)}
         onSave={() => setDayNote(date, noteDraft)}
       />
     </StaticSafeAreaView>
@@ -1117,16 +1123,20 @@ function GymPickerModal({
 const NOTE_FADE_MS = 180
 function DayNoteEditorSheet({
   visible,
+  mode,
   original,
   draft,
   onChangeDraft,
+  onEdit,
   onClose,
   onSave,
 }: {
   visible: boolean
+  mode: "view" | "edit"
   original: string
   draft: string
   onChangeDraft: (s: string) => void
+  onEdit: () => void
   onClose: () => void
   onSave: () => void
 }) {
@@ -1138,14 +1148,13 @@ function DayNoteEditorSheet({
   useEffect(() => {
     if (visible) {
       setMounted(true)
-      const f = requestAnimationFrame(() => inputRef.current?.focus())
       Animated.timing(opacity, {
         toValue: 1,
         duration: NOTE_FADE_MS,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }).start()
-      return () => cancelAnimationFrame(f)
+      return
     }
     Animated.timing(opacity, {
       toValue: 0,
@@ -1157,14 +1166,24 @@ function DayNoteEditorSheet({
     })
   }, [visible, opacity])
 
+  useEffect(() => {
+    if (!visible || mode !== "edit") return
+    const f = requestAnimationFrame(() => inputRef.current?.focus())
+    return () => cancelAnimationFrame(f)
+  }, [visible, mode])
+
   function handleSave() {
     if (!dirty) return
     const save = onSave
+    Keyboard.dismiss()
     onClose()
     setTimeout(save, NOTE_FADE_MS + 40)
   }
 
   if (!mounted) return null
+
+  const viewing = mode === "view"
+  const noteText = (original || draft).trim()
 
   return (
     <Animated.View
@@ -1177,28 +1196,55 @@ function DayNoteEditorSheet({
         onStartShouldSetResponder={() => true}
       >
         <Text style={styles.noteOverlayTitle}>Day notes</Text>
-        <TextInput
-          ref={inputRef}
-          value={draft}
-          onChangeText={onChangeDraft}
-          placeholder="How did today go?"
-          placeholderTextColor={theme.colors.muted}
-          multiline
-          style={styles.noteSheetInput}
-        />
+        {viewing ? (
+          <ScrollView
+            style={styles.noteViewScroll}
+            keyboardShouldPersistTaps="handled"
+          >
+            <Text style={styles.noteViewText}>{noteText}</Text>
+          </ScrollView>
+        ) : (
+          <TextInput
+            ref={inputRef}
+            value={draft}
+            onChangeText={onChangeDraft}
+            placeholder="How did today go?"
+            placeholderTextColor={theme.colors.muted}
+            multiline
+            style={styles.noteSheetInput}
+          />
+        )}
         <View style={styles.noteSheetActions}>
-          <Button
-            label="Cancel"
-            variant="secondary"
-            onPress={onClose}
-            style={{ flex: 1 }}
-          />
-          <Button
-            label="Save"
-            onPress={handleSave}
-            disabled={!dirty}
-            style={{ flex: 1 }}
-          />
+          {viewing ? (
+            <>
+              <Button
+                label="Close"
+                variant="secondary"
+                onPress={onClose}
+                style={{ flex: 1 }}
+              />
+              <Button
+                label="Edit"
+                onPress={onEdit}
+                style={{ flex: 1 }}
+              />
+            </>
+          ) : (
+            <>
+              <Button
+                label="Cancel"
+                variant="secondary"
+                onPress={onClose}
+                style={{ flex: 1 }}
+              />
+              <Button
+                label="Save"
+                onPress={handleSave}
+                disabled={!dirty}
+                style={{ flex: 1 }}
+              />
+            </>
+          )}
         </View>
       </View>
     </Animated.View>
@@ -1544,6 +1590,14 @@ const styles = StyleSheet.create({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.md,
     fontWeight: "800",
+  },
+  noteViewScroll: {
+    maxHeight: 220,
+  },
+  noteViewText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 22,
   },
   noteSheetInput: {
     color: theme.colors.foreground,

@@ -10,6 +10,7 @@ import {
 import { Ionicons } from "@expo/vector-icons"
 import {
   getCalendarQ,
+  getDayNoteQ,
   getPlannedDatesQ,
   getWorkoutByDateQ,
   useStore,
@@ -129,6 +130,10 @@ export function CalendarScreen({ navigation, route }: any) {
         : null,
     [snapshot, selectedDate, detailReady]
   )
+  const selectedNote = useMemo(
+    () => getDayNoteQ(selectedDate).replace(/\s+/g, " ").trim(),
+    [snapshot, selectedDate]
+  )
 
   const todayKey = todayString()
 
@@ -222,6 +227,15 @@ export function CalendarScreen({ navigation, route }: any) {
               {selectedGym && (
                 <Text style={styles.detailGym} numberOfLines={1}>
                   📍 {selectedGym}
+                </Text>
+              )}
+              {!!selectedNote && (
+                <Text
+                  style={styles.detailNote}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {selectedNote}
                 </Text>
               )}
             </View>
@@ -485,6 +499,11 @@ const styles = StyleSheet.create({
   detailGym: {
     color: theme.colors.muted,
     fontSize: theme.fontSize.sm,
+  },
+  detailNote: {
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.sm,
+    fontStyle: "italic",
   },
   detailActions: {
     flexDirection: "row",
