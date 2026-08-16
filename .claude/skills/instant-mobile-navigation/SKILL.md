@@ -27,6 +27,8 @@ navigation.navigate("CalendarDate", { date })
 
 `CalendarDate` is a stack-registered instance of `CalendarScreen` existing for exactly this reason. Use the stack push for any "open at a target" navigation from a screen that sits above `MainTabs` (ExerciseDetail, SetLogger).
 
+**Exception — DayScreen's "Open calendar":** DayScreen is already a Main tab. Its date-header menu switches to the Calendar *tab* (`navigation.navigate("Calendar", { date })`), not a stacked `CalendarDate` page — the user wants the tab, not another stack screen. `CalendarScreen` always applies an incoming `date` param even if it matches the current string (the tab stays mounted; the user may have paged months), then clears the param so a later re-focus does not replay it.
+
 ### 2. Defer the destination's heavy work past the animation
 Render cheap chrome synchronously; fill heavy content after the transition with `InteractionManager.runAfterInteractions` (it waits until the navigation animation finishes). Gate **both the heavy render and the heavy query** on a `ready` flag — deferring the JSX but still running the materializing query on first render doesn't help.
 

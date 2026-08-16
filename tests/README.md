@@ -19,16 +19,16 @@ same surface the clients use.
 |------|--------|
 | `units.test.ts` | kg/lb conversion, display formatting |
 | `seed.test.ts` | bundled exercise seed (id space, `isSeedId`) |
-| `blob.test.ts` | gzip serialize/parse + schema migrations v1→v4 |
+| `blob.test.ts` | gzip serialize/parse + schema migrations v1→v5 (incl. day notes) |
 | `indexes.test.ts` | snapshot → query indexes |
 | `materialize.test.ts` | view-model mapping, Brzycki 1RM, durations |
-| `queries.test.ts` | fuzzy match, exercise/workout/calendar queries |
-| `mutations.test.ts` | every store mutation + cascade behavior |
+| `queries.test.ts` | fuzzy match, exercise/workout/calendar/day-note queries |
+| `mutations.test.ts` | every store mutation + cascade behavior (incl. `setDayNote`) |
 | `prs.test.ts` | PR / historical-PR / position-PR computation |
 | `fitnotesCsv.test.ts` | FitNotes CSV import (incl. the real fixture in `test_dbs/`) |
-| `export.test.ts` | CSV/JSON exporters |
-| `snapshotJson.test.ts` | JSON export ↔ import round-trip |
-| `persist.test.ts` | crash-log replay, `runBatched`, flush |
+| `export.test.ts` | CSV/JSON exporters (JSON includes `day_notes`) |
+| `snapshotJson.test.ts` | JSON export ↔ import round-trip (incl. note-only days) |
+| `persist.test.ts` | crash-log replay (incl. `set_day_note`), `runBatched`, flush |
 | `sync.test.ts` | `CloudflareTransport` wire protocol (mocked `fetch`) |
 
 ## Helpers (`helpers/`)
@@ -42,4 +42,5 @@ same surface the clients use.
 
 The React / React Native UI and the Cloudflare Worker have no automated tests —
 verify those by running the app or curling the worker. Fixtures (real FitNotes
-exports) live in `../test_dbs/`, not here.
+exports) live in `../test_dbs/`, not here. That directory is gitignored; the
+CSV the suite already tracks stays in git.

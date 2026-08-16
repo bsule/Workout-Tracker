@@ -11,7 +11,7 @@ In this app's `mobile/` (React Native + Expo) client, **do not use `react-native
 
 **A plain `Animated.View` overlay driven by one JS opacity value, a `mounted` state that unmounts only *after* the fade-out finishes, a sibling (not nested) `Pressable` backdrop, and store mutations deferred until after the fade.**
 
-Reference implementations already in the repo: `GymPickerModal` (`src/screens/DayScreen.tsx`), `NoteEditorSheet` (`src/screens/SetLoggerScreen.tsx`), `SetPickerOverlay` (`src/screens/SetLoggerScreen.tsx`).
+Reference implementations already in the repo: `GymPickerModal` and `DateMenu` (`src/screens/DayScreen.tsx`), `NoteEditorSheet` (`src/screens/SetLoggerScreen.tsx`), `SetPickerOverlay` (`src/screens/SetLoggerScreen.tsx`).
 
 ## The five rules
 
