@@ -38,5 +38,5 @@ frontend/build/
 .env.local
 .env.*.local
 
-# Local FitNotes sample DBs (the tracked CSV fixture stays if already committed)
+# Local FitNotes sample DBs / exports (not tracked; synthetic CSV lives in tests/fixtures/)
 test_dbs/
