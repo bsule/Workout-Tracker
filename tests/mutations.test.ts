@@ -263,3 +263,21 @@ describe("copyFromWorkout", () => {
     expect(dstSets.every((s) => s.is_pr === false)).toBe(true)
   })
 })
+
+describe("day notes", () => {
+  it("upserts per date without a workout, and empty text deletes the row", () => {
+    M.setDayNote("2026-08-16", "  felt tired  ")
+    expect(currentSnapshot().day_notes).toEqual([
+      { date: "2026-08-16", text: "felt tired" },
+    ])
+    expect(currentSnapshot().workouts).toHaveLength(0)
+
+    M.setDayNote("2026-08-16", "second")
+    expect(currentSnapshot().day_notes).toEqual([
+      { date: "2026-08-16", text: "second" },
+    ])
+
+    M.setDayNote("2026-08-16", "   ")
+    expect(currentSnapshot().day_notes).toEqual([])
+  })
+})

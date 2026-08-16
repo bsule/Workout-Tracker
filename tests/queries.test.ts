@@ -7,6 +7,7 @@ import {
   getCalendarQ,
   getWorkoutByDateQ,
   getPlannedDatesQ,
+  getDayNoteQ,
 } from "@lift/core/store/queries"
 import { SEED_EXERCISES } from "@lift/core/store/seed"
 import { loadSnapshot, resetStore } from "./helpers/store"
@@ -125,5 +126,21 @@ describe("workout queries", () => {
     expect(cal["2026-01-05"]).toEqual(["chest"])
     // planned workout with no exercises still gets an (empty) marker
     expect(cal["2026-01-20"]).toEqual([])
+  })
+})
+
+describe("day notes", () => {
+  beforeEach(() => resetStore())
+
+  it("looks a note up by date and leaves note-only days off the calendar", () => {
+    const snap = blankSnapshot()
+    snap.day_notes = [
+      { date: "2026-08-16", text: "felt tired" },
+      { date: "2026-01-03", text: "rest day" },
+    ]
+    loadSnapshot(snap)
+    expect(getDayNoteQ("2026-08-16")).toBe("felt tired")
+    expect(getDayNoteQ("2026-08-17")).toBe("")
+    expect(getCalendarQ(2026, 1)["2026-01-03"]).toBeUndefined()
   })
 })

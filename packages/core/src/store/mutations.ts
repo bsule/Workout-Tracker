@@ -461,6 +461,20 @@ export function renameGym(id: number, name: string): GymRow | null {
   return result
 }
 
+// ---- day notes ----------------------------------------------------
+
+/** Upsert a per-date note. Empty / whitespace text deletes the row. */
+export function setDayNote(date: string, text: string): void {
+  const trimmed = text.trim()
+  applyMutation((snap) => {
+    const notes = snap.day_notes ?? []
+    const without = notes.filter((n) => n.date !== date)
+    if (!trimmed) return { ...snap, day_notes: without }
+    return { ...snap, day_notes: [...without, { date, text: trimmed }] }
+  })
+  recordPending({ op: "set_day_note", date, text: trimmed })
+}
+
 // ---- copy from previous ------------------------------------------
 
 export function copyFromWorkout(
