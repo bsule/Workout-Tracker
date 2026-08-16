@@ -241,7 +241,7 @@ function populate(db: SqlJsDatabase, snap: Snapshot): void {
         appleTs(w.started_at),
         null,
         appleTs(w.finished_at),
-        w.notes || null,
+        snap.day_notes?.find((n) => n.date === w.date)?.text || w.notes || null,
         null,
       ]
     )

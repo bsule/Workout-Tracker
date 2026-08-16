@@ -79,6 +79,38 @@ describe("importSnapshotJson round-trip", () => {
     expect(snap.sets.some((s) => s.is_pr)).toBe(true)
   })
 
+  it("round-trips day notes, including a note-only day", async () => {
+    const snap = populated()
+    snap.day_notes = [
+      { date: "2026-01-05", text: "felt strong" },
+      { date: "2026-01-06", text: "rest day" },
+    ]
+    const json = buildJson(snap)
+    resetStore()
+    await importSnapshotJson(json, { mode: "replace" })
+    expect(currentSnapshot().day_notes).toEqual([
+      { date: "2026-01-05", text: "felt strong" },
+      { date: "2026-01-06", text: "rest day" },
+    ])
+    expect(currentSnapshot().workouts.some((w) => w.date === "2026-01-06")).toBe(
+      false
+    )
+  })
+
+  it("lifts workout.notes into day_notes when importing an older export", async () => {
+    const payload = JSON.parse(buildJson(populated()))
+    delete payload.day_notes
+    payload.workouts[0].notes = "legacy note"
+    resetStore()
+    await importSnapshotJson(JSON.stringify(payload), { mode: "replace" })
+    expect(currentSnapshot().day_notes).toEqual([
+      { date: "2026-01-05", text: "legacy note" },
+    ])
+    expect(
+      currentSnapshot().workouts.find((w) => w.date === "2026-01-05")?.notes
+    ).toBe("")
+  })
+
   it("merge mode is idempotent: re-importing the same file adds nothing", async () => {
     const json = buildJson(populated())
     resetStore()

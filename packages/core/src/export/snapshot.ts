@@ -58,6 +58,10 @@ function csvCell(v: unknown): string {
   return escapeCsv(String(v).replace(/[\r\n]/g, " "))
 }
 
+function dayNoteFor(snap: Snapshot, date: string): string {
+  return snap.day_notes?.find((n) => n.date === date)?.text ?? ""
+}
+
 export function buildCsv(snap: Snapshot): string {
   const exMap = exerciseLookup(snap)
 
@@ -104,7 +108,7 @@ export function buildCsv(snap: Snapshot): string {
         csvCell(s.was_pr),
         csvCell(s.note),
         escapeCsv(w.gym || ""),
-        csvCell(w.notes),
+        csvCell(dayNoteFor(snap, w.date) || w.notes),
       ].join(",")
     )
   }
@@ -135,7 +139,7 @@ export function buildJson(snap: Snapshot, username = ""): string {
       started_at: w.started_at,
       finished_at: w.finished_at,
       gym: w.gym,
-      notes: w.notes,
+      notes: dayNoteFor(snap, w.date) || w.notes,
       exercises: (wesByWorkout.get(w.id) ?? [])
         .slice()
         .sort((a, b) => a.order - b.order || a.id - b.id)
@@ -175,6 +179,11 @@ export function buildJson(snap: Snapshot, username = ""): string {
 
   const savedGyms = snap.gyms.map((g) => g.name).sort()
 
+  const dayNotes = [...(snap.day_notes ?? [])]
+    .filter((n) => n.text.trim())
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+    .map((n) => ({ date: n.date, text: n.text }))
+
   const payload = {
     version: 1,
     exported_at: new Date().toISOString(),
@@ -182,6 +191,7 @@ export function buildJson(snap: Snapshot, username = ""): string {
     user: { username },
     custom_exercises: customExercises,
     saved_gyms: savedGyms,
+    day_notes: dayNotes,
     workouts,
   }
   return JSON.stringify(payload, null, 2)
