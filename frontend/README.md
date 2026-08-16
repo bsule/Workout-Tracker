@@ -1,6 +1,6 @@
 # lift-client (web)
 
-Next.js 16 + React 19 + Tailwind. Local-first: workouts, exercises, sets, settings, gyms, imports, and exports all live in IndexedDB. Auth and snapshot sync go through the Cloudflare Worker in [cloudflare/](../cloudflare/).
+Next.js 16 + React 19 + Tailwind. Local-first: workouts, exercises, sets, settings, gyms, day notes, imports, and exports all live in IndexedDB. Auth and snapshot sync go through the Cloudflare Worker in [cloudflare/](../cloudflare/).
 
 The shared store, sync transport, and FitNotes import/export logic live in [`@lift/core`](../packages/core).
 
