@@ -70,7 +70,6 @@ export function CalendarScreen({ navigation, route }: any) {
   const [selectedDate, setSelectedDate] = useState<string>(
     () => incomingDate ?? todayString()
   )
-  const [consumedDate, setConsumedDate] = useState<string | undefined>(incomingDate)
 
   // Defer the day-detail render (which materializes the whole day's workout)
   // until the push/transition animation finishes. The calendar grid + header
@@ -86,23 +85,18 @@ export function CalendarScreen({ navigation, route }: any) {
     return () => task.cancel()
   }, [])
 
-  // On the first mount, lazy init already absorbed `incomingDate` —
-  // `incomingDate === consumedDate` here. We still need to set the global
-  // active date and clear the route param so a later re-focus doesn't
-  // re-consume it. On subsequent navigations to an already-mounted instance
-  // (Calendar tab), `incomingDate` differs from `consumedDate` and we catch
-  // local state up before clearing.
+  // Apply every incoming date, even if it's the same string as last time.
+  // The Calendar tab stays mounted; the user may have paged to another month
+  // since the last Open calendar, and skipping that case left the grid there.
+  // Clearing the param afterwards prevents a later re-focus from replaying it.
   useEffect(() => {
     if (!incomingDate) return
-    if (incomingDate !== consumedDate) {
-      setYear(parseYear(incomingDate))
-      setMonth(parseMonth(incomingDate))
-      setSelectedDate(incomingDate)
-      setConsumedDate(incomingDate)
-    }
+    setYear(parseYear(incomingDate))
+    setMonth(parseMonth(incomingDate))
+    setSelectedDate(incomingDate)
     setActiveDate(incomingDate)
     navigation.setParams({ date: undefined })
-  }, [incomingDate, consumedDate])
+  }, [incomingDate])
 
   const { firstDayOfWeek } = useSettings()
   const snapshot = useStore((s) => s.snapshot)
