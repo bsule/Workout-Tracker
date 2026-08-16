@@ -57,13 +57,13 @@ npm test            # vitest run — one-shot, used in CI / before merging
 npm run test:watch  # re-run on change
 ```
 
-What's covered: units conversion, blob serialize/migrate (schema v1→4), indexes, materialize (Brzycki 1RM, durations), queries (fuzzy match, history, calendar), every mutation, the PR / position-PR computation, FitNotes CSV import (incl. the real fixture), JSON export↔import round-trips, crash-log replay in `persist`, and the `CloudflareTransport` wire protocol (mocked `fetch`). Tests live in `tests/`; shared store-reset and in-memory-storage helpers are in `tests/helpers/`.
+What's covered: units conversion, blob serialize/migrate (schema v1→5), indexes, materialize (Brzycki 1RM, durations), queries (fuzzy match, history, calendar, day notes), every mutation, the PR / position-PR computation, FitNotes CSV import (incl. the real fixture), JSON export↔import round-trips, crash-log replay in `persist`, and the `CloudflareTransport` wire protocol (mocked `fetch`). Tests live in `tests/`; shared store-reset and in-memory-storage helpers are in `tests/helpers/`.
 
 The store is a module-level singleton — suites that touch it call `resetStore()` in `beforeEach` (see `tests/helpers/store.ts`), and import paths that flush inject an in-memory `BlobStorage` via `installMemoryStorage()`.
 
 This suite tests the logic layer only. The two clients (React/React Native UI) and the Cloudflare Worker have **no automated tests** — "verifying" a UI or worker change still means running the app and exercising the flow, or curling the worker (see `cloudflare/README.md` for smoke-test curls).
 
-**Import fixtures** (real FitNotes exports: `.fitnotesdb`, `.csv`) live in `test_dbs/` — these are sample databases the tests read from, not a test suite.
+**Import fixtures** (real FitNotes exports: `.fitnotesdb`, `.csv`) live in `test_dbs/` — these are sample databases the tests read from, not a test suite. The directory is gitignored; the CSV the suite already tracks stays in git.
 
 ## Architecture — the core store
 
@@ -71,7 +71,7 @@ Everything important lives in `packages/core/src`. The two clients are thin shel
 
 ### Data flow
 
-`Snapshot` (`store/schema.ts`) is the whole dataset: `settings`, `exercises`, `workouts`, `workout_exercises`, `sets`, `gyms` — flat arrays of rows with numeric ids. It is the single in-memory state, held in `store/store.ts` (a hand-rolled external store consumed via `useStore`/`useSyncExternalStore`).
+`Snapshot` (`store/schema.ts`) is the whole dataset: `settings`, `exercises`, `workouts`, `workout_exercises`, `sets`, `gyms`, `day_notes`. Most tables are flat arrays of rows with numeric ids; `day_notes` is `{ date, text }` keyed by calendar date and is independent of workouts (empty/whitespace `setDayNote` deletes the row). It is the single in-memory state, held in `store/store.ts` (a hand-rolled external store consumed via `useStore`/`useSyncExternalStore`).
 
 - **Mutations** (`store/mutations.ts`) take the snapshot and return a new one via `applyMutation`. Each mutation also appends an op line to a **crash log** (`recordPending`) and schedules a debounced flush.
 - **PR computation** (`store/prs.ts`) is deliberately separate from mutations so `persist.ts` can reuse it when replaying the crash log without creating a `persist ↔ mutations` import cycle. Pure snapshot→snapshot: `recomputePrsForWe`, `recomputePrsForExercise`, `recomputePrsForExercises`. **Every path that adds, edits, or removes a set must run one of these** — live mutation, crash-log replay, import, migration — or the `is_pr` / `is_position_pr` flags stored on the rows go stale.
@@ -97,7 +97,7 @@ The core does **not** know how to persist. Hosts inject a `BlobStorage` factory 
 
 ### Schema migrations
 
-`store/schema.ts` has `SCHEMA_VERSION` (currently 4). On parse, `store/blob.ts:migrate()` upgrades older snapshots field-by-field. A migration that adds derived flags (e.g. v4's `is_position_pr`) triggers a full `recomputeAllPrs()` pass after hydrate. **When you change the snapshot shape, bump `SCHEMA_VERSION` and add a migration branch** — older clients/blobs in the wild will otherwise break.
+`store/schema.ts` has `SCHEMA_VERSION` (currently 5). On parse, `store/blob.ts:migrate()` upgrades older snapshots field-by-field. A migration that adds derived flags (e.g. v4's `is_position_pr`) triggers a full `recomputeAllPrs()` pass after hydrate. v5 copies non-empty `workout.notes` into `day_notes`, then blanks leftover `workout.notes` so a deleted day note cannot resurrect on export; already-v5 snapshots with leftover `workout.notes` are blanked without re-copying (the user may have cleared the day note). `workout.notes` is no longer canonical. **When you change the snapshot shape, bump `SCHEMA_VERSION` and add a migration branch** — older clients/blobs in the wild will otherwise break.
 
 ### Sync (`store/../sync/`)
 
@@ -120,3 +120,4 @@ Both clients have a parallel `ai/` layer (`frontend/lib/ai`, `mobile/src/ai`) �
 - The web app has **no `typecheck` npm script** — run `npx tsc --noEmit` in `frontend/` manually.
 - `fflate`'s **synchronous** gzip API is used on purpose: the async variant spawns a Web Worker that doesn't exist in React Native.
 - Mobile uses `expo-file-system/legacy` deliberately; don't "upgrade" it to the class-based `File`/`Directory` API without reason.
+- Day notes live in `day_notes` (`getDayNote` / `setDayNote`; crash-log op `set_day_note`), not `workout.notes`. Note-only days are not calendar markers. JSON export includes `day_notes` (including note-only days); FitNotes/CSV maps a day note onto workout notes when a workout exists that day.
