@@ -63,7 +63,7 @@ The store is a module-level singleton — suites that touch it call `resetStore(
 
 This suite tests the logic layer only. The two clients (React/React Native UI) and the Cloudflare Worker have **no automated tests** — "verifying" a UI or worker change still means running the app and exercising the flow, or curling the worker (see `cloudflare/README.md` for smoke-test curls).
 
-**Import fixtures** (real FitNotes exports: `.fitnotesdb`, `.csv`) live in `test_dbs/` — these are sample databases the tests read from, not a test suite. The directory is gitignored; the CSV the suite already tracks stays in git.
+**Import fixtures:** the FitNotes CSV used by the suite lives in `tests/fixtures/`. Optional local sample DBs/exports go in `test_dbs/` (gitignored, not a test suite).
 
 ## Architecture — the core store
 

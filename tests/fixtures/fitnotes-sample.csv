@@ -1,0 +1,500 @@
+Date,Exercise,Category,Weight (kg),Weight (lbs),Reps,Distance,Distance Unit,Time,Notes,Kind
+2024-01-05,Pull-Up,Back,17.25,,5,,,,slow,wr
+2024-01-05,Pull-Up,Back,3.75,,3,,,,slow,wr
+2024-01-05,Romanian Deadlift,Legs,78.75,,3,,,,paused,wr
+2024-01-05,Romanian Deadlift,Legs,81.25,,7,,,,easy,wr
+2024-01-05,Romanian Deadlift,Legs,76.00,,12,,,,,wr
+2024-01-06,Barbell Bench Press,Chest,94.50,,6,,,,,wr
+2024-01-06,Barbell Bench Press,Chest,87.25,,7,,,,,wr
+2024-01-06,Barbell Bench Press,Chest,95.00,,12,,,,slow,wr
+2024-01-06,Barbell Bench Press,Chest,48.25,,7,,,,warmup,wr
+2024-01-06,Barbell Row,Back,52.25,,10,,,,,wr
+2024-01-09,Dumbbell Curl,Biceps,13.50,,12,,,,warmup,wr
+2024-01-09,Dumbbell Curl,Biceps,16.75,,4,,,,,wr
+2024-01-09,Dumbbell Curl,Biceps,15.50,,5,,,,,wr
+2024-01-09,Dumbbell Curl,Biceps,15.00,,6,,,,slow,wr
+2024-01-12,Leg Press,Legs,119.25,,4,,,,slow,wr
+2024-01-12,Leg Press,Legs,102.00,,6,,,,warmup,wr
+2024-01-12,Leg Press,Legs,92.00,,4,,,,easy,wr
+2024-01-12,Overhead Press,Shoulders,35.00,,5,,,,,wr
+2024-01-12,Overhead Press,Shoulders,53.25,,5,,,,,wr
+2024-01-13,Barbell Bench Press,Chest,76.75,,9,,,,slow,wr
+2024-01-13,Barbell Bench Press,Chest,95.00,,12,,,,easy,wr
+2024-01-13,Overhead Press,Shoulders,35.00,,6,,,,slow,wr
+2024-01-13,Overhead Press,Shoulders,45.50,,11,,,,warmup,wr
+2024-01-13,Overhead Press,Shoulders,53.25,,8,,,,easy,wr
+2024-01-13,Overhead Press,Shoulders,29.75,,4,,,,warmup,wr
+2024-01-13,Push-Up,Chest,,,20,,,,easy,wr
+2024-01-13,Push-Up,Chest,,,10,,,,slow,wr
+2024-01-15,Overhead Press,Shoulders,26.50,,12,,,,easy,wr
+2024-01-15,Overhead Press,Shoulders,47.75,,12,,,,paused,wr
+2024-01-15,Lat Pulldown,Back,57.25,,3,,,,easy,wr
+2024-01-15,Lat Pulldown,Back,28.50,,9,,,,,wr
+2024-01-15,Lat Pulldown,Back,57.00,,5,,,,slow,wr
+2024-01-15,Lat Pulldown,Back,61.25,,7,,,,,wr
+2024-01-15,Dumbbell Curl,Biceps,15.50,,11,,,,,wr
+2024-01-18,Stationary Bike,Cardio,,,,4.00,km,00:12:12,easy,dt
+2024-01-18,Face Pull,Shoulders,24.00,,8,,,,,wr
+2024-01-18,Face Pull,Shoulders,11.00,,12,,,,easy,wr
+2024-01-18,Face Pull,Shoulders,23.75,,4,,,,,wr
+2024-01-18,Walking Lunge,Legs,27.25,,8,,,,slow,wr
+2024-01-18,Walking Lunge,Legs,11.00,,11,,,,,wr
+2024-01-18,Walking Lunge,Legs,22.25,,9,,,,slow,wr
+2024-01-19,Leg Press,Legs,198.25,,5,,,,,wr
+2024-01-19,Leg Press,Legs,163.50,,3,,,,warmup,wr
+2024-01-19,Walking Lunge,Legs,14.50,,3,,,,,wr
+2024-01-19,Walking Lunge,Legs,28.50,,10,,,,,wr
+2024-01-19,Walking Lunge,Legs,25.00,,11,,,,slow,wr
+2024-01-19,Walking Lunge,Legs,25.75,,4,,,,warmup,wr
+2024-01-19,Cable Crunch,Abs,28.50,,7,,,,,wr
+2024-01-20,Overhead Press,Shoulders,52.75,,6,,,,easy,wr
+2024-01-20,Overhead Press,Shoulders,38.50,,4,,,,slow,wr
+2024-01-20,Overhead Press,Shoulders,52.75,,9,,,,easy,wr
+2024-01-20,Leg Press,Legs,128.50,,12,,,,easy,wr
+2024-01-22,Cable Crunch,Abs,17.75,,3,,,,,wr
+2024-01-22,Cable Crunch,Abs,22.00,,11,,,,,wr
+2024-01-22,Cable Crunch,Abs,28.50,,3,,,,,wr
+2024-01-22,Lateral Raise,Shoulders,12.25,,6,,,,,wr
+2024-01-22,Lateral Raise,Shoulders,12.00,,11,,,,easy,wr
+2024-01-25,Hanging Leg Raise,Abs,,,15,,,,paused,wr
+2024-01-25,Hanging Leg Raise,Abs,,,12,,,,paused,wr
+2024-01-25,Seated Cable Row,Back,43.00,,10,,,,,wr
+2024-01-25,Seated Cable Row,Back,31.50,,3,,,,,wr
+2024-01-25,Cable Crunch,Abs,37.75,,4,,,,warmup,wr
+2024-01-25,Cable Crunch,Abs,19.00,,5,,,,,wr
+2024-01-25,Push-Up,Chest,,,13,,,,paused,wr
+2024-01-25,Push-Up,Chest,,,17,,,,paused,wr
+2024-01-27,Hanging Leg Raise,Abs,,,11,,,,easy,wr
+2024-01-27,Hanging Leg Raise,Abs,,,10,,,,,wr
+2024-01-27,Stationary Bike,Cardio,,,,4.00,km,00:07:45,easy,dt
+2024-01-27,Cable Fly,Chest,11.50,,10,,,,warmup,wr
+2024-01-27,Cable Fly,Chest,12.75,,7,,,,,wr
+2024-01-27,Cable Fly,Chest,24.75,,3,,,,easy,wr
+2024-01-27,Cable Fly,Chest,13.75,,8,,,,warmup,wr
+2024-01-27,Lat Pulldown,Back,61.50,,10,,,,warmup,wr
+2024-01-29,Push-Up,Chest,,,18,,,,,wr
+2024-01-29,Push-Up,Chest,,,11,,,,,wr
+2024-01-29,Cable Crunch,Abs,15.50,,8,,,,,wr
+2024-01-29,Cable Crunch,Abs,33.00,,11,,,,,wr
+2024-01-29,Cable Crunch,Abs,26.75,,11,,,,,wr
+2024-01-30,Romanian Deadlift,Legs,72.00,,11,,,,easy,wr
+2024-01-30,Romanian Deadlift,Legs,97.75,,12,,,,,wr
+2024-01-30,Stationary Bike,Cardio,,,,4.25,km,00:12:36,,dt
+2024-01-30,Leg Curl,Legs,36.25,,10,,,,warmup,wr
+2024-01-30,Leg Curl,Legs,55.00,,4,,,,,wr
+2024-02-02,Romanian Deadlift,Legs,78.75,,7,,,,,wr
+2024-02-02,Romanian Deadlift,Legs,57.25,,3,,,,slow,wr
+2024-02-02,Hammer Curl,Biceps,11.00,,3,,,,,wr
+2024-02-02,Hammer Curl,Biceps,15.50,,5,,,,slow,wr
+2024-02-02,Treadmill Run,Cardio,,,,2.50,km,00:22:13,,dt
+2024-02-02,Barbell Row,Back,78.50,,6,,,,warmup,wr
+2024-02-05,Skull Crusher,Triceps,32.00,,4,,,,,wr
+2024-02-05,Skull Crusher,Triceps,21.50,,12,,,,,wr
+2024-02-05,Skull Crusher,Triceps,26.25,,3,,,,,wr
+2024-02-05,Skull Crusher,Triceps,28.75,,6,,,,easy,wr
+2024-02-05,Hanging Leg Raise,Abs,,,12,,,,,wr
+2024-02-05,Hanging Leg Raise,Abs,,,19,,,,slow,wr
+2024-02-05,Hanging Leg Raise,Abs,,,10,,,,warmup,wr
+2024-02-05,Walking Lunge,Legs,14.25,,5,,,,,wr
+2024-02-06,Hammer Curl,Biceps,14.25,,11,,,,paused,wr
+2024-02-06,Hammer Curl,Biceps,16.50,,3,,,,paused,wr
+2024-02-06,Hammer Curl,Biceps,16.00,,6,,,,,wr
+2024-02-06,Hammer Curl,Biceps,14.50,,9,,,,slow,wr
+2024-02-06,Walking Lunge,Legs,11.25,,6,,,,,wr
+2024-02-06,Walking Lunge,Legs,20.50,,10,,,,paused,wr
+2024-02-06,Walking Lunge,Legs,21.25,,3,,,,paused,wr
+2024-02-07,Incline Dumbbell Press,Chest,14.00,,9,,,,,wr
+2024-02-07,Incline Dumbbell Press,Chest,13.75,,7,,,,slow,wr
+2024-02-07,Incline Dumbbell Press,Chest,26.50,,6,,,,paused,wr
+2024-02-07,Hanging Leg Raise,Abs,,,15,,,,slow,wr
+2024-02-09,Overhead Press,Shoulders,54.50,,7,,,,,wr
+2024-02-09,Overhead Press,Shoulders,37.75,,9,,,,paused,wr
+2024-02-09,Overhead Press,Shoulders,39.50,,9,,,,,wr
+2024-02-09,Overhead Press,Shoulders,37.00,,5,,,,easy,wr
+2024-02-11,Push-Up,Chest,,,15,,,,slow,wr
+2024-02-11,Push-Up,Chest,,,18,,,,,wr
+2024-02-11,Hammer Curl,Biceps,12.75,,7,,,,paused,wr
+2024-02-11,Hammer Curl,Biceps,15.25,,8,,,,,wr
+2024-02-14,Stationary Bike,Cardio,,,,4.25,km,00:24:16,,dt
+2024-02-14,Barbell Bench Press,Chest,65.25,,10,,,,slow,wr
+2024-02-14,Barbell Bench Press,Chest,72.00,,5,,,,easy,wr
+2024-02-14,Barbell Bench Press,Chest,71.25,,9,,,,slow,wr
+2024-02-14,Barbell Bench Press,Chest,60.00,,12,,,,,wr
+2024-02-14,Seated Cable Row,Back,32.50,,4,,,,,wr
+2024-02-17,Romanian Deadlift,Legs,81.50,,5,,,,,wr
+2024-02-17,Romanian Deadlift,Legs,55.50,,4,,,,,wr
+2024-02-17,Barbell Row,Back,42.00,,12,,,,,wr
+2024-02-17,Barbell Row,Back,66.75,,8,,,,,wr
+2024-02-20,Barbell Squat,Legs,96.75,,6,,,,slow,wr
+2024-02-20,Barbell Squat,Legs,78.00,,12,,,,easy,wr
+2024-02-20,Barbell Squat,Legs,103.25,,11,,,,paused,wr
+2024-02-20,Barbell Squat,Legs,112.25,,8,,,,warmup,wr
+2024-02-20,Hanging Leg Raise,Abs,,,17,,,,,wr
+2024-02-20,Hanging Leg Raise,Abs,,,19,,,,warmup,wr
+2024-02-21,Lat Pulldown,Back,38.25,,9,,,,easy,wr
+2024-02-21,Lat Pulldown,Back,38.25,,9,,,,warmup,wr
+2024-02-21,Lateral Raise,Shoulders,6.00,,8,,,,,wr
+2024-02-21,Lateral Raise,Shoulders,10.75,,6,,,,warmup,wr
+2024-02-21,Lateral Raise,Shoulders,9.75,,9,,,,easy,wr
+2024-02-21,Pull-Up,Back,5.50,,12,,,,paused,wr
+2024-02-21,Pull-Up,Back,7.00,,3,,,,,wr
+2024-02-23,Push-Up,Chest,,,14,,,,paused,wr
+2024-02-23,Push-Up,Chest,,,17,,,,paused,wr
+2024-02-23,Seated Cable Row,Back,37.00,,11,,,,slow,wr
+2024-02-23,Seated Cable Row,Back,28.25,,12,,,,,wr
+2024-02-24,Dumbbell Curl,Biceps,8.25,,10,,,,paused,wr
+2024-02-24,Dumbbell Curl,Biceps,16.50,,5,,,,,wr
+2024-02-24,Dumbbell Curl,Biceps,17.50,,3,,,,warmup,wr
+2024-02-24,Barbell Bench Press,Chest,78.50,,7,,,,,wr
+2024-02-24,Barbell Bench Press,Chest,46.75,,5,,,,slow,wr
+2024-02-24,Stationary Bike,Cardio,,,,4.25,km,00:23:14,,dt
+2024-02-24,Push-Up,Chest,,,10,,,,,wr
+2024-02-27,Tricep Pushdown,Triceps,25.75,,3,,,,slow,wr
+2024-02-27,Tricep Pushdown,Triceps,21.00,,8,,,,warmup,wr
+2024-02-27,Tricep Pushdown,Triceps,18.25,,3,,,,easy,wr
+2024-02-27,Tricep Pushdown,Triceps,38.75,,10,,,,easy,wr
+2024-02-29,Hanging Leg Raise,Abs,,,18,,,,warmup,wr
+2024-02-29,Hanging Leg Raise,Abs,,,19,,,,warmup,wr
+2024-02-29,Hanging Leg Raise,Abs,,,14,,,,paused,wr
+2024-02-29,Hanging Leg Raise,Abs,,,13,,,,paused,wr
+2024-02-29,Incline Dumbbell Press,Chest,21.75,,5,,,,,wr
+2024-02-29,Incline Dumbbell Press,Chest,24.00,,9,,,,paused,wr
+2024-03-02,Barbell Bench Press,Chest,71.25,,4,,,,,wr
+2024-03-02,Barbell Bench Press,Chest,62.25,,11,,,,easy,wr
+2024-03-02,Cable Crunch,Abs,17.25,,9,,,,,wr
+2024-03-02,Cable Crunch,Abs,17.00,,9,,,,easy,wr
+2024-03-02,Treadmill Run,Cardio,,,,4.75,km,00:23:10,,dt
+2024-03-02,Overhead Press,Shoulders,49.25,,12,,,,warmup,wr
+2024-03-05,Treadmill Run,Cardio,,,,1.25,km,00:18:46,steady,dt
+2024-03-05,Leg Press,Legs,178.50,,5,,,,,wr
+2024-03-05,Leg Press,Legs,127.00,,4,,,,,wr
+2024-03-05,Leg Press,Legs,168.25,,6,,,,,wr
+2024-03-05,Leg Press,Legs,95.00,,12,,,,slow,wr
+2024-03-05,Barbell Bench Press,Chest,49.00,,12,,,,slow,wr
+2024-03-05,Barbell Bench Press,Chest,94.25,,8,,,,,wr
+2024-03-08,Stationary Bike,Cardio,,,,3.75,km,00:17:44,steady,dt
+2024-03-08,Hanging Leg Raise,Abs,,,13,,,,easy,wr
+2024-03-08,Hanging Leg Raise,Abs,,,15,,,,warmup,wr
+2024-03-08,Hanging Leg Raise,Abs,,,16,,,,,wr
+2024-03-08,Pull-Up,Back,13.00,,3,,,,,wr
+2024-03-10,Barbell Squat,Legs,100.50,,8,,,,,wr
+2024-03-10,Barbell Squat,Legs,65.25,,4,,,,easy,wr
+2024-03-10,Barbell Squat,Legs,80.25,,9,,,,slow,wr
+2024-03-10,Incline Dumbbell Press,Chest,27.50,,3,,,,,wr
+2024-03-11,Barbell Bench Press,Chest,61.50,,9,,,,warmup,wr
+2024-03-11,Barbell Bench Press,Chest,70.00,,9,,,,easy,wr
+2024-03-11,Barbell Bench Press,Chest,85.75,,11,,,,paused,wr
+2024-03-11,Hanging Leg Raise,Abs,,,13,,,,easy,wr
+2024-03-13,Push-Up,Chest,,,8,,,,,wr
+2024-03-13,Push-Up,Chest,,,14,,,,paused,wr
+2024-03-13,Push-Up,Chest,,,9,,,,,wr
+2024-03-13,Push-Up,Chest,,,20,,,,,wr
+2024-03-13,Barbell Squat,Legs,67.25,,11,,,,warmup,wr
+2024-03-13,Barbell Squat,Legs,117.00,,12,,,,warmup,wr
+2024-03-13,Barbell Squat,Legs,80.25,,9,,,,,wr
+2024-03-13,Lateral Raise,Shoulders,7.50,,8,,,,,wr
+2024-03-15,Hanging Leg Raise,Abs,,,8,,,,paused,wr
+2024-03-15,Hanging Leg Raise,Abs,,,11,,,,easy,wr
+2024-03-15,Push-Up,Chest,,,8,,,,warmup,wr
+2024-03-15,Push-Up,Chest,,,19,,,,,wr
+2024-03-15,Push-Up,Chest,,,12,,,,slow,wr
+2024-03-17,Incline Dumbbell Press,Chest,15.75,,5,,,,,wr
+2024-03-17,Incline Dumbbell Press,Chest,16.50,,7,,,,,wr
+2024-03-17,Tricep Pushdown,Triceps,33.25,,4,,,,warmup,wr
+2024-03-17,Tricep Pushdown,Triceps,36.75,,6,,,,easy,wr
+2024-03-17,Tricep Pushdown,Triceps,23.25,,4,,,,slow,wr
+2024-03-17,Cable Crunch,Abs,28.75,,7,,,,warmup,wr
+2024-03-19,Cable Crunch,Abs,38.25,,3,,,,slow,wr
+2024-03-19,Cable Crunch,Abs,30.25,,10,,,,warmup,wr
+2024-03-19,Romanian Deadlift,Legs,49.75,,7,,,,warmup,wr
+2024-03-19,Romanian Deadlift,Legs,91.75,,6,,,,,wr
+2024-03-19,Overhead Press,Shoulders,27.50,,10,,,,easy,wr
+2024-03-20,Leg Curl,Legs,29.75,,6,,,,,wr
+2024-03-20,Leg Curl,Legs,57.25,,6,,,,warmup,wr
+2024-03-20,Barbell Bench Press,Chest,77.50,,9,,,,,wr
+2024-03-20,Barbell Bench Press,Chest,81.25,,11,,,,warmup,wr
+2024-03-21,Seated Cable Row,Back,27.25,,4,,,,easy,wr
+2024-03-21,Seated Cable Row,Back,43.25,,4,,,,,wr
+2024-03-21,Tricep Pushdown,Triceps,16.75,,8,,,,warmup,wr
+2024-03-21,Tricep Pushdown,Triceps,38.00,,8,,,,slow,wr
+2024-03-21,Barbell Bench Press,Chest,57.50,,5,,,,easy,wr
+2024-03-21,Barbell Bench Press,Chest,45.25,,6,,,,warmup,wr
+2024-03-21,Barbell Bench Press,Chest,58.25,,5,,,,easy,wr
+2024-03-21,Stationary Bike,Cardio,,,,2.75,km,00:16:33,steady,dt
+2024-03-23,Barbell Bench Press,Chest,70.00,,7,,,,slow,wr
+2024-03-23,Barbell Bench Press,Chest,58.00,,8,,,,paused,wr
+2024-03-23,Dumbbell Curl,Biceps,13.50,,10,,,,,wr
+2024-03-23,Dumbbell Curl,Biceps,8.00,,12,,,,paused,wr
+2024-03-23,Dumbbell Curl,Biceps,9.25,,12,,,,,wr
+2024-03-23,Leg Press,Legs,195.25,,11,,,,slow,wr
+2024-03-25,Incline Dumbbell Press,Chest,24.75,,5,,,,,wr
+2024-03-25,Incline Dumbbell Press,Chest,17.00,,7,,,,easy,wr
+2024-03-25,Incline Dumbbell Press,Chest,30.00,,10,,,,warmup,wr
+2024-03-25,Stationary Bike,Cardio,,,,4.00,km,00:07:08,,dt
+2024-03-25,Romanian Deadlift,Legs,48.25,,5,,,,,wr
+2024-03-25,Romanian Deadlift,Legs,45.75,,5,,,,easy,wr
+2024-03-28,Romanian Deadlift,Legs,93.75,,4,,,,warmup,wr
+2024-03-28,Romanian Deadlift,Legs,44.25,,5,,,,,wr
+2024-03-28,Romanian Deadlift,Legs,91.00,,6,,,,easy,wr
+2024-03-28,Romanian Deadlift,Legs,88.50,,8,,,,easy,wr
+2024-03-28,Dumbbell Curl,Biceps,11.75,,8,,,,,wr
+2024-03-28,Dumbbell Curl,Biceps,15.50,,9,,,,warmup,wr
+2024-03-28,Dumbbell Curl,Biceps,13.75,,6,,,,,wr
+2024-03-28,Dumbbell Curl,Biceps,12.25,,7,,,,easy,wr
+2024-03-31,Pull-Up,Back,12.75,,5,,,,easy,wr
+2024-03-31,Pull-Up,Back,6.25,,5,,,,slow,wr
+2024-03-31,Cable Crunch,Abs,36.25,,12,,,,paused,wr
+2024-03-31,Cable Crunch,Abs,22.00,,7,,,,warmup,wr
+2024-03-31,Hanging Leg Raise,Abs,,,14,,,,,wr
+2024-03-31,Hanging Leg Raise,Abs,,,20,,,,slow,wr
+2024-03-31,Hanging Leg Raise,Abs,,,14,,,,easy,wr
+2024-03-31,Hanging Leg Raise,Abs,,,9,,,,paused,wr
+2024-04-01,Hanging Leg Raise,Abs,,,10,,,,,wr
+2024-04-01,Hanging Leg Raise,Abs,,,18,,,,slow,wr
+2024-04-01,Push-Up,Chest,,,8,,,,slow,wr
+2024-04-01,Push-Up,Chest,,,11,,,,,wr
+2024-04-01,Push-Up,Chest,,,8,,,,warmup,wr
+2024-04-01,Cable Fly,Chest,9.00,,4,,,,,wr
+2024-04-01,Cable Fly,Chest,17.50,,5,,,,,wr
+2024-04-01,Cable Fly,Chest,22.25,,8,,,,paused,wr
+2024-04-03,Incline Dumbbell Press,Chest,24.00,,6,,,,paused,wr
+2024-04-03,Incline Dumbbell Press,Chest,32.50,,8,,,,,wr
+2024-04-03,Incline Dumbbell Press,Chest,32.50,,8,,,,slow,wr
+2024-04-03,Barbell Bench Press,Chest,46.00,,7,,,,warmup,wr
+2024-04-03,Barbell Bench Press,Chest,52.50,,4,,,,easy,wr
+2024-04-03,Tricep Pushdown,Triceps,35.75,,8,,,,warmup,wr
+2024-04-06,Seated Cable Row,Back,43.25,,3,,,,,wr
+2024-04-06,Seated Cable Row,Back,64.50,,12,,,,,wr
+2024-04-06,Seated Cable Row,Back,58.50,,5,,,,,wr
+2024-04-06,Seated Cable Row,Back,48.75,,9,,,,,wr
+2024-04-06,Barbell Row,Back,61.75,,5,,,,slow,wr
+2024-04-09,Treadmill Run,Cardio,,,,2.50,km,00:22:56,,dt
+2024-04-09,Stationary Bike,Cardio,,,,4.50,km,00:19:40,,dt
+2024-04-09,Barbell Bench Press,Chest,61.50,,5,,,,,wr
+2024-04-09,Barbell Bench Press,Chest,87.25,,4,,,,,wr
+2024-04-10,Lat Pulldown,Back,67.25,,9,,,,warmup,wr
+2024-04-10,Lat Pulldown,Back,52.50,,6,,,,paused,wr
+2024-04-10,Lat Pulldown,Back,45.75,,3,,,,,wr
+2024-04-10,Barbell Bench Press,Chest,93.50,,4,,,,slow,wr
+2024-04-10,Barbell Bench Press,Chest,57.00,,5,,,,,wr
+2024-04-10,Barbell Bench Press,Chest,98.25,,6,,,,slow,wr
+2024-04-10,Barbell Bench Press,Chest,58.50,,9,,,,warmup,wr
+2024-04-10,Overhead Press,Shoulders,51.00,,3,,,,easy,wr
+2024-04-12,Hammer Curl,Biceps,11.00,,12,,,,slow,wr
+2024-04-12,Hammer Curl,Biceps,15.75,,8,,,,paused,wr
+2024-04-12,Hammer Curl,Biceps,17.50,,9,,,,easy,wr
+2024-04-12,Hammer Curl,Biceps,16.00,,5,,,,warmup,wr
+2024-04-14,Romanian Deadlift,Legs,62.00,,4,,,,slow,wr
+2024-04-14,Romanian Deadlift,Legs,76.75,,5,,,,paused,wr
+2024-04-14,Romanian Deadlift,Legs,67.00,,7,,,,,wr
+2024-04-14,Romanian Deadlift,Legs,79.25,,12,,,,paused,wr
+2024-04-14,Push-Up,Chest,,,18,,,,paused,wr
+2024-04-17,Seated Cable Row,Back,53.75,,9,,,,,wr
+2024-04-17,Seated Cable Row,Back,58.25,,4,,,,easy,wr
+2024-04-17,Overhead Press,Shoulders,47.25,,12,,,,warmup,wr
+2024-04-17,Overhead Press,Shoulders,40.25,,12,,,,,wr
+2024-04-17,Overhead Press,Shoulders,45.25,,7,,,,paused,wr
+2024-04-17,Overhead Press,Shoulders,41.75,,9,,,,,wr
+2024-04-17,Face Pull,Shoulders,26.25,,8,,,,,wr
+2024-04-18,Cable Crunch,Abs,31.50,,12,,,,,wr
+2024-04-18,Cable Crunch,Abs,20.25,,11,,,,paused,wr
+2024-04-18,Lateral Raise,Shoulders,11.25,,4,,,,slow,wr
+2024-04-18,Lateral Raise,Shoulders,13.00,,6,,,,,wr
+2024-04-18,Lateral Raise,Shoulders,14.25,,4,,,,slow,wr
+2024-04-20,Skull Crusher,Triceps,17.50,,10,,,,warmup,wr
+2024-04-20,Skull Crusher,Triceps,34.75,,8,,,,,wr
+2024-04-20,Hammer Curl,Biceps,12.50,,11,,,,paused,wr
+2024-04-20,Hammer Curl,Biceps,16.00,,12,,,,,wr
+2024-04-23,Pull-Up,Back,17.50,,11,,,,,wr
+2024-04-23,Pull-Up,Back,12.50,,11,,,,,wr
+2024-04-23,Pull-Up,Back,4.25,,5,,,,easy,wr
+2024-04-23,Treadmill Run,Cardio,,,,1.00,km,00:08:13,,dt
+2024-04-23,Romanian Deadlift,Legs,86.50,,8,,,,easy,wr
+2024-04-23,Romanian Deadlift,Legs,91.25,,10,,,,,wr
+2024-04-23,Romanian Deadlift,Legs,55.00,,5,,,,slow,wr
+2024-04-23,Skull Crusher,Triceps,29.25,,7,,,,,wr
+2024-04-25,Barbell Squat,Legs,107.25,,9,,,,,wr
+2024-04-25,Barbell Squat,Legs,72.00,,12,,,,,wr
+2024-04-25,Walking Lunge,Legs,20.25,,9,,,,slow,wr
+2024-04-25,Walking Lunge,Legs,25.25,,6,,,,easy,wr
+2024-04-25,Walking Lunge,Legs,15.25,,9,,,,,wr
+2024-04-28,Treadmill Run,Cardio,,,,4.00,km,00:08:58,,dt
+2024-04-28,Leg Curl,Legs,39.00,,11,,,,,wr
+2024-04-28,Leg Curl,Legs,28.25,,7,,,,slow,wr
+2024-04-28,Leg Curl,Legs,27.00,,6,,,,easy,wr
+2024-04-28,Leg Curl,Legs,22.25,,8,,,,,wr
+2024-04-30,Lateral Raise,Shoulders,14.50,,3,,,,easy,wr
+2024-04-30,Lateral Raise,Shoulders,13.25,,5,,,,easy,wr
+2024-04-30,Lateral Raise,Shoulders,9.50,,6,,,,,wr
+2024-04-30,Walking Lunge,Legs,25.25,,5,,,,,wr
+2024-04-30,Walking Lunge,Legs,27.50,,8,,,,warmup,wr
+2024-05-03,Cable Fly,Chest,24.75,,4,,,,easy,wr
+2024-05-03,Cable Fly,Chest,19.50,,12,,,,,wr
+2024-05-03,Cable Fly,Chest,14.25,,7,,,,slow,wr
+2024-05-03,Hanging Leg Raise,Abs,,,11,,,,easy,wr
+2024-05-03,Hanging Leg Raise,Abs,,,20,,,,warmup,wr
+2024-05-04,Barbell Row,Back,40.00,,10,,,,,wr
+2024-05-04,Barbell Row,Back,70.75,,5,,,,easy,wr
+2024-05-04,Treadmill Run,Cardio,,,,1.75,km,00:07:15,,dt
+2024-05-04,Romanian Deadlift,Legs,42.75,,3,,,,,wr
+2024-05-07,Lat Pulldown,Back,55.00,,9,,,,,wr
+2024-05-07,Lat Pulldown,Back,54.50,,7,,,,warmup,wr
+2024-05-07,Lat Pulldown,Back,28.75,,6,,,,warmup,wr
+2024-05-07,Lat Pulldown,Back,40.00,,6,,,,slow,wr
+2024-05-08,Hammer Curl,Biceps,9.25,,11,,,,,wr
+2024-05-08,Hammer Curl,Biceps,13.25,,3,,,,,wr
+2024-05-08,Hammer Curl,Biceps,16.00,,10,,,,,wr
+2024-05-08,Hammer Curl,Biceps,9.00,,10,,,,,wr
+2024-05-08,Push-Up,Chest,,,11,,,,,wr
+2024-05-08,Push-Up,Chest,,,8,,,,easy,wr
+2024-05-08,Tricep Pushdown,Triceps,21.25,,9,,,,,wr
+2024-05-08,Tricep Pushdown,Triceps,33.25,,3,,,,paused,wr
+2024-05-10,Face Pull,Shoulders,19.00,,5,,,,paused,wr
+2024-05-10,Face Pull,Shoulders,22.75,,3,,,,,wr
+2024-05-10,Face Pull,Shoulders,24.00,,12,,,,,wr
+2024-05-10,Face Pull,Shoulders,10.75,,5,,,,warmup,wr
+2024-05-10,Leg Curl,Legs,20.25,,9,,,,,wr
+2024-05-10,Leg Curl,Legs,40.25,,5,,,,paused,wr
+2024-05-10,Leg Curl,Legs,31.25,,10,,,,,wr
+2024-05-10,Leg Curl,Legs,34.25,,5,,,,slow,wr
+2024-05-13,Treadmill Run,Cardio,,,,2.25,km,00:21:00,steady,dt
+2024-05-13,Push-Up,Chest,,,9,,,,paused,wr
+2024-05-13,Push-Up,Chest,,,16,,,,,wr
+2024-05-13,Push-Up,Chest,,,20,,,,,wr
+2024-05-13,Leg Press,Legs,165.25,,5,,,,paused,wr
+2024-05-13,Leg Press,Legs,157.50,,7,,,,warmup,wr
+2024-05-13,Leg Press,Legs,94.50,,11,,,,,wr
+2024-05-13,Skull Crusher,Triceps,31.75,,8,,,,,wr
+2024-05-14,Romanian Deadlift,Legs,51.25,,9,,,,slow,wr
+2024-05-14,Romanian Deadlift,Legs,75.50,,5,,,,,wr
+2024-05-14,Romanian Deadlift,Legs,73.25,,3,,,,slow,wr
+2024-05-14,Treadmill Run,Cardio,,,,1.00,km,00:14:14,,dt
+2024-05-14,Pull-Up,Back,0.00,,5,,,,paused,wr
+2024-05-16,Overhead Press,Shoulders,48.75,,12,,,,,wr
+2024-05-16,Overhead Press,Shoulders,49.75,,7,,,,,wr
+2024-05-16,Barbell Bench Press,Chest,84.00,,4,,,,warmup,wr
+2024-05-16,Barbell Bench Press,Chest,90.50,,8,,,,,wr
+2024-05-16,Barbell Bench Press,Chest,46.25,,9,,,,,wr
+2024-05-16,Walking Lunge,Legs,19.25,,7,,,,paused,wr
+2024-05-16,Walking Lunge,Legs,22.25,,10,,,,warmup,wr
+2024-05-16,Walking Lunge,Legs,16.50,,3,,,,slow,wr
+2024-05-18,Hammer Curl,Biceps,15.00,,10,,,,easy,wr
+2024-05-18,Hammer Curl,Biceps,14.75,,12,,,,,wr
+2024-05-18,Hammer Curl,Biceps,11.50,,6,,,,,wr
+2024-05-18,Hammer Curl,Biceps,14.25,,12,,,,,wr
+2024-05-18,Cable Fly,Chest,13.00,,3,,,,,wr
+2024-05-18,Cable Fly,Chest,13.50,,4,,,,easy,wr
+2024-05-18,Hanging Leg Raise,Abs,,,11,,,,paused,wr
+2024-05-18,Hanging Leg Raise,Abs,,,20,,,,,wr
+2024-05-21,Tricep Pushdown,Triceps,32.50,,8,,,,,wr
+2024-05-21,Tricep Pushdown,Triceps,16.75,,9,,,,,wr
+2024-05-21,Tricep Pushdown,Triceps,34.25,,8,,,,,wr
+2024-05-21,Lat Pulldown,Back,27.50,,4,,,,easy,wr
+2024-05-21,Lat Pulldown,Back,26.50,,8,,,,warmup,wr
+2024-05-21,Lat Pulldown,Back,28.75,,9,,,,paused,wr
+2024-05-21,Barbell Squat,Legs,102.25,,7,,,,warmup,wr
+2024-05-21,Barbell Squat,Legs,68.25,,10,,,,warmup,wr
+2024-05-24,Treadmill Run,Cardio,,,,2.00,km,00:08:47,steady,dt
+2024-05-24,Barbell Squat,Legs,62.50,,10,,,,,wr
+2024-05-24,Barbell Squat,Legs,71.50,,5,,,,,wr
+2024-05-24,Barbell Squat,Legs,68.25,,12,,,,warmup,wr
+2024-05-25,Romanian Deadlift,Legs,51.75,,4,,,,easy,wr
+2024-05-25,Romanian Deadlift,Legs,63.75,,8,,,,,wr
+2024-05-25,Romanian Deadlift,Legs,70.00,,8,,,,warmup,wr
+2024-05-25,Romanian Deadlift,Legs,73.75,,5,,,,easy,wr
+2024-05-25,Leg Curl,Legs,44.00,,7,,,,warmup,wr
+2024-05-27,Lateral Raise,Shoulders,7.50,,4,,,,paused,wr
+2024-05-27,Lateral Raise,Shoulders,14.75,,8,,,,paused,wr
+2024-05-27,Lateral Raise,Shoulders,10.25,,3,,,,slow,wr
+2024-05-27,Barbell Bench Press,Chest,83.25,,5,,,,,wr
+2024-05-27,Barbell Bench Press,Chest,95.00,,4,,,,easy,wr
+2024-05-28,Face Pull,Shoulders,21.50,,6,,,,,wr
+2024-05-28,Face Pull,Shoulders,14.50,,12,,,,,wr
+2024-05-28,Face Pull,Shoulders,16.75,,5,,,,slow,wr
+2024-05-28,Barbell Row,Back,66.50,,10,,,,easy,wr
+2024-05-28,Barbell Row,Back,49.25,,5,,,,,wr
+2024-05-28,Barbell Row,Back,55.75,,8,,,,warmup,wr
+2024-05-28,Romanian Deadlift,Legs,97.75,,4,,,,,wr
+2024-05-28,Romanian Deadlift,Legs,46.25,,5,,,,easy,wr
+2024-05-31,Skull Crusher,Triceps,23.25,,12,,,,paused,wr
+2024-05-31,Skull Crusher,Triceps,24.75,,6,,,,paused,wr
+2024-05-31,Skull Crusher,Triceps,18.00,,11,,,,,wr
+2024-05-31,Skull Crusher,Triceps,33.00,,11,,,,,wr
+2024-05-31,Leg Press,Legs,148.25,,4,,,,,wr
+2024-05-31,Leg Press,Legs,181.50,,9,,,,easy,wr
+2024-06-01,Lat Pulldown,Back,33.75,,3,,,,warmup,wr
+2024-06-01,Lat Pulldown,Back,40.00,,11,,,,,wr
+2024-06-01,Lat Pulldown,Back,51.50,,9,,,,paused,wr
+2024-06-01,Lat Pulldown,Back,37.50,,3,,,,warmup,wr
+2024-06-03,Incline Dumbbell Press,Chest,27.25,,7,,,,,wr
+2024-06-03,Incline Dumbbell Press,Chest,28.50,,4,,,,,wr
+2024-06-03,Incline Dumbbell Press,Chest,12.25,,4,,,,,wr
+2024-06-03,Incline Dumbbell Press,Chest,21.25,,6,,,,,wr
+2024-06-06,Barbell Squat,Legs,104.25,,12,,,,,wr
+2024-06-06,Barbell Squat,Legs,118.25,,7,,,,slow,wr
+2024-06-06,Barbell Squat,Legs,84.75,,12,,,,,wr
+2024-06-06,Barbell Squat,Legs,119.75,,9,,,,slow,wr
+2024-06-09,Treadmill Run,Cardio,,,,2.25,km,00:24:00,easy,dt
+2024-06-09,Cable Fly,Chest,11.25,,4,,,,paused,wr
+2024-06-09,Cable Fly,Chest,19.25,,10,,,,slow,wr
+2024-06-09,Leg Press,Legs,146.25,,8,,,,,wr
+2024-06-09,Leg Press,Legs,160.00,,8,,,,,wr
+2024-06-09,Leg Press,Legs,163.75,,3,,,,,wr
+2024-06-09,Leg Press,Legs,123.00,,6,,,,paused,wr
+2024-06-12,Leg Curl,Legs,50.00,,8,,,,slow,wr
+2024-06-12,Leg Curl,Legs,24.50,,11,,,,,wr
+2024-06-12,Leg Press,Legs,196.25,,12,,,,slow,wr
+2024-06-12,Leg Press,Legs,93.75,,5,,,,slow,wr
+2024-06-12,Leg Press,Legs,86.50,,3,,,,easy,wr
+2024-06-13,Dumbbell Curl,Biceps,11.75,,7,,,,,wr
+2024-06-13,Dumbbell Curl,Biceps,15.25,,6,,,,slow,wr
+2024-06-13,Dumbbell Curl,Biceps,12.50,,10,,,,,wr
+2024-06-13,Dumbbell Curl,Biceps,8.50,,5,,,,,wr
+2024-06-13,Hanging Leg Raise,Abs,,,14,,,,,wr
+2024-06-13,Hanging Leg Raise,Abs,,,9,,,,slow,wr
+2024-06-13,Hanging Leg Raise,Abs,,,18,,,,,wr
+2024-06-15,Skull Crusher,Triceps,23.75,,11,,,,paused,wr
+2024-06-15,Skull Crusher,Triceps,17.75,,4,,,,,wr
+2024-06-15,Face Pull,Shoulders,19.75,,6,,,,,wr
+2024-06-15,Face Pull,Shoulders,22.00,,3,,,,paused,wr
+2024-06-16,Leg Press,Legs,199.75,,9,,,,warmup,wr
+2024-06-16,Leg Press,Legs,188.50,,4,,,,easy,wr
+2024-06-16,Leg Press,Legs,161.50,,11,,,,,wr
+2024-06-16,Leg Press,Legs,93.25,,9,,,,warmup,wr
+2024-06-17,Leg Press,Legs,107.75,,5,,,,easy,wr
+2024-06-17,Leg Press,Legs,125.50,,9,,,,,wr
+2024-06-17,Treadmill Run,Cardio,,,,4.25,km,00:11:52,easy,dt
+2024-06-17,Face Pull,Shoulders,29.00,,10,,,,,wr
+2024-06-17,Face Pull,Shoulders,11.00,,9,,,,,wr
+2024-06-17,Face Pull,Shoulders,22.50,,9,,,,slow,wr
+2024-06-18,Dumbbell Curl,Biceps,14.00,,5,,,,slow,wr
+2024-06-18,Dumbbell Curl,Biceps,13.50,,7,,,,,wr
+2024-06-18,Dumbbell Curl,Biceps,16.75,,7,,,,warmup,wr
+2024-06-18,Barbell Bench Press,Chest,85.50,,4,,,,warmup,wr
+2024-06-18,Barbell Bench Press,Chest,68.75,,9,,,,warmup,wr
+2024-06-20,Cable Crunch,Abs,32.50,,3,,,,warmup,wr
+2024-06-20,Cable Crunch,Abs,15.50,,8,,,,warmup,wr
+2024-06-20,Cable Crunch,Abs,20.00,,12,,,,,wr
+2024-06-20,Incline Dumbbell Press,Chest,31.00,,9,,,,paused,wr
+2024-06-23,Overhead Press,Shoulders,46.25,,10,,,,,wr
+2024-06-23,Overhead Press,Shoulders,44.50,,10,,,,easy,wr
+2024-06-23,Overhead Press,Shoulders,28.25,,11,,,,paused,wr
+2024-06-23,Lateral Raise,Shoulders,14.50,,5,,,,slow,wr
+2024-06-23,Lateral Raise,Shoulders,5.25,,9,,,,slow,wr
+2024-06-24,Overhead Press,Shoulders,42.00,,11,,,,slow,wr
+2024-06-24,Overhead Press,Shoulders,30.25,,5,,,,,wr
+2024-06-24,Overhead Press,Shoulders,38.50,,11,,,,,wr
+2024-06-24,Romanian Deadlift,Legs,70.75,,10,,,,,wr
+2024-06-24,Romanian Deadlift,Legs,60.75,,4,,,,warmup,wr
+2024-06-24,Romanian Deadlift,Legs,55.00,,4,,,,slow,wr
+2024-06-24,Tricep Pushdown,Triceps,24.25,,7,,,,paused,wr
+2024-06-24,Tricep Pushdown,Triceps,34.75,,5,,,,easy,wr
+2024-06-27,Lat Pulldown,Back,55.25,,8,,,,easy,wr
+2024-06-27,Lat Pulldown,Back,42.75,,11,,,,paused,wr
+2024-06-27,Lat Pulldown,Back,47.75,,10,,,,warmup,wr
+2024-06-27,Leg Press,Legs,153.75,,6,,,,,wr
+2024-06-27,Leg Press,Legs,118.75,,5,,,,warmup,wr
+2024-06-29,Walking Lunge,Legs,26.75,,11,,,,,wr
+2024-06-29,Walking Lunge,Legs,14.00,,6,,,,slow,wr
+2024-06-29,Walking Lunge,Legs,26.00,,6,,,,easy,wr
+2024-06-29,Walking Lunge,Legs,27.00,,5,,,,slow,wr

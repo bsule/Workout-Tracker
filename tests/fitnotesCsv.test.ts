@@ -15,7 +15,7 @@ function csv(rows: string[]): string {
 }
 
 const FIXTURE = fileURLToPath(
-  new URL("../test_dbs/FitNotes-2026-05-05-015918.csv", import.meta.url)
+  new URL("./fixtures/fitnotes-sample.csv", import.meta.url)
 )
 
 beforeEach(() => {
@@ -35,7 +35,7 @@ describe("previewFitnotesCsv", () => {
     expect(p.format).toBe("unknown")
   })
 
-  it("previews the real exported fixture as fitnotes", () => {
+  it("previews the sample fixture as fitnotes", () => {
     const text = readFileSync(FIXTURE, "utf8")
     const p = previewFitnotesCsv(text)
     expect(p.format).toBe("fitnotes")
@@ -138,8 +138,8 @@ describe("importFitnotesCsv: modes", () => {
   })
 })
 
-describe("importFitnotesCsv: real fixture", () => {
-  it("imports the full exported file and computes PRs without throwing", async () => {
+describe("importFitnotesCsv: sample fixture", () => {
+  it("imports the sample file and computes PRs without throwing", async () => {
     const text = readFileSync(FIXTURE, "utf8")
     const result = await importFitnotesCsv(text, { mode: "replace" })
     expect(result.imported).toBeGreaterThan(0)
