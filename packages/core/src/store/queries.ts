@@ -213,6 +213,10 @@ export function listGymsQ(): Gym[] {
   return snapshot.gyms.map((g) => ({ id: g.id, name: g.name }))
 }
 
+export function getDayNoteQ(date: string): string {
+  return getState().indexes.dayNoteByDate.get(date)?.text ?? ""
+}
+
 export function getPlannedWorkoutForToday(): Workout | null {
   const today = todayString()
   const w = getWorkoutByDateQ(today)

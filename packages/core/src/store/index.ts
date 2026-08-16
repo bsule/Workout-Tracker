@@ -34,6 +34,7 @@ export {
   getExerciseHistoryQ,
   listWorkoutsQ,
   getCalendarQ,
+  getDayNoteQ,
 } from "./queries"
 export {
   startPlannedWorkout,
@@ -43,6 +44,7 @@ export {
   deleteWorkout,
   createWorkout,
   addExerciseToWorkout,
+  setDayNote,
 } from "./mutations"
 export { estimateOneRm } from "./materialize"
 
@@ -218,6 +220,14 @@ export const localApi = {
   renameGym(id: number, name: string): Promise<Gym | null> {
     const row = M.renameGym(id, name)
     return Promise.resolve(row ? { id: row.id, name: row.name } : null)
+  },
+
+  getDayNote(date: string): Promise<string> {
+    return Promise.resolve(Q.getDayNoteQ(date))
+  },
+  setDayNote(date: string, text: string): Promise<void> {
+    M.setDayNote(date, text)
+    return Promise.resolve()
   },
 
   // calendar

@@ -429,6 +429,13 @@ function applyOne(snap: Snapshot, op: OpEnvelope): Snapshot {
       const id = op.id as number
       return { ...snap, gyms: snap.gyms.filter((g) => g.id !== id) }
     }
+    case "set_day_note": {
+      const date = op.date as string
+      const text = ((op.text as string) ?? "").trim()
+      const without = (snap.day_notes ?? []).filter((n) => n.date !== date)
+      if (!text) return { ...snap, day_notes: without }
+      return { ...snap, day_notes: [...without, { date, text }] }
+    }
     case "copy_from":
     case "recompute_prs":
       // These operations are best replayed by the snapshot itself; the

@@ -102,6 +102,28 @@ describe("hydrate: crash-log replay", () => {
     expect(snap.workouts.some((w) => w.id === 5000)).toBe(true) // from replay
   })
 
+  it("replays a set_day_note op onto the last persisted snapshot", async () => {
+    const key = freshKey()
+    const store = storageFor(key)
+
+    const base = emptySnapshot("seed-device")
+    await store.writeSnapshot(await serialize(base))
+    await store.appendPending(
+      JSON.stringify({
+        op: "set_day_note",
+        date: "2026-08-16",
+        text: "felt tired",
+      })
+    )
+
+    configure(key)
+    await hydrate()
+
+    expect(currentSnapshot().day_notes).toEqual([
+      { date: "2026-08-16", text: "felt tired" },
+    ])
+  })
+
   it("starts fresh (no throw) when storage is empty", async () => {
     const key = freshKey()
     configure(key)
