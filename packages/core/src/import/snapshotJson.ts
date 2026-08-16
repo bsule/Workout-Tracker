@@ -9,6 +9,7 @@ import { nextId } from "../store/ids"
 import { recomputeAllPrs } from "../store/mutations"
 import { flushNow, runBatched } from "../store/persist"
 import type {
+  DayNoteRow,
   ExerciseRow,
   GymRow,
   SetRow,
@@ -82,6 +83,7 @@ interface RawJsonPayload {
   user?: { username?: string }
   custom_exercises?: Array<{ name: string; category?: string; kind?: string }>
   saved_gyms?: string[]
+  day_notes?: Array<{ date?: string; text?: string; notes?: string }>
   workouts?: RawJsonWorkout[]
 }
 
@@ -180,6 +182,7 @@ export async function importSnapshotJson(
           workouts: [],
           workout_exercises: [],
           sets: [],
+          day_notes: [],
         }))
       })
       await flushNow()
@@ -237,6 +240,23 @@ export async function importSnapshotJson(
   const newWes: WorkoutExerciseRow[] = []
   const newSets: SetRow[] = []
   const newGyms: GymRow[] = []
+  const notesByDate = new Map<string, string>()
+  const existingNoteDates = new Set(
+    mode === "merge" ? (snap.day_notes ?? []).map((n) => n.date) : []
+  )
+
+  function takeDayNote(date: string, raw: string | null | undefined) {
+    const text = (raw ?? "").toString().trim()
+    if (!text) return
+    if (existingNoteDates.has(date) || notesByDate.has(date)) return
+    notesByDate.set(date, text)
+  }
+
+  for (const n of data.day_notes ?? []) {
+    if (!n || typeof n.date !== "string") continue
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(n.date)) continue
+    takeDayNote(n.date, n.text ?? n.notes)
+  }
   const weSetCounts = new Map<number, number>()
   if (mode === "merge") {
     for (const s of snap.sets) {
@@ -297,6 +317,8 @@ export async function importSnapshotJson(
       continue
     }
 
+    takeDayNote(w.date, w.notes)
+
     const gym = (w.gym ?? "").toString()
     const workoutKey = `${w.date}|${gym.toLowerCase()}`
     let workout = workoutByDateGym.get(workoutKey)
@@ -314,7 +336,7 @@ export async function importSnapshotJson(
         started_at: w.started_at ?? null,
         finished_at: w.finished_at ?? null,
         gym,
-        notes: (w.notes ?? "").toString(),
+        notes: "",
         created_at: nowIso(),
       }
       workoutByDateGym.set(workoutKey, workout)
@@ -417,8 +439,13 @@ export async function importSnapshotJson(
               workouts: [],
               workout_exercises: [],
               sets: [],
+              day_notes: [],
             }
           : s
+      const newDayNotes: DayNoteRow[] = [...notesByDate].map(([date, text]) => ({
+        date,
+        text,
+      }))
       return {
         ...base,
         exercises: newExercises.length
@@ -432,6 +459,9 @@ export async function importSnapshotJson(
           : base.workout_exercises,
         sets: newSets.length ? [...base.sets, ...newSets] : base.sets,
         gyms: newGyms.length ? [...base.gyms, ...newGyms] : base.gyms,
+        day_notes: newDayNotes.length
+          ? [...(base.day_notes ?? []), ...newDayNotes]
+          : (base.day_notes ?? []),
       }
     })
     if (imported > 0 || newExercises.length > 0) recomputeAllPrs()
