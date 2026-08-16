@@ -25,7 +25,7 @@ same surface the clients use.
 | `queries.test.ts` | fuzzy match, exercise/workout/calendar/day-note queries |
 | `mutations.test.ts` | every store mutation + cascade behavior (incl. `setDayNote`) |
 | `prs.test.ts` | PR / historical-PR / position-PR computation |
-| `fitnotesCsv.test.ts` | FitNotes CSV import (incl. the real fixture in `test_dbs/`) |
+| `fitnotesCsv.test.ts` | FitNotes CSV import (incl. synthetic sample in `fixtures/`) |
 | `export.test.ts` | CSV/JSON exporters (JSON includes `day_notes`) |
 | `snapshotJson.test.ts` | JSON export ↔ import round-trip (incl. note-only days) |
 | `persist.test.ts` | crash-log replay (incl. `set_day_note`), `runBatched`, flush |
@@ -41,6 +41,6 @@ same surface the clients use.
 ## What is *not* covered
 
 The React / React Native UI and the Cloudflare Worker have no automated tests —
-verify those by running the app or curling the worker. Fixtures (real FitNotes
-exports) live in `../test_dbs/`, not here. That directory is gitignored; the
-CSV the suite already tracks stays in git.
+verify those by running the app or curling the worker. Optional local FitNotes
+sample DBs live in `../test_dbs/` (gitignored). The CSV fixture the suite uses
+is tracked at `fixtures/fitnotes-sample.csv` (synthetic, not a personal export).
