@@ -69,7 +69,8 @@ const TOTAL_DAYS = 365 * 6
 const INITIAL_INDEX = Math.floor(TOTAL_DAYS / 2)
 
 const noop = () => {}
-const MENU_FADE_MS = 160
+const MENU_OPEN_MS = 160
+const MENU_CLOSE_MS = 140
 
 export function DayScreen({ navigation, route }: any) {
   // Date lives in the shared ActiveDate context - that way the global "+"
@@ -219,6 +220,14 @@ export function DayScreen({ navigation, route }: any) {
     setDateMenuOpen(true)
   }
 
+  function toggleDateMenu() {
+    if (dateMenuOpen) {
+      setDateMenuOpen(false)
+      return
+    }
+    openDateMenu()
+  }
+
   const data = useMemo(
     () => Array.from({ length: TOTAL_DAYS }, (_, i) => i),
     []
@@ -271,7 +280,7 @@ export function DayScreen({ navigation, route }: any) {
     <StaticSafeAreaView>
       {/* Pinned date header, never scrolls. */}
       <View style={styles.pinnedHeader}>
-        <DateNav date={date} onShift={shiftDay} onPressDate={openDateMenu} />
+        <DateNav date={date} onShift={shiftDay} onPressDate={toggleDateMenu} />
       </View>
 
       <View style={styles.body}>
@@ -310,11 +319,11 @@ export function DayScreen({ navigation, route }: any) {
         onClose={() => setDateMenuOpen(false)}
         onAddNote={() => {
           setDateMenuOpen(false)
-          setTimeout(openNoteEditor, MENU_FADE_MS + 40)
+          setTimeout(openNoteEditor, MENU_CLOSE_MS + 40)
         }}
         onClearNote={() => {
           setDateMenuOpen(false)
-          setTimeout(() => setDayNote(date, ""), MENU_FADE_MS + 40)
+          setTimeout(() => setDayNote(date, ""), MENU_CLOSE_MS + 40)
         }}
         onOpenCalendar={() => {
           setDateMenuOpen(false)
@@ -322,7 +331,7 @@ export function DayScreen({ navigation, route }: any) {
             // Sibling tab — not a stack push. CalendarScreen already
             // consumes route.params.date and jumps the grid to that day.
             navigation.navigate("Calendar", { date })
-          }, MENU_FADE_MS + 40)
+          }, MENU_CLOSE_MS + 40)
         }}
         onDeleteWorkout={() => {
           const id = menuCtx.workoutId
@@ -341,7 +350,7 @@ export function DayScreen({ navigation, route }: any) {
                 },
               ]
             )
-          }, MENU_FADE_MS + 40)
+          }, MENU_CLOSE_MS + 40)
         }}
       />
       </View>
@@ -632,7 +641,7 @@ function DateMenu({
       setMounted(true)
       Animated.timing(opacity, {
         toValue: 1,
-        duration: MENU_FADE_MS,
+        duration: MENU_OPEN_MS,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }).start()
@@ -640,8 +649,13 @@ function DateMenu({
     }
     Animated.timing(opacity, {
       toValue: 0,
-      duration: MENU_FADE_MS,
-      easing: Easing.in(Easing.cubic),
+      duration: MENU_CLOSE_MS,
+      // Linear, not eased: starts fading the instant you tap (unlike
+      // ease-in, which sits still at first) and keeps fading visibly for
+      // the whole duration (unlike ease-out cubic, which front-loads most
+      // of the drop and leaves an almost-invisible tail that reads as an
+      // instant disappear instead of a fade).
+      easing: Easing.linear,
       useNativeDriver: true,
     }).start(({ finished }) => {
       if (finished) setMounted(false)
