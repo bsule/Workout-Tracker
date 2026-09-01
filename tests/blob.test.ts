@@ -195,6 +195,34 @@ describe("blob: migrations", () => {
     expect(snapshot.workouts[0].notes).toBe("")
   })
 
+  it("keeps workout.notes on a current-version snapshot", async () => {
+    // Guards the v5 blanking pass from ever running again on a live snapshot.
+    // If it does, every workout note the user wrote dies on the next boot.
+    const cur = {
+      ...emptySnapshot("dev"),
+      workouts: [
+        {
+          id: 1,
+          date: "2026-08-01",
+          status: "done" as const,
+          started_at: null,
+          finished_at: null,
+          gym: "",
+          notes: "elbow ached on the last set",
+          created_at: "2026-08-01T08:00:00.000Z",
+        },
+      ],
+      day_notes: [{ date: "2026-08-01", text: "slept badly" }],
+    }
+
+    const { snapshot } = await parse(gzipJson(cur))
+
+    expect(snapshot.workouts[0].notes).toBe("elbow ached on the last set")
+    expect(snapshot.day_notes).toEqual([
+      { date: "2026-08-01", text: "slept badly" },
+    ])
+  })
+
   it("does not mark a current-version snapshot as migrated", async () => {
     const cur = emptySnapshot("dev")
     const { migrated } = await parse(gzipJson(cur))

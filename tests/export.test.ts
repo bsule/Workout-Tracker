@@ -44,7 +44,7 @@ describe("buildCsv", () => {
 describe("buildJson", () => {
   it("produces a versioned snapshot payload with nested workouts", () => {
     const json = JSON.parse(buildJson(sample(), "tester"))
-    expect(json.version).toBe(1)
+    expect(json.version).toBe(2)
     expect(json.weight_unit).toBe("kg")
     expect(json.user.username).toBe("tester")
     expect(json.workouts).toHaveLength(1)
@@ -77,7 +77,27 @@ describe("buildJson", () => {
       { date: "2026-01-05", text: "felt strong" },
       { date: "2026-01-06", text: "rest day" },
     ])
-    expect(json.workouts[0].notes).toBe("felt strong")
+    // v2: the day note lives only in day_notes. workouts[].notes is the
+    // per-session note, which this snapshot doesn't set.
+    expect(json.workouts[0].notes).toBe("")
+  })
+
+  it("keeps the workout note separate from the day note", () => {
+    const snap = sample()
+    snap.day_notes = [{ date: "2026-01-05", text: "slept badly" }]
+    snap.workouts[0].notes = "dropped to 3x5"
+    const json = JSON.parse(buildJson(snap))
+    expect(json.day_notes).toEqual([{ date: "2026-01-05", text: "slept badly" }])
+    expect(json.workouts[0].notes).toBe("dropped to 3x5")
+  })
+
+  it("joins both notes into the single FitNotes CSV notes column", () => {
+    const snap = sample()
+    snap.day_notes = [{ date: "2026-01-05", text: "slept badly" }]
+    snap.workouts[0].notes = "dropped to 3x5"
+    const line = buildCsv(snap).split("\n")[1]
+    expect(line).toContain("slept badly")
+    expect(line).toContain("dropped to 3x5")
   })
 })
 

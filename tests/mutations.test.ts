@@ -281,3 +281,37 @@ describe("day notes", () => {
     expect(currentSnapshot().day_notes).toEqual([])
   })
 })
+
+describe("workout notes", () => {
+  it("sets a per-session note that is independent of the day note", () => {
+    const { row } = M.createWorkout("2026-08-16")
+    M.setDayNote("2026-08-16", "slept badly")
+    M.setWorkoutNote(row.id, "  dropped to 3x5  ")
+
+    const snap = currentSnapshot()
+    expect(snap.workouts.find((w) => w.id === row.id)?.notes).toBe(
+      "dropped to 3x5"
+    )
+    expect(snap.day_notes).toEqual([
+      { date: "2026-08-16", text: "slept badly" },
+    ])
+  })
+
+  it("clears on whitespace and dies with the workout, leaving the day note", () => {
+    const { row } = M.createWorkout("2026-08-16")
+    M.setDayNote("2026-08-16", "slept badly")
+    M.setWorkoutNote(row.id, "dropped to 3x5")
+
+    M.setWorkoutNote(row.id, "   ")
+    expect(currentSnapshot().workouts.find((w) => w.id === row.id)?.notes).toBe(
+      ""
+    )
+
+    M.setWorkoutNote(row.id, "back again")
+    M.deleteWorkout(row.id)
+    expect(currentSnapshot().workouts).toHaveLength(0)
+    expect(currentSnapshot().day_notes).toEqual([
+      { date: "2026-08-16", text: "slept badly" },
+    ])
+  })
+})

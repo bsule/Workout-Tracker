@@ -245,6 +245,11 @@ export async function importSnapshotJson(
     mode === "merge" ? (snap.day_notes ?? []).map((n) => n.date) : []
   )
 
+  // Export v1 put the day note on `workouts[].notes`; v2 puts the per-session
+  // note there and leaves the day note to `day_notes[]`. Read old files the
+  // old way so a v1 export still restores its day notes.
+  const workoutNotesAreSessionNotes = (data.version ?? 1) >= 2
+
   function takeDayNote(date: string, raw: string | null | undefined) {
     const text = (raw ?? "").toString().trim()
     if (!text) return
@@ -317,7 +322,7 @@ export async function importSnapshotJson(
       continue
     }
 
-    takeDayNote(w.date, w.notes)
+    if (!workoutNotesAreSessionNotes) takeDayNote(w.date, w.notes)
 
     const gym = (w.gym ?? "").toString()
     const workoutKey = `${w.date}|${gym.toLowerCase()}`
@@ -336,7 +341,7 @@ export async function importSnapshotJson(
         started_at: w.started_at ?? null,
         finished_at: w.finished_at ?? null,
         gym,
-        notes: "",
+        notes: workoutNotesAreSessionNotes ? (w.notes ?? "").toString().trim() : "",
         created_at: nowIso(),
       }
       workoutByDateGym.set(workoutKey, workout)

@@ -87,21 +87,29 @@ function migrate(snap: Snapshot): ParseResult {
       if (!text || existing.has(w.date)) continue
       existing.set(w.date, text)
     }
+    // Every note that mattered is now on the date. Blank the leftovers so a
+    // deleted day note cannot resurrect on export. This runs ONLY on the
+    // v4 -> v5 hop: from v6 on, workout.notes is a real per-session note and
+    // blanking it on every hydrate would silently delete user data.
     s = {
       ...s,
       day_notes: [...existing].map(([date, text]) => ({ date, text })),
-    }
-  }
-  // workout.notes is no longer canonical. Blank leftovers so a deleted day
-  // note cannot resurrect on export, and empty-workout cleanup (`!w.notes`)
-  // still treats picker-created days as disposable. Do not copy leftovers
-  // on already-v5 snapshots — the user may have cleared the day note.
-  if (s.workouts.some((w) => w.notes)) {
-    s = {
-      ...s,
       workouts: s.workouts.map((w) => (w.notes ? { ...w, notes: "" } : w)),
     }
-    migrated = true
+  }
+  if (v < 6) {
+    // v5 -> v6: workout.notes becomes canonical again, as a per-session note
+    // that coexists with the day_notes row for the same date. Under v5 the
+    // field was dead, so any value still on a v5 row is leftover garbage (a
+    // hand-built or partially-migrated blob) — blank it once here rather than
+    // promoting it to a session note the user never wrote. From v6 on nothing
+    // touches the field again.
+    s = {
+      ...s,
+      workouts: s.workouts.map((w) =>
+        w.notes ? { ...w, notes: "" } : { ...w, notes: w.notes ?? "" }
+      ),
+    }
   }
   return {
     snapshot: { ...s, schema_version: SCHEMA_VERSION },
