@@ -15,6 +15,7 @@ import {
   FlatList,
   Keyboard,
   LayoutAnimation,
+  type LayoutChangeEvent,
   Modal,
   Pressable,
   ScrollView,
@@ -59,6 +60,7 @@ import type {
 } from "@lift/core"
 import { Button } from "../components/Button"
 import { PopupModal } from "../components/PopupModal"
+import { HoldPressable } from "../components/HoldPressable"
 import { NotePreview } from "../components/NotePreview"
 import { PrIcon } from "../components/PrIcon"
 import { SetList as SharedSetList } from "../components/SetList"
@@ -198,35 +200,9 @@ function animateNext() {
   LayoutAnimation.configureNext(SET_ANIM)
 }
 
-// The form <-> selection-bar swap. An Animated `height` cannot do this
-// smoothly: height is a layout property, so every frame is a Yoga pass driven
-// from JS plus a bridge hop, and a ~200px collapse over the form and the whole
-// set list shows that up as stepping. LayoutAnimation hands the same swap to
-// the platform, which runs it on the UI thread.
-//
-// It also drops the measure-then-animate round trip the JS version needed,
-// which is why the first hold of a session was the worst one.
-const SELECTION_ANIM = {
-  duration: 220,
-  create: {
-    type: LayoutAnimation.Types.easeOut,
-    property: LayoutAnimation.Properties.opacity,
-    duration: 200,
-  },
-  update: {
-    type: LayoutAnimation.Types.easeInEaseOut,
-    duration: 220,
-  },
-  delete: {
-    type: LayoutAnimation.Types.easeIn,
-    property: LayoutAnimation.Properties.opacity,
-    duration: 140,
-  },
-} as const
-
-function animateSelectionSwap() {
-  LayoutAnimation.configureNext(SELECTION_ANIM)
-}
+// How long the form <-> selection-bar collapse runs. See the note at the
+// swap itself.
+const SWAP_MS = 240
 
 const EMPTY_HISTORY: ExerciseHistoryDay[] = []
 
@@ -842,21 +818,41 @@ export function SetLoggerScreen({ route, navigation }: any) {
     setError(null)
   }
 
+  // 0 = form showing, 1 = selection bar showing. Drives the collapse below:
+  // both the form and the bar stay mounted the whole time (see the swap
+  // itself for why), so this is the only thing that needs to change on
+  // selectionMode's transitions.
+  const swapAnim = useRef(new Animated.Value(selectionMode ? 1 : 0)).current
+  // Measured height of the selection bar. Starts at a reasonable guess;
+  // corrected by the bar's own onLayout before the user can ever trigger a
+  // collapse, since the bar is mounted (off to the side, opacity 0) from the
+  // screen's first paint.
+  const [barHeight, setBarHeight] = useState(64)
+
+  useEffect(() => {
+    // Entering selection hides the form without unmounting it (see the swap
+    // itself), so a focused NumericField would otherwise leave the keyboard
+    // up over an invisible input.
+    if (selectionMode) Keyboard.dismiss()
+    Animated.timing(swapAnim, {
+      toValue: selectionMode ? 1 : 0,
+      duration: SWAP_MS,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: false, // height can't run on the native driver
+    }).start()
+    // swapAnim is a stable ref; re-running this on every render would
+    // restart the animation from its current position each time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectionMode])
+
   function toggleSelected(id: number) {
     const next = selectedIds.includes(id)
       ? selectedIds.filter((x) => x !== id)
       : [...selectedIds, id]
-    // Only the first and last item change the layout - that is when the form
-    // and the bar swap. configureNext must run before the state update that
-    // causes the change, so it cannot live in an effect.
-    if ((selectedIds.length === 0) !== (next.length === 0)) {
-      animateSelectionSwap()
-    }
     setSelectedIds(next)
   }
 
   function clearSelection() {
-    if (selectedIds.length > 0) animateSelectionSwap()
     setSelectedIds([])
   }
 
@@ -1078,38 +1074,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
           )}
         </View>
 
-        {tab === "workout" && selectionMode && (
-          // One compact row replacing a ~260px form. The set list slides up to
-          // meet it, animated natively by SELECTION_ANIM - see the note there
-          // for why this is not an Animated height.
-          <View style={[styles.card, styles.selectionBar]}>
-            <Pressable
-              onPress={clearSelection}
-              hitSlop={12}
-              style={styles.selectionCancelBtn}
-            >
-              <Ionicons name="close" size={22} color={theme.colors.foreground} />
-            </Pressable>
-            <Text style={styles.selectionCount}>
-              {selectedIds.length} selected
-            </Text>
-            <Pressable
-              onPress={confirmDeleteSelected}
-              style={({ pressed }) => [
-                styles.selectionDeleteBtn,
-                pressed && { opacity: 0.85 },
-              ]}
-            >
-              <Ionicons
-                name="trash-outline"
-                size={16}
-                color={theme.colors.destructive}
-              />
-            <Text style={styles.selectionDeleteText}>Delete</Text>
-          </Pressable>
-          </View>
-        )}
-        {tab === "workout" && !selectionMode && !firstPaintDone && (
+        {tab === "workout" && !firstPaintDone && (
           // First-frame placeholder. Reserves the form's vertical space so the
           // slide-in silhouette doesn't shift when the real form mounts one
           // rAF later. iOS native-stack waits for the destination's first
@@ -1120,79 +1085,138 @@ export function SetLoggerScreen({ route, navigation }: any) {
           // Height derivation lives on FORM_PLACEHOLDER_STYLE.
           <View style={[styles.card, FORM_PLACEHOLDER_STYLE]} />
         )}
-        {tab === "workout" && !selectionMode && firstPaintDone && (
+        {tab === "workout" && firstPaintDone && (
+          // The form <-> selection-bar swap: this wrapper's height animates
+          // from the form's height down to the bar's (and back), so the set
+          // list below visibly slides up to meet the bar and back down when
+          // the selection clears. Both layers stay mounted the whole time,
+          // absolutely positioned on top of each other, and cross-fade via
+          // swapAnim - only their opacity and this wrapper's height ever
+          // change, so nothing below this ~260px card re-lays out.
           <Animated.View
-            style={[
-              styles.card,
-              // No scale transform: a scale tied to the 0↔1 edit toggle (whose
-              // endpoints are both scale 1) can only ever pulse mid-transition,
-              // which reads as a "pop". The smooth edit cue is the white border
-              // fading in (below) + the Save↔Update label cross-fade, both
-              // riding editAnim's 280ms cubic timing.
-            ]}
+            style={{
+              height: swapAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [FORM_PLACEHOLDER_STYLE.minHeight, barHeight],
+              }),
+              overflow: "hidden",
+            }}
           >
-            {/* Absolute overlay that fades a white border in/out. Using
-             *  opacity (native-supported) keeps everything on the native
-             *  driver, avoiding the JS/native mixing error. */}
             <Animated.View
-              pointerEvents="none"
-              style={[styles.cardEditBorder, { opacity: editAnim }]}
-            />
-            <NumericField
-              label={
-                isCardio
-                  ? editingSetId != null ? "Time (editing)" : "Time"
-                  : editingSetId != null ? "Weight (editing)" : "Weight"
+              onLayout={(e: LayoutChangeEvent) =>
+                setBarHeight(e.nativeEvent.layout.height)
               }
-              unit={isCardio ? "min" : unit}
-              value={weight}
-              step={isCardio ? 1 : step}
-              min={0}
-              onChange={setWeight}
-              allowDecimal
-            />
-            <NumericField
-              label={isCardio ? "Level" : "Reps"}
-              value={reps}
-              step={1}
-              min={0}
-              onChange={setReps}
-            />
-            {editingSetId != null && showRestTime && editingRestAnchorIso != null && (
+              pointerEvents={selectionMode ? "auto" : "none"}
+              style={[
+                styles.card,
+                styles.selectionBar,
+                styles.swapLayer,
+                { opacity: swapAnim, zIndex: selectionMode ? 2 : 1 },
+              ]}
+            >
+              <Pressable
+                onPress={clearSelection}
+                hitSlop={12}
+                style={styles.selectionCancelBtn}
+              >
+                <Ionicons name="close" size={22} color={theme.colors.foreground} />
+              </Pressable>
+              <Text style={styles.selectionCount}>
+                {selectedIds.length} selected
+              </Text>
+              <Pressable
+                onPress={confirmDeleteSelected}
+                style={({ pressed }) => [
+                  styles.selectionDeleteBtn,
+                  pressed && { opacity: 0.85 },
+                ]}
+              >
+                <Ionicons
+                  name="trash-outline"
+                  size={16}
+                  color={theme.colors.destructive}
+                />
+                <Text style={styles.selectionDeleteText}>Delete</Text>
+              </Pressable>
+            </Animated.View>
+
+            <Animated.View
+              pointerEvents={selectionMode ? "none" : "auto"}
+              style={[
+                styles.card,
+                styles.swapLayer,
+                {
+                  opacity: swapAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [1, 0],
+                  }),
+                  zIndex: selectionMode ? 1 : 2,
+                },
+              ]}
+            >
+              {/* Absolute overlay that fades a white border in/out. Using
+               *  opacity (native-supported) keeps everything on the native
+               *  driver, avoiding the JS/native mixing error. */}
+              <Animated.View
+                pointerEvents="none"
+                style={[styles.cardEditBorder, { opacity: editAnim }]}
+              />
               <NumericField
-                label="Rest (sec)"
-                value={restSec}
-                step={5}
+                label={
+                  isCardio
+                    ? editingSetId != null ? "Time (editing)" : "Time"
+                    : editingSetId != null ? "Weight (editing)" : "Weight"
+                }
+                unit={isCardio ? "min" : unit}
+                value={weight}
+                step={isCardio ? 1 : step}
                 min={0}
-                onChange={setRestSec}
+                onChange={setWeight}
+                allowDecimal
               />
-            )}
-            {error && <Text style={styles.error}>{error}</Text>}
-            <View style={{ flexDirection: "row", gap: 12 }}>
-              <PhaseButton
-                defaultLabel="Save"
-                altLabel="Update"
-                phase={editAnim}
-                onPress={save}
-                style={{ flex: 1 }}
+              <NumericField
+                label={isCardio ? "Level" : "Reps"}
+                value={reps}
+                step={1}
+                min={0}
+                onChange={setReps}
               />
-              <PhaseButton
-                defaultLabel="Clear"
-                altLabel="Cancel"
-                phase={editAnim}
-                variant="secondary"
-                onPress={() => {
-                  if (editingSetId != null) {
-                    cancelEdit()
-                  } else {
-                    setWeight(0)
-                    setReps(0)
-                    setError(null)
-                  }
-                }}
-                style={{ flex: 1 }}
-              />
-            </View>
+              {editingSetId != null && showRestTime && editingRestAnchorIso != null && (
+                <NumericField
+                  label="Rest (sec)"
+                  value={restSec}
+                  step={5}
+                  min={0}
+                  onChange={setRestSec}
+                />
+              )}
+              {error && <Text style={styles.error}>{error}</Text>}
+              <View style={{ flexDirection: "row", gap: 12 }}>
+                <PhaseButton
+                  defaultLabel="Save"
+                  altLabel="Update"
+                  phase={editAnim}
+                  onPress={save}
+                  style={{ flex: 1 }}
+                />
+                <PhaseButton
+                  defaultLabel="Clear"
+                  altLabel="Cancel"
+                  phase={editAnim}
+                  variant="secondary"
+                  onPress={() => {
+                    if (editingSetId != null) {
+                      cancelEdit()
+                    } else {
+                      setWeight(0)
+                      setReps(0)
+                      setError(null)
+                    }
+                  }}
+                  style={{ flex: 1 }}
+                />
+              </View>
+            </Animated.View>
           </Animated.View>
         )}
       </Pressable>
@@ -2734,11 +2758,6 @@ function SetList({
   onDelete: (s: WorkoutSet) => void
 }) {
   const selectionMode = selectedIds.length > 0
-  // Set by a row's long press, cleared on the next press-in. Only one row can
-  // be under the finger at a time, so one ref covers the whole list. Without
-  // it the release after a hold also fires onPress, which in selection mode
-  // toggles the row the hold just selected straight back off.
-  const heldRef = useRef(false)
   const openSwipeableRef = useRef<Swipeable | null>(null)
   const swipeableRefs = useRef(new Map<number, Swipeable | null>())
   // Imperative close (no state, no re-renders) — fired from each
@@ -2838,22 +2857,18 @@ function SetList({
         const skipFade = (skipFadeIds?.has(s.id) ?? false) || isNewlyAdded
 
         const body = (
-          <Pressable
-            onLongPress={() => {
-              heldRef.current = true
-              onLongPress(s)
-            }}
-            // No hold ramp on this row, so the wait is blind. 350ms of
-            // nothing reads as the screen being slow to answer.
-            delayLongPress={250}
-            onPressIn={() => {
-              heldRef.current = false
-            }}
+          <HoldPressable
+            // undefined (not a no-op) for planned rows: HoldPressable only
+            // runs the ramp when onLongPress is set, and a planned row
+            // holding to select nothing shouldn't promise an action.
+            onLongPress={s.is_planned ? undefined : () => onLongPress(s)}
+            // No shrink: this row is flush edge-to-edge in the list, not a
+            // standalone card, so scaling it down would pull its background
+            // in from the sides and expose the card behind it.
+            holdScale={1}
+            // Matches the delay this row used before it had a ramp.
+            holdDelay={250}
             onPress={() => {
-              // RN fires onPressOut before onPress, so the flag the long press
-              // set is still standing here. Lifting after a hold ends that
-              // gesture; it is not also a tap.
-              if (heldRef.current) return
               if (s.is_planned) {
                 onPlannedTap(s)
                 return
@@ -2935,7 +2950,7 @@ function SetList({
               </View>
             )}
 
-          </Pressable>
+          </HoldPressable>
         )
 
         // Swipe-to-delete only for logged sets (not planned targets, since
@@ -3305,6 +3320,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   fixedTop: { padding: theme.spacing[4], gap: theme.spacing[4] },
+  // The form and the bar stack on top of each other inside the animated
+  // height wrapper - see the swap itself.
+  swapLayer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+  },
   contentScroll: {
     flex: 1,
     backgroundColor: theme.colors.background,
