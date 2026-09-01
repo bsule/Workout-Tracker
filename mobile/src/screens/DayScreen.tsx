@@ -25,6 +25,7 @@ import {
 } from "react-native"
 import {
   localApi as api,
+  batchMutations,
   lastSetTimeOf,
   startPlannedWorkout,
   useHydrated,
@@ -33,6 +34,7 @@ import {
   getWorkoutByDateQ,
   getDayNoteQ,
   setDayNote,
+  setWorkoutNote,
   deleteWorkout,
   workoutDurationSeconds,
 } from "@lift/core"
@@ -43,6 +45,8 @@ import { Button } from "../components/Button"
 import { CategoryPill } from "../components/CategoryPill"
 import { SetList } from "../components/SetList"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
+import { CollapseIn, FadeHighlight, SlideDownIn } from "../components/Fade"
+import { HoldPressable } from "../components/HoldPressable"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
 import { useActiveDateAndSetter } from "../state/activeDate"
@@ -179,10 +183,13 @@ export function DayScreen({ navigation, route }: any) {
   const [dateMenuOpen, setDateMenuOpen] = useState(false)
   const [noteSheetOpen, setNoteSheetOpen] = useState(false)
   const [noteSheetMode, setNoteSheetMode] = useState<"view" | "edit">("view")
+  // Which note the one shared sheet is editing: the date's or the session's.
+  const [noteKind, setNoteKind] = useState<NoteKind>("day")
   const [noteDraft, setNoteDraft] = useState("")
   const [noteOriginal, setNoteOriginal] = useState("")
   const [menuCtx, setMenuCtx] = useState({
     note: "",
+    workoutNote: "",
     hasExercises: false,
     workoutId: null as number | null,
   })
@@ -192,15 +199,36 @@ export function DayScreen({ navigation, route }: any) {
     setNoteSheetOpen(false)
   }, [date])
 
-  const openNoteSheet = useCallback((mode: "view" | "edit") => {
-    const n = getDayNoteQ(date)
-    setNoteDraft(n)
-    setNoteOriginal(n)
-    setNoteSheetMode(mode)
-    setNoteSheetOpen(true)
-  }, [date])
-  const openNoteViewer = useCallback(() => openNoteSheet("view"), [openNoteSheet])
-  const openNoteEditor = useCallback(() => openNoteSheet("edit"), [openNoteSheet])
+  const openNoteSheet = useCallback(
+    (mode: "view" | "edit", kind: NoteKind) => {
+      const n =
+        kind === "day"
+          ? getDayNoteQ(date)
+          : getState().indexes.workoutsByDate.get(date)?.notes ?? ""
+      setNoteDraft(n)
+      setNoteOriginal(n)
+      setNoteKind(kind)
+      setNoteSheetMode(mode)
+      setNoteSheetOpen(true)
+    },
+    [date]
+  )
+  const openNoteViewer = useCallback(
+    () => openNoteSheet("view", "day"),
+    [openNoteSheet]
+  )
+  const openNoteEditor = useCallback(
+    () => openNoteSheet("edit", "day"),
+    [openNoteSheet]
+  )
+  const openWorkoutNoteViewer = useCallback(
+    () => openNoteSheet("view", "workout"),
+    [openNoteSheet]
+  )
+  const openWorkoutNoteEditor = useCallback(
+    () => openNoteSheet("edit", "workout"),
+    [openNoteSheet]
+  )
 
   function openDateMenu() {
     const { indexes } = getState()
@@ -214,6 +242,7 @@ export function DayScreen({ navigation, route }: any) {
     }
     setMenuCtx({
       note: getDayNoteQ(date),
+      workoutNote: w?.notes ?? "",
       hasExercises,
       workoutId: w?.id ?? null,
     })
@@ -259,6 +288,7 @@ export function DayScreen({ navigation, route }: any) {
             onToggleSelected={isCurrent ? toggleSelected : noop}
             onClearSelection={isCurrent ? clearSelection : noop}
             onOpenNotes={isCurrent ? openNoteViewer : noop}
+            onOpenWorkoutNotes={isCurrent ? openWorkoutNoteViewer : noop}
           />
         </View>
       )
@@ -273,6 +303,7 @@ export function DayScreen({ navigation, route }: any) {
       toggleSelected,
       clearSelection,
       openNoteViewer,
+      openWorkoutNoteViewer,
     ]
   )
 
@@ -325,6 +356,16 @@ export function DayScreen({ navigation, route }: any) {
           setDateMenuOpen(false)
           setTimeout(() => setDayNote(date, ""), MENU_CLOSE_MS + 40)
         }}
+        onAddWorkoutNote={() => {
+          setDateMenuOpen(false)
+          setTimeout(openWorkoutNoteEditor, MENU_CLOSE_MS + 40)
+        }}
+        onClearWorkoutNote={() => {
+          const id = menuCtx.workoutId
+          setDateMenuOpen(false)
+          if (id == null) return
+          setTimeout(() => setWorkoutNote(id, ""), MENU_CLOSE_MS + 40)
+        }}
         onOpenCalendar={() => {
           setDateMenuOpen(false)
           setTimeout(() => {
@@ -356,13 +397,21 @@ export function DayScreen({ navigation, route }: any) {
       </View>
       <DayNoteEditorSheet
         visible={noteSheetOpen}
+        kind={noteKind}
         mode={noteSheetMode}
         draft={noteDraft}
         original={noteOriginal}
         onChangeDraft={setNoteDraft}
         onEdit={() => setNoteSheetMode("edit")}
         onClose={() => setNoteSheetOpen(false)}
-        onSave={() => setDayNote(date, noteDraft)}
+        onSave={() => {
+          if (noteKind === "day") {
+            setDayNote(date, noteDraft)
+            return
+          }
+          const id = getState().indexes.workoutsByDate.get(date)?.id
+          if (id != null) setWorkoutNote(id, noteDraft)
+        }}
       />
     </StaticSafeAreaView>
   )
@@ -377,6 +426,7 @@ function DayContent({
   onToggleSelected,
   onClearSelection,
   onOpenNotes,
+  onOpenWorkoutNotes,
 }: {
   date: string
   navigation: any
@@ -386,7 +436,47 @@ function DayContent({
   onToggleSelected: (weId: number) => void
   onClearSelection: () => void
   onOpenNotes: () => void
+  onOpenWorkoutNotes: () => void
 }) {
+  // The bar outlives selectionMode so it can play its exit. barCount holds the
+  // last real count, or the label would read "0 selected" as it fades out.
+  const [barMounted, setBarMounted] = useState(false)
+  const [barCount, setBarCount] = useState(0)
+  useEffect(() => {
+    if (!selectionMode) return
+    setBarMounted(true)
+    setBarCount(selectedIds.length)
+  }, [selectionMode, selectedIds.length])
+  // Coming back is the half that was missing. The bar animated out, then the
+  // summary strip appeared at full opacity in the same frame - so the exit
+  // ended in a pop. stripFade rests at 1 so a normal day view is untouched;
+  // only the return from selection animates.
+  const stripFade = useRef(new Animated.Value(1)).current
+  // Start the timing from an effect, not here: the strip has not mounted at
+  // this point, so the native driver would have no node to attach to and the
+  // view would land at its final value.
+  const [stripEntering, setStripEntering] = useState(false)
+  const hideBar = useCallback(() => {
+    setBarMounted(false)
+    stripFade.setValue(0)
+    setStripEntering(true)
+  }, [stripFade])
+  useEffect(() => {
+    if (!stripEntering) return
+    setStripEntering(false)
+    Animated.timing(stripFade, {
+      toValue: 1,
+      duration: 190,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start()
+  }, [stripEntering, stripFade])
+  // An off-screen pager page unmounts the bar without playing its exit, so
+  // onExited never fires. Reset here or the summary strip stays hidden.
+  useEffect(() => {
+    if (!interactive) setBarMounted(false)
+  }, [interactive])
+
   const hydrated = useHydrated()
   const snapshot = useStore((s) => s.snapshot)
   const rawWorkout = useMemo(
@@ -439,10 +529,16 @@ function DayContent({
         {
           text: "Remove",
           style: "destructive",
-          onPress: async () => {
-            for (const weId of selectedIds) {
-              await api.removeExerciseFromWorkout(workout.id, weId)
-            }
+          onPress: () => {
+            // No await in the loop, and one commit for the batch. localApi
+            // resolves against the in-memory snapshot, so awaiting only
+            // yields to React between removals — each one then recomputes
+            // PRs, rebuilds indexes and re-renders on its own.
+            batchMutations(() => {
+              for (const weId of selectedIds) {
+                api.removeExerciseFromWorkout(workout.id, weId)
+              }
+            })
             onClearSelection()
           },
         },
@@ -456,47 +552,53 @@ function DayContent({
     [hydrated, date, snapshot]
   )
 
+  const showSummary = !!(workout || dayNote)
+  const showBanner = workout?.status === "planned"
+
   return (
     <View style={{ flex: 1 }}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scroll}>
-        {selectionMode && interactive ? (
-          <View style={styles.selectionBar}>
-            <Pressable
-              onPress={onClearSelection}
-              hitSlop={12}
-              style={styles.selectionCancelBtn}
-            >
-              <Ionicons name="close" size={22} color={theme.colors.foreground} />
-            </Pressable>
-            <Text style={styles.selectionCount}>
-              {selectedIds.length} selected
-            </Text>
-            <Pressable
-              onPress={confirmDeleteSelected}
-              style={({ pressed }) => [
-                styles.selectionRemoveBtn,
-                pressed && { opacity: 0.85 },
-              ]}
-            >
-              <Ionicons name="trash-outline" size={16} color={theme.colors.destructive} />
-              <Text style={styles.selectionRemoveText}>Remove</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <>
-            {(workout || dayNote) && (
+        {barMounted && interactive ? (
+          <SelectionBar
+            count={barCount}
+            active={selectionMode}
+            onClear={onClearSelection}
+            onRemove={confirmDeleteSelected}
+            onExited={hideBar}
+          />
+        ) : showSummary || showBanner ? (
+          // Wrapper carries the scroll container's own gap so the two cards
+          // keep their spacing, and is skipped entirely when neither renders -
+          // an empty View would still collect the parent's 16px gap.
+          <Animated.View
+            style={{
+              gap: theme.spacing[4],
+              opacity: stripFade,
+              transform: [
+                {
+                  translateY: stripFade.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-10, 0],
+                  }),
+                },
+              ],
+            }}
+          >
+            {showSummary && (
               <SummaryStrip
                 workout={workout ?? null}
                 note={dayNote}
+                workoutNote={workout?.notes ?? ""}
                 onOpenNotes={onOpenNotes}
+                onOpenWorkoutNotes={onOpenWorkoutNotes}
                 onOpenPicker={() => setGymPickerOpen(true)}
               />
             )}
-            {workout?.status === "planned" && (
+            {showBanner && (
               <PlannedBanner date={date} onStart={handleStart} />
             )}
-          </>
-        )}
+          </Animated.View>
+        ) : null}
 
         {workout && workout.exercises.length > 0 ? (
           <View style={{ gap: theme.spacing[3] }}>
@@ -597,6 +699,9 @@ function DateNav({
   )
 }
 
+/** The day screen carries two notes: one on the date, one on the session. */
+type NoteKind = "day" | "workout"
+
 function noteActionLabel(date: string, hasNote: boolean): string {
   const t = todayString()
   if (date === t) return hasNote ? "Edit today's note" : "Add a note for today"
@@ -617,6 +722,8 @@ function DateMenu({
   onClose,
   onAddNote,
   onClearNote,
+  onAddWorkoutNote,
+  onClearWorkoutNote,
   onOpenCalendar,
   onDeleteWorkout,
 }: {
@@ -624,12 +731,15 @@ function DateMenu({
   visible: boolean
   ctx: {
     note: string
+    workoutNote: string
     hasExercises: boolean
     workoutId: number | null
   }
   onClose: () => void
   onAddNote: () => void
   onClearNote: () => void
+  onAddWorkoutNote: () => void
+  onClearWorkoutNote: () => void
   onOpenCalendar: () => void
   onDeleteWorkout: () => void
 }) {
@@ -665,6 +775,7 @@ function DateMenu({
   if (!mounted) return null
 
   const hasNote = !!ctx.note.trim()
+  const hasWorkoutNote = !!ctx.workoutNote.trim()
 
   return (
     <Animated.View
@@ -688,6 +799,21 @@ function DateMenu({
             icon="close-circle-outline"
             label="Remove this day's note"
             onPress={onClearNote}
+          />
+        )}
+        {ctx.workoutId != null && (
+          <DateMenuRow
+            icon="barbell-outline"
+            label={hasWorkoutNote ? "Edit workout note" : "Add a workout note"}
+            hint={hasWorkoutNote ? "Only this session" : "How the session went"}
+            onPress={onAddWorkoutNote}
+          />
+        )}
+        {ctx.workoutId != null && hasWorkoutNote && (
+          <DateMenuRow
+            icon="close-circle-outline"
+            label="Remove this workout's note"
+            onPress={onClearWorkoutNote}
           />
         )}
         <DateMenuRow
@@ -863,12 +989,16 @@ function labelForDate(d: string): string {
 function SummaryStrip({
   workout,
   note,
+  workoutNote,
   onOpenNotes,
+  onOpenWorkoutNotes,
   onOpenPicker,
 }: {
   workout: Workout | null
   note: string
+  workoutNote: string
   onOpenNotes: () => void
+  onOpenWorkoutNotes: () => void
   onOpenPicker: () => void
 }) {
   // Show start/end/duration whenever the workout has a real `started_at` -
@@ -902,13 +1032,33 @@ function SummaryStrip({
               ]}
               hitSlop={8}
             >
-              <Text style={styles.summaryMetaLabel}>Notes</Text>
+              <Text style={styles.summaryMetaLabel}>Day</Text>
               <Text
                 style={styles.summaryNoteText}
                 numberOfLines={1}
                 ellipsizeMode="tail"
               >
                 {note.replace(/\s+/g, " ").trim()}
+              </Text>
+            </Pressable>
+          )}
+          {!!workoutNote.trim() && (
+            <Pressable
+              onPress={onOpenWorkoutNotes}
+              unstable_pressDelay={0}
+              style={({ pressed }) => [
+                styles.summaryNoteHit,
+                pressedStyle(pressed),
+              ]}
+              hitSlop={8}
+            >
+              <Text style={styles.summaryMetaLabel}>Workout</Text>
+              <Text
+                style={styles.summaryNoteText}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {workoutNote.replace(/\s+/g, " ").trim()}
               </Text>
             </Pressable>
           )}
@@ -1137,6 +1287,7 @@ function GymPickerModal({
 const NOTE_FADE_MS = 180
 function DayNoteEditorSheet({
   visible,
+  kind,
   mode,
   original,
   draft,
@@ -1146,6 +1297,7 @@ function DayNoteEditorSheet({
   onSave,
 }: {
   visible: boolean
+  kind: NoteKind
   mode: "view" | "edit"
   original: string
   draft: string
@@ -1209,7 +1361,9 @@ function DayNoteEditorSheet({
         style={styles.noteOverlayCard}
         onStartShouldSetResponder={() => true}
       >
-        <Text style={styles.noteOverlayTitle}>Day notes</Text>
+        <Text style={styles.noteOverlayTitle}>
+          {kind === "day" ? "Day notes" : "Workout notes"}
+        </Text>
         {viewing ? (
           <ScrollView
             style={styles.noteViewScroll}
@@ -1222,7 +1376,9 @@ function DayNoteEditorSheet({
             ref={inputRef}
             value={draft}
             onChangeText={onChangeDraft}
-            placeholder="How did today go?"
+            placeholder={
+              kind === "day" ? "How did today go?" : "How did the session go?"
+            }
             placeholderTextColor={theme.colors.muted}
             multiline
             style={styles.noteSheetInput}
@@ -1327,16 +1483,15 @@ function ExerciseRow({
   const allPlanned = setCount > 0 && loggedCount === 0
 
   return (
-    <Pressable
+    <HoldPressable
       onPress={onPress}
-      onLongPress={onLongPress}
-      delayLongPress={350}
+      onLongPress={selectionMode ? undefined : onLongPress}
       style={({ pressed }) => [
         styles.exerciseCard,
         pressedStyle(pressed && !selectionMode),
-        isSelected && styles.exerciseCardSelected,
       ]}
     >
+      <FadeHighlight active={isSelected} style={styles.exerciseCardSelected} />
       <View style={styles.exerciseInner}>
         <View style={styles.exerciseHeader}>
           <Text style={styles.exerciseName} numberOfLines={1}>
@@ -1356,13 +1511,16 @@ function ExerciseRow({
               </View>
             )}
             <CategoryPill slug={we.exercise.category} />
-            {isSelected && (
+            {/* Collapses its width instead of unmounting, so the category
+             *  pill slides back rather than snapping when you deselect.
+             *  width 20 = the icon; gap 8 = exerciseHeaderRight's flex gap. */}
+            <CollapseIn active={isSelected} width={20} gap={8}>
               <Ionicons
                 name="checkmark-circle"
                 size={20}
                 color={theme.colors.foreground}
               />
-            )}
+            </CollapseIn>
           </View>
         </View>
 
@@ -1376,7 +1534,46 @@ function ExerciseRow({
           </View>
         )}
       </View>
-    </Pressable>
+    </HoldPressable>
+  )
+}
+
+// The multi-select toolbar. It fades and eases down into place when selection
+// starts, so the summary strip it replaces does not snap away.
+function SelectionBar({
+  count,
+  active,
+  onClear,
+  onRemove,
+  onExited,
+}: {
+  count: number
+  active: boolean
+  onClear: () => void
+  onRemove: () => void
+  onExited: () => void
+}) {
+  return (
+    <SlideDownIn
+      style={styles.selectionBar}
+      active={active}
+      onExited={onExited}
+    >
+      <Pressable onPress={onClear} hitSlop={12} style={styles.selectionCancelBtn}>
+        <Ionicons name="close" size={22} color={theme.colors.foreground} />
+      </Pressable>
+      <Text style={styles.selectionCount}>{count} selected</Text>
+      <Pressable
+        onPress={onRemove}
+        style={({ pressed }) => [
+          styles.selectionRemoveBtn,
+          pressed && { opacity: 0.85 },
+        ]}
+      >
+        <Ionicons name="trash-outline" size={16} color={theme.colors.destructive} />
+        <Text style={styles.selectionRemoveText}>Remove</Text>
+      </Pressable>
+    </SlideDownIn>
   )
 }
 
@@ -1778,7 +1975,10 @@ const styles = StyleSheet.create({
     textAlign: "right",
   },
   exerciseCardSelected: {
+    ...StyleSheet.absoluteFillObject,
     borderColor: theme.colors.foreground,
+    borderWidth: 1,
+    borderRadius: theme.radius.lg - 1,
     backgroundColor: "rgba(255,255,255,0.04)",
   },
   selectionBar: {
