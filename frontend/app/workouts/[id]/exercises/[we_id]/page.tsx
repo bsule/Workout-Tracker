@@ -11,11 +11,18 @@ import {
   Settings as SettingsIcon,
   Trophy,
 } from "lucide-react"
-import { useStore, useHydrated, localApi as api, deleteWorkout } from "@/lib/store"
+import {
+  useStore,
+  useHydrated,
+  localApi as api,
+  deleteWorkout,
+  setExerciseNote,
+} from "@/lib/store"
 import { FullPageLoader, LoadingBlock } from "@/components/ui/Spinner"
 import { getWorkoutQ, getExerciseHistoryQ } from "@/lib/store/queries"
 import { useAuth } from "@/components/auth/AuthProvider"
 import { CategoryDot } from "@/components/exercises/CategoryBadge"
+import { ExerciseNoteField } from "@/components/workouts/ExerciseNoteField"
 import { SetLogger } from "@/components/workouts/SetLogger"
 import { ExerciseChart } from "@/components/workouts/ExerciseChart"
 import { ExerciseHistory } from "@/components/workouts/ExerciseHistory"
@@ -114,11 +121,17 @@ export default function ExerciseLoggerPage({
           Workout
         </Link>
         {we && (
-          <div className="flex items-center gap-3">
+          <div className="flex items-start gap-3">
             <CategoryDot category={we.exercise.category} size="md" />
-            <h1 className="text-2xl font-bold tracking-tight">
-              {we.exercise.name}
-            </h1>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-2xl font-bold tracking-tight">
+                {we.exercise.name}
+              </h1>
+              <ExerciseNoteField
+                note={we.note}
+                onSave={(text) => setExerciseNote(we.id, text)}
+              />
+            </div>
           </div>
         )}
       </div>

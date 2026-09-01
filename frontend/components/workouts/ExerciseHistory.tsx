@@ -3,6 +3,7 @@
 import type { ExerciseHistoryDay } from "@/types"
 import { cn, formatDayLabel, parseLocalDate } from "@/lib/utils"
 import { PrIcon } from "@/components/workouts/PrIcon"
+import { NotePreview } from "@/components/workouts/NotePreview"
 import { formatWeight, fromKg, roundForDisplay } from "@/lib/units"
 import {
   useShowPositionPrs,
@@ -102,6 +103,14 @@ function DayBlock({
           </div>
         )}
       </div>
+      {day.note && (
+        <div className="border-b border-white/5 px-4 py-2">
+          <NotePreview
+            note={day.note}
+            className="text-xs italic text-muted-foreground"
+          />
+        </div>
+      )}
       <ul className="divide-y divide-white/5">
         {day.sets.map((s, i) => (
           <li key={s.id} className="px-4 py-2.5 text-sm">

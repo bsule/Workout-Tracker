@@ -34,6 +34,7 @@ import { Swipeable } from "react-native-gesture-handler"
 import {
   addExerciseToWorkout,
   batchMutations,
+  setExerciseNote,
   createWorkout,
   defaultStep,
   deleteWorkout,
@@ -58,6 +59,7 @@ import type {
 } from "@lift/core"
 import { Button } from "../components/Button"
 import { PopupModal } from "../components/PopupModal"
+import { NotePreview } from "../components/NotePreview"
 import { PrIcon } from "../components/PrIcon"
 import { SetList as SharedSetList } from "../components/SetList"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
@@ -486,6 +488,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
     const stubWe: WorkoutExercise = {
       id: -1,
       order: 0,
+      note: "",
       exercise: {
         id: p.exerciseId,
         name: p.exerciseName,
@@ -774,6 +777,19 @@ export function SetLoggerScreen({ route, navigation }: any) {
     api.updateSet(id, { note }).catch(() => {})
   }
 
+  // Note about this exercise on this day. Separate from a set's own note and
+  // from the session note on the workout.
+  const [exNoteOpen, setExNoteOpen] = useState(false)
+  const [exNoteDraft, setExNoteDraft] = useState("")
+  function openExerciseNote() {
+    setExNoteDraft(we?.note ?? "")
+    setExNoteOpen(true)
+  }
+  function persistExerciseNote() {
+    if (!we) return
+    setExerciseNote(we.id, exNoteDraft)
+  }
+
   // Smooth edit-mode transition. Single Animated.Value, fully native-driven
   // (scale + opacity). The "white border while editing" effect is done via
   // an absolute-positioned overlay whose opacity rides this value — mixing
@@ -1035,6 +1051,31 @@ export function SetLoggerScreen({ route, navigation }: any) {
         <View style={styles.titleWrap}>
           <Text style={styles.exerciseName}>{we.exercise.name}</Text>
           <Text style={styles.exerciseMeta}>{we.exercise.category}</Text>
+          {/* Hidden for the pendingCreate stub, whose id is -1: there is no
+           *  workout_exercise row yet, so a note written here would be
+           *  dropped without telling the user. The stub is replaced within a
+           *  frame or two of the real row landing. */}
+          {we.id > 0 && (
+            <Pressable onPress={openExerciseNote} hitSlop={8} style={styles.exNoteRow}>
+              <Ionicons
+                name="document-text-outline"
+                size={12}
+                color={theme.colors.muted}
+              />
+              <View style={styles.exNoteBody}>
+                {we.note.trim() ? (
+                  <NotePreview note={we.note} style={styles.exNoteText} />
+                ) : (
+                  <Text
+                    style={[styles.exNoteText, styles.exNoteEmpty]}
+                    numberOfLines={1}
+                  >
+                    Add a note for this exercise
+                  </Text>
+                )}
+              </View>
+            </Pressable>
+          )}
         </View>
 
         {tab === "workout" && selectionMode && (
@@ -1223,6 +1264,16 @@ export function SetLoggerScreen({ route, navigation }: any) {
           onChangeDraft={setNoteDraft}
           onClose={closeNoteEditor}
           onSave={persistNote}
+        />
+      )}
+      {firstPaintDone && (
+        <NoteEditorSheet
+          visible={exNoteOpen}
+          original={we.note}
+          draft={exNoteDraft}
+          onChangeDraft={setExNoteDraft}
+          onClose={() => setExNoteOpen(false)}
+          onSave={persistExerciseNote}
         />
       )}
       <PlannedSetActionsModal
@@ -1473,6 +1524,11 @@ const HistoryDayCard = memo(function HistoryDayCard({
           </Pressable>
         )}
       </View>
+      {!!day.note && (
+        <View style={styles.dayCardNoteWrap}>
+          <NotePreview note={day.note} style={styles.dayCardNote} />
+        </View>
+      )}
       <SharedSetList sets={day.sets} showNotes />
     </View>
   )
@@ -3255,6 +3311,19 @@ const styles = StyleSheet.create({
   },
   listScrollContent: { paddingHorizontal: theme.spacing[4], paddingBottom: theme.spacing[8] },
   titleWrap: { gap: 4 },
+  dayCardNoteWrap: { marginBottom: theme.spacing[2] },
+  dayCardNote: {
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 16,
+  },
+  exNoteRow: { flexDirection: "row", alignItems: "flex-start", gap: 6, paddingTop: 2 },
+  // The wrapper takes the row's remaining width. exNoteText must NOT: it is
+  // applied per line inside NotePreview's column, where flex:1 makes every
+  // line stretch to fill the column height instead of stacking.
+  exNoteBody: { flex: 1 },
+  exNoteText: { color: theme.colors.foreground, fontSize: theme.fontSize.sm, lineHeight: 17 },
+  exNoteEmpty: { color: theme.colors.muted, fontStyle: "italic" },
   exerciseName: { color: theme.colors.foreground, fontSize: theme.fontSize.xl, fontWeight: "800" },
   exerciseMeta: { color: theme.colors.muted, fontSize: theme.fontSize.xs, textTransform: "uppercase", letterSpacing: 1.2 },
   card: {
