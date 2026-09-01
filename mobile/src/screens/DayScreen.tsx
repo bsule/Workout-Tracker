@@ -47,6 +47,7 @@ import { SetList } from "../components/SetList"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { CollapseIn, FadeHighlight, SlideDownIn } from "../components/Fade"
 import { HoldPressable } from "../components/HoldPressable"
+import { NotePreview } from "../components/NotePreview"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
 import { useActiveDateAndSetter } from "../state/activeDate"
@@ -1494,9 +1495,12 @@ function ExerciseRow({
       <FadeHighlight active={isSelected} style={styles.exerciseCardSelected} />
       <View style={styles.exerciseInner}>
         <View style={styles.exerciseHeader}>
-          <Text style={styles.exerciseName} numberOfLines={1}>
-            {we.exercise.name}
-          </Text>
+          <View style={styles.exerciseTitleCol}>
+            <Text style={styles.exerciseName} numberOfLines={1}>
+              {we.exercise.name}
+            </Text>
+            <NotePreview note={we.note} style={styles.exerciseNote} />
+          </View>
           <View style={styles.exerciseHeaderRight}>
             {allPlanned && (
               <View style={[styles.setCountChip, styles.setCountChipPlanned]}>
@@ -1891,8 +1895,13 @@ const styles = StyleSheet.create({
     paddingBottom: theme.spacing[3],
     backgroundColor: "rgba(255,255,255,0.10)",
   },
+  exerciseTitleCol: { flex: 1, gap: 2 },
+  exerciseNote: {
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 15,
+  },
   exerciseName: {
-    flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.md,
     fontWeight: "800",

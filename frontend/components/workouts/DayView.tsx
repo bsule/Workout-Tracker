@@ -15,6 +15,7 @@ import {
   getDayNoteQ,
   setDayNote,
   setWorkoutNote,
+  setExerciseNote,
   listGymsQ,
   workoutDurationSeconds,
 } from "@/lib/store"
@@ -25,6 +26,7 @@ import {
 } from "@/lib/utils"
 import type { Workout, WorkoutExercise } from "@/types"
 import { CategoryDot } from "@/components/exercises/CategoryBadge"
+import { ExerciseNoteField } from "@/components/workouts/ExerciseNoteField"
 import { DateNav } from "@/components/layout/DateNav"
 import { GymEditor } from "@/components/workouts/GymEditor"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
@@ -317,9 +319,22 @@ function ExerciseCard({
     >
       <div className="flex items-center gap-2 border-b border-border/60 bg-foreground/[.04] px-4 py-3">
         <CategoryDot category={we.exercise.category} />
-        <span className="flex-1 text-base font-semibold tracking-tight">
-          {we.exercise.name}
-        </span>
+        <div className="min-w-0 flex-1">
+          <span className="block truncate text-base font-semibold tracking-tight">
+            {we.exercise.name}
+          </span>
+          {/* The card is a link. Stop the note's own clicks and keys from
+           *  reaching it, or editing would navigate away. */}
+          <div
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            <ExerciseNoteField
+              note={we.note}
+              onSave={(text) => setExerciseNote(we.id, text)}
+            />
+          </div>
+        </div>
         <button
           onClick={handleRemove}
           className="rounded p-1 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
