@@ -196,6 +196,36 @@ function animateNext() {
   LayoutAnimation.configureNext(SET_ANIM)
 }
 
+// The form <-> selection-bar swap. An Animated `height` cannot do this
+// smoothly: height is a layout property, so every frame is a Yoga pass driven
+// from JS plus a bridge hop, and a ~200px collapse over the form and the whole
+// set list shows that up as stepping. LayoutAnimation hands the same swap to
+// the platform, which runs it on the UI thread.
+//
+// It also drops the measure-then-animate round trip the JS version needed,
+// which is why the first hold of a session was the worst one.
+const SELECTION_ANIM = {
+  duration: 220,
+  create: {
+    type: LayoutAnimation.Types.easeOut,
+    property: LayoutAnimation.Properties.opacity,
+    duration: 200,
+  },
+  update: {
+    type: LayoutAnimation.Types.easeInEaseOut,
+    duration: 220,
+  },
+  delete: {
+    type: LayoutAnimation.Types.easeIn,
+    property: LayoutAnimation.Properties.opacity,
+    duration: 140,
+  },
+} as const
+
+function animateSelectionSwap() {
+  LayoutAnimation.configureNext(SELECTION_ANIM)
+}
+
 const EMPTY_HISTORY: ExerciseHistoryDay[] = []
 
 // Heaviest set from the most recent prior workout for this exercise, used to
@@ -689,23 +719,36 @@ export function SetLoggerScreen({ route, navigation }: any) {
     leavingIdsRef.current = leavingIds
   }, [leavingIds])
   function startDelete(id: number) {
-    if (editingSetId === id) cancelEdit()
+    startDeleteMany([id])
+  }
+
+  function startDeleteMany(ids: number[]) {
+    if (ids.length === 0) return
+    if (editingSetId != null && ids.includes(editingSetId)) cancelEdit()
     setLeavingIds((prev) => {
       const n = new Set(prev)
-      n.add(id)
+      for (const id of ids) n.add(id)
       return n
     })
     // 180ms matches the SetRowFade leaving fade so the LayoutAnimation
-    // collapse fires the moment the row reaches opacity 0 — not earlier
+    // collapse fires the moment the rows reach opacity 0 — not earlier
     // (would visibly cut a half-faded row) and not noticeably later.
     setTimeout(() => {
       animateNext()
-      api.deleteSet(id)
+      // One index rebuild and one re-render for the whole batch. Deleting
+      // N sets one call at a time recomputes PRs, rebuilds indexes and
+      // re-renders N times back to back, which locks the UI for the length
+      // of the burst — the freeze on a multi-set delete.
+      batchMutations(() => {
+        for (const id of ids) api.deleteSet(id)
+      })
       setLeavingIds((prev) => {
-        if (!prev.has(id)) return prev
         const n = new Set(prev)
-        n.delete(id)
-        return n
+        let changed = false
+        for (const id of ids) {
+          if (n.delete(id)) changed = true
+        }
+        return changed ? n : prev
       })
     }, 180)
   }
@@ -784,12 +827,20 @@ export function SetLoggerScreen({ route, navigation }: any) {
   }
 
   function toggleSelected(id: number) {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    )
+    const next = selectedIds.includes(id)
+      ? selectedIds.filter((x) => x !== id)
+      : [...selectedIds, id]
+    // Only the first and last item change the layout - that is when the form
+    // and the bar swap. configureNext must run before the state update that
+    // causes the change, so it cannot live in an effect.
+    if ((selectedIds.length === 0) !== (next.length === 0)) {
+      animateSelectionSwap()
+    }
+    setSelectedIds(next)
   }
 
   function clearSelection() {
+    if (selectedIds.length > 0) animateSelectionSwap()
     setSelectedIds([])
   }
 
@@ -807,7 +858,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
           onPress: () => {
             const ids = [...selectedIds]
             clearSelection()
-            for (const id of ids) startDelete(id)
+            startDeleteMany(ids)
           },
         },
       ]
@@ -987,24 +1038,34 @@ export function SetLoggerScreen({ route, navigation }: any) {
         </View>
 
         {tab === "workout" && selectionMode && (
+          // One compact row replacing a ~260px form. The set list slides up to
+          // meet it, animated natively by SELECTION_ANIM - see the note there
+          // for why this is not an Animated height.
           <View style={[styles.card, styles.selectionBar]}>
+            <Pressable
+              onPress={clearSelection}
+              hitSlop={12}
+              style={styles.selectionCancelBtn}
+            >
+              <Ionicons name="close" size={22} color={theme.colors.foreground} />
+            </Pressable>
             <Text style={styles.selectionCount}>
               {selectedIds.length} selected
             </Text>
-            <View style={{ flexDirection: "row", gap: 12 }}>
-              <Button
-                label="Delete"
-                variant="destructive"
-                onPress={confirmDeleteSelected}
-                style={{ flex: 1 }}
+            <Pressable
+              onPress={confirmDeleteSelected}
+              style={({ pressed }) => [
+                styles.selectionDeleteBtn,
+                pressed && { opacity: 0.85 },
+              ]}
+            >
+              <Ionicons
+                name="trash-outline"
+                size={16}
+                color={theme.colors.destructive}
               />
-              <Button
-                label="Cancel"
-                variant="secondary"
-                onPress={clearSelection}
-                style={{ flex: 1 }}
-              />
-            </View>
+            <Text style={styles.selectionDeleteText}>Delete</Text>
+          </Pressable>
           </View>
         )}
         {tab === "workout" && !selectionMode && !firstPaintDone && (
@@ -2617,6 +2678,11 @@ function SetList({
   onDelete: (s: WorkoutSet) => void
 }) {
   const selectionMode = selectedIds.length > 0
+  // Set by a row's long press, cleared on the next press-in. Only one row can
+  // be under the finger at a time, so one ref covers the whole list. Without
+  // it the release after a hold also fires onPress, which in selection mode
+  // toggles the row the hold just selected straight back off.
+  const heldRef = useRef(false)
   const openSwipeableRef = useRef<Swipeable | null>(null)
   const swipeableRefs = useRef(new Map<number, Swipeable | null>())
   // Imperative close (no state, no re-renders) — fired from each
@@ -2717,15 +2783,27 @@ function SetList({
 
         const body = (
           <Pressable
-            onLongPress={() => onLongPress(s)}
+            onLongPress={() => {
+              heldRef.current = true
+              onLongPress(s)
+            }}
+            // No hold ramp on this row, so the wait is blind. 350ms of
+            // nothing reads as the screen being slow to answer.
+            delayLongPress={250}
+            onPressIn={() => {
+              heldRef.current = false
+            }}
             onPress={() => {
+              // RN fires onPressOut before onPress, so the flag the long press
+              // set is still standing here. Lifting after a hold ends that
+              // gesture; it is not also a tap.
+              if (heldRef.current) return
               if (s.is_planned) {
                 onPlannedTap(s)
                 return
               }
               if (selectionMode) onSelectToggle(s.id)
             }}
-            delayLongPress={350}
             // Cache the row's content as a hardware-backed texture so
             // the Swipeable's drag transform is a cheap GPU translate
             // of a pre-rendered bitmap, not a per-frame re-paint of
@@ -2738,6 +2816,12 @@ function SetList({
             collapsable={false}
             renderToHardwareTextureAndroid
             shouldRasterizeIOS
+            // Static, not an animated overlay. This row caches itself as a
+            // bitmap (see the rasterisation note above), and an animated child
+            // inside a cached layer renders stale - the highlight showed the
+            // previous state, or vanished, until something forced a re-raster.
+            // A style change is part of the layer's content, so it re-rasters
+            // correctly.
             style={[
               styles.setRow,
               !isLast && styles.setRowDivider,
@@ -3281,8 +3365,11 @@ const styles = StyleSheet.create({
     borderBottomColor: "rgba(255,255,255,0.06)",
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
+  // A plain fill across the row, in the same neutral grey the rest of the app
+  // uses for raised surfaces. Reading it from the theme rather than a
+  // hardcoded rgba keeps light mode working.
   setRowSelected: {
-    backgroundColor: "rgba(0,119,188,0.10)",
+    backgroundColor: theme.colors.border,
   },
   setRowPlanned: {
     backgroundColor: "rgba(255,255,255,0.015)",
@@ -3415,9 +3502,37 @@ const styles = StyleSheet.create({
     gap: theme.spacing[3],
   },
   selectionBar: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: theme.spacing[3],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+  },
+  selectionCancelBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  selectionDeleteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.colors.destructive,
+    backgroundColor: "rgba(239,68,68,0.10)",
+  },
+  selectionDeleteText: {
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "700",
   },
   selectionCount: {
+    flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.md,
     fontWeight: "700",
