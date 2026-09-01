@@ -14,6 +14,7 @@ import {
   getWorkoutByDateQ,
   getDayNoteQ,
   setDayNote,
+  setWorkoutNote,
   listGymsQ,
   workoutDurationSeconds,
 } from "@/lib/store"
@@ -239,10 +240,38 @@ function SummaryStrip({
                 {dur}
               </span>
             )}
-            <DayNotes key={workout.date} date={workout.date} note={note} />
+            <NoteField
+              key={`day-${workout.date}`}
+              label="Day"
+              note={note}
+              placeholder="How did today go?"
+              onSave={(text) => setDayNote(workout.date, text)}
+            />
+            <NoteField
+              key={`workout-${workout.id}`}
+              label="Workout"
+              note={workout.notes}
+              placeholder="How did the session go?"
+              onSave={(text) => setWorkoutNote(workout.id, text)}
+            />
           </div>
         ) : (
-          <DayNotes key={workout.date} date={workout.date} note={note} />
+          <div className="flex min-w-0 flex-col gap-y-0.5 text-xs text-muted-foreground">
+            <NoteField
+              key={`day-${workout.date}`}
+              label="Day"
+              note={note}
+              placeholder="How did today go?"
+              onSave={(text) => setDayNote(workout.date, text)}
+            />
+            <NoteField
+              key={`workout-${workout.id}`}
+              label="Workout"
+              note={workout.notes}
+              placeholder="How did the session go?"
+              onSave={(text) => setWorkoutNote(workout.id, text)}
+            />
+          </div>
         )}
         <GymEditor
           workoutId={workout.id}
@@ -454,15 +483,34 @@ function DateStrip({ date, note }: { date: string; note: string }) {
     <div className="rounded-lg border border-border bg-foreground/[.04] p-4">
       <div className="text-sm text-muted-foreground">{niceDate}</div>
       <div className="mt-2">
-        <DayNotes key={date} date={date} note={note} />
+        <NoteField
+          key={`day-${date}`}
+          label="Day"
+          note={note}
+          placeholder="How did today go?"
+          onSave={(text) => setDayNote(date, text)}
+        />
       </div>
     </div>
   )
 }
 
-function DayNotes({ date, note }: { date: string; note: string }) {
+/** Inline note editor. Used twice per day: once for the day note (keyed by
+ *  date) and once for the workout note (keyed by workout id). */
+function NoteField({
+  label,
+  note,
+  placeholder,
+  onSave,
+}: {
+  label: string
+  note: string
+  placeholder: string
+  onSave: (text: string) => void
+}) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(note)
+  const lower = label.toLowerCase()
 
   if (!editing) {
     return (
@@ -473,10 +521,10 @@ function DayNotes({ date, note }: { date: string; note: string }) {
           setEditing(true)
         }}
         className="block w-full min-w-0 rounded-md px-1 py-0.5 text-left hover:bg-white/5"
-        aria-label={note ? "Edit day notes" : "Add day notes"}
+        aria-label={note ? `Edit ${lower} notes` : `Add ${lower} notes`}
       >
         <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-          Notes
+          {label}
         </span>
         <span
           className={
@@ -485,21 +533,21 @@ function DayNotes({ date, note }: { date: string; note: string }) {
               : "mt-0.5 block truncate text-xs italic text-muted-foreground"
           }
         >
-          {note ? note.replace(/\s+/g, " ").trim() : "Add notes"}
+          {note ? note.replace(/\s+/g, " ").trim() : `Add ${lower} notes`}
         </span>
       </button>
     )
   }
 
   function save() {
-    setDayNote(date, draft)
+    onSave(draft)
     setEditing(false)
   }
 
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-        Notes
+        {label}
       </span>
       <textarea
         autoFocus
@@ -515,7 +563,7 @@ function DayNotes({ date, note }: { date: string; note: string }) {
             save()
           }
         }}
-        placeholder="How did today go?"
+        placeholder={placeholder}
         rows={3}
         className="w-full resize-y rounded-md border border-white/10 bg-white/[.03] px-2 py-1.5 text-xs text-foreground focus:border-primary/50 focus:outline-none"
       />
