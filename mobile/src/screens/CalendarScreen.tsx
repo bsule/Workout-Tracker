@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
+  Animated,
+  Easing,
   InteractionManager,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import {
@@ -137,6 +141,28 @@ export function CalendarScreen({ navigation, route }: any) {
 
   const todayKey = todayString()
 
+  // ---- Month paging animation -------------------------------------------
+  // One Animated.Value drives the grid: it is the grid's horizontal offset in
+  // px, and the month's opacity is interpolated from it. A swipe writes the
+  // finger's dx into it; the arrow buttons animate it. Both therefore produce
+  // the same slide-and-fade.
+  //
+  // `span` is the travel that dims a month all the way down. Keep it and the
+  // durations short: the paging must read as a quick nudge, not a transition.
+  const { width: screenWidth } = useWindowDimensions()
+  const span = Math.max(56, screenWidth * 0.18)
+  const slide = useRef(new Animated.Value(0)).current
+  const animating = useRef(false)
+  const monthOpacity = useMemo(
+    () =>
+      slide.interpolate({
+        inputRange: [-span, 0, span],
+        outputRange: [0.15, 1, 0.15],
+        extrapolate: "clamp",
+      }),
+    [slide, span]
+  )
+
   function shiftMonth(delta: number) {
     let m = month + delta
     let y = year
@@ -151,11 +177,99 @@ export function CalendarScreen({ navigation, route }: any) {
     setYear(y)
   }
 
-  function goToday() {
-    const d = new Date()
-    setYear(d.getFullYear())
-    setMonth(d.getMonth() + 1)
+  // Slide the current month out in `dir`, commit the new month while it is
+  // dimmed, then slide the new one in from the opposite edge. The entry starts
+  // one frame after the commit so React has painted the new grid.
+  function runMonthChange(dir: 1 | -1, commit: () => void, exitMs = 60) {
+    animating.current = true
+    const out = dir > 0 ? -span : span
+    Animated.timing(slide, {
+      toValue: out,
+      duration: exitMs,
+      easing: Easing.in(Easing.quad),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (!finished) {
+        animating.current = false
+        return
+      }
+      commit()
+      slide.setValue(-out)
+      requestAnimationFrame(() => {
+        Animated.timing(slide, {
+          toValue: 0,
+          duration: 100,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }).start(() => {
+          animating.current = false
+        })
+      })
+    })
   }
+
+  function changeMonth(delta: number) {
+    if (animating.current) return
+    runMonthChange(delta > 0 ? 1 : -1, () => shiftMonth(delta))
+  }
+
+  function goToday() {
+    if (animating.current) return
+    const d = new Date()
+    const y = d.getFullYear()
+    const m = d.getMonth() + 1
+    if (y === year && m === month) return
+    const dir = y * 12 + m > year * 12 + month ? 1 : -1
+    runMonthChange(dir, () => {
+      setYear(y)
+      setMonth(m)
+    })
+  }
+
+  // Horizontal drag on the calendar block: swipe left for the next month,
+  // right for the previous one. The grid trails the finger at 0.7x, capped at
+  // `span`, and snaps back when the drag is too small to page.
+  const pan = useMemo(
+    () =>
+      PanResponder.create({
+        // Never claim the touch on press-down: day cells must stay tappable.
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_e, g) =>
+          !animating.current &&
+          Math.abs(g.dx) > 8 &&
+          Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderMove: (_e, g) => {
+          slide.setValue(Math.max(-span, Math.min(span, g.dx * 0.7)))
+        },
+        onPanResponderRelease: (_e, g) => {
+          const paged = Math.abs(g.dx) > span || Math.abs(g.vx) > 0.3
+          if (paged && !animating.current) {
+            const delta = g.dx < 0 ? 1 : -1
+            // Short exit: the finger already moved most of the way.
+            runMonthChange(delta, () => shiftMonth(delta), 45)
+            return
+          }
+          Animated.timing(slide, {
+            toValue: 0,
+            duration: 90,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }).start()
+        },
+        onPanResponderTerminate: () => {
+          Animated.timing(slide, {
+            toValue: 0,
+            duration: 90,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }).start()
+        },
+      }),
+    // Rebuilt when the month changes so the release handler shifts from the
+    // month on screen, not the one captured at mount.
+    [span, slide, year, month]
+  )
 
   function openDay(date: string) {
     setSelectedDate(date)
@@ -171,10 +285,10 @@ export function CalendarScreen({ navigation, route }: any) {
   return (
     <StaticSafeAreaView>
       {/* Pinned calendar (header + weekdays + grid). */}
-      <View style={styles.pinned}>
+      <View style={styles.pinned} {...pan.panHandlers}>
         <View style={styles.header}>
           <Pressable
-            onPress={() => shiftMonth(-1)}
+            onPress={() => changeMonth(-1)}
             hitSlop={12}
             style={({ pressed }) => [styles.navIconBtn, pressedStyle(pressed)]}
           >
@@ -186,7 +300,7 @@ export function CalendarScreen({ navigation, route }: any) {
             </Text>
           </Pressable>
           <Pressable
-            onPress={() => shiftMonth(1)}
+            onPress={() => changeMonth(1)}
             hitSlop={12}
             style={({ pressed }) => [styles.navIconBtn, pressedStyle(pressed)]}
           >
@@ -200,7 +314,13 @@ export function CalendarScreen({ navigation, route }: any) {
           ))}
         </View>
 
-        <View style={[styles.grid, { padding: theme.spacing[2] }]}>
+        <Animated.View
+          style={[
+            styles.grid,
+            { padding: theme.spacing[2] },
+            { opacity: monthOpacity, transform: [{ translateX: slide }] },
+          ]}
+        >
           {cells.map((cell, i) => (
             <DayCell
               key={i}
@@ -212,7 +332,7 @@ export function CalendarScreen({ navigation, route }: any) {
               onPress={cell.date ? () => openDay(cell.date!) : undefined}
             />
           ))}
-        </View>
+        </Animated.View>
       </View>
 
       {/* Only the workout detail scrolls. */}
