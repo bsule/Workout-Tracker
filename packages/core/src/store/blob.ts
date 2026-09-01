@@ -111,6 +111,17 @@ function migrate(snap: Snapshot): ParseResult {
       ),
     }
   }
+  if (v < 7) {
+    // v6 -> v7: per-exercise-per-day notes. Nothing to lift from an older
+    // field — this is new storage, so every existing row starts empty.
+    s = {
+      ...s,
+      workout_exercises: s.workout_exercises.map((we) => ({
+        ...we,
+        note: we.note ?? "",
+      })),
+    }
+  }
   return {
     snapshot: { ...s, schema_version: SCHEMA_VERSION },
     migrated,

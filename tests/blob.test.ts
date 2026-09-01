@@ -124,6 +124,29 @@ describe("blob: migrations", () => {
     expect(snapshot.sets[0].was_position_pr).toBe(false)
   })
 
+  it("migrates a v6 snapshot by backfilling empty exercise notes", async () => {
+    const v6 = {
+      schema_version: 6,
+      exported_at: "2026-08-01T00:00:00.000Z",
+      device_id: "old",
+      settings: { weight_unit: "kg", first_day_of_week: 1 },
+      exercises: [],
+      workouts: [],
+      workout_exercises: [
+        { id: 1, workout_id: 1, exercise_id: 1, order: 0 },
+        { id: 2, workout_id: 1, exercise_id: 2, order: 1 },
+      ],
+      sets: [],
+      gyms: [],
+      day_notes: [],
+    }
+
+    const { snapshot, migrated } = await parse(gzipJson(v6))
+    expect(migrated).toBe(true)
+    expect(snapshot.schema_version).toBe(SCHEMA_VERSION)
+    expect(snapshot.workout_exercises.map((we) => we.note)).toEqual(["", ""])
+  })
+
   it("migrates a v4 snapshot by copying workout notes into day_notes", async () => {
     const v4 = {
       schema_version: 4,

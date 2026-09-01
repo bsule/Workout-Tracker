@@ -315,3 +315,73 @@ describe("workout notes", () => {
     ])
   })
 })
+
+describe("exercise notes", () => {
+  function weFor(date: string) {
+    const { row } = M.createWorkout(date)
+    const ex = M.createExercise({ name: "Lat Pulldown", category: "back" })
+    return M.addExerciseToWorkout(row.id, ex.id)
+  }
+
+  it("starts empty and holds a trimmed note", () => {
+    const we = weFor("2026-08-16")
+    expect(we.note).toBe("")
+
+    M.setExerciseNote(we.id, "  felt heavy, dropped to 60kg  ")
+    expect(
+      currentSnapshot().workout_exercises.find((x) => x.id === we.id)?.note
+    ).toBe("felt heavy, dropped to 60kg")
+  })
+
+  it("clears on whitespace", () => {
+    const we = weFor("2026-08-16")
+    M.setExerciseNote(we.id, "felt heavy")
+    M.setExerciseNote(we.id, "   ")
+    expect(
+      currentSnapshot().workout_exercises.find((x) => x.id === we.id)?.note
+    ).toBe("")
+  })
+
+  it("is independent of the day note and the session note", () => {
+    const { row } = M.createWorkout("2026-08-16")
+    const ex = M.createExercise({ name: "Lat Pulldown", category: "back" })
+    const we = M.addExerciseToWorkout(row.id, ex.id)
+
+    M.setDayNote("2026-08-16", "slept badly")
+    M.setWorkoutNote(row.id, "short session")
+    M.setExerciseNote(we.id, "felt heavy")
+
+    const snap = currentSnapshot()
+    expect(snap.day_notes).toEqual([{ date: "2026-08-16", text: "slept badly" }])
+    expect(snap.workouts.find((w) => w.id === row.id)?.notes).toBe(
+      "short session"
+    )
+    expect(
+      snap.workout_exercises.find((x) => x.id === we.id)?.note
+    ).toBe("felt heavy")
+  })
+
+  it("ignores an unknown workout_exercise id", () => {
+    const we = weFor("2026-08-16")
+    M.setExerciseNote(we.id + 999, "nowhere")
+    expect(
+      currentSnapshot().workout_exercises.find((x) => x.id === we.id)?.note
+    ).toBe("")
+  })
+
+  it("is not carried over by copyFromWorkout", () => {
+    const we = weFor("2026-08-16")
+    M.setExerciseNote(we.id, "felt heavy")
+    const source = currentSnapshot().workout_exercises.find(
+      (x) => x.id === we.id
+    )!
+    const { row: target } = M.createWorkout("2026-08-17")
+    M.copyFromWorkout(target.id, source.workout_id)
+
+    const copied = currentSnapshot().workout_exercises.filter(
+      (x) => x.workout_id === target.id
+    )
+    expect(copied).toHaveLength(1)
+    expect(copied[0].note).toBe("")
+  })
+})

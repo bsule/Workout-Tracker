@@ -116,6 +116,19 @@ describe("workout queries", () => {
     expect(history[0].sets.map((s) => s.order)).toEqual([0, 1])
   })
 
+  it("carries the exercise note onto its history day", () => {
+    expect(getExerciseHistoryQ(100)[0].note).toBe("")
+
+    const snap = blankSnapshot()
+    snap.exercises = [exercise(100, "Bench")]
+    snap.workouts = [workout(1, "2026-01-05", "Gym A", "done")]
+    snap.workout_exercises = [we(10, 1, 100, 0, "felt heavy")]
+    snap.sets = [set(1000, 10, { weight: 60, reps: 5, order: 0 })]
+    loadSnapshot(snap)
+
+    expect(getExerciseHistoryQ(100)[0].note).toBe("felt heavy")
+  })
+
   it("returns planned dates for a month", () => {
     expect(getPlannedDatesQ(2026, 1)).toEqual(["2026-01-20"])
     expect(getPlannedDatesQ(2026, 2)).toEqual([])

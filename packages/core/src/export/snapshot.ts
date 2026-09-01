@@ -159,6 +159,7 @@ export function buildJson(snap: Snapshot, username = ""): string {
           const ex = exMap.get(we.exercise_id)
           return {
             order: we.order,
+            note: we.note ?? "",
             exercise: {
               name: ex?.name ?? `#${we.exercise_id}`,
               category: ex?.category ?? "",

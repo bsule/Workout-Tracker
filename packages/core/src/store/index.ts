@@ -46,6 +46,7 @@ export {
   addExerciseToWorkout,
   setDayNote,
   setWorkoutNote,
+  setExerciseNote,
   patchWorkout,
 } from "./mutations"
 export { estimateOneRm } from "./materialize"
@@ -236,6 +237,10 @@ export const localApi = {
   },
   setWorkoutNote(id: number, text: string): Promise<void> {
     M.setWorkoutNote(id, text)
+    return Promise.resolve()
+  },
+  setExerciseNote(weId: number, text: string): Promise<void> {
+    M.setExerciseNote(weId, text)
     return Promise.resolve()
   },
 

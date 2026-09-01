@@ -127,6 +127,27 @@ describe("importSnapshotJson round-trip", () => {
     ).toBe("dropped to 3x5")
   })
 
+  it("round-trips an exercise note alongside the day and session notes", async () => {
+    const snap = populated()
+    snap.day_notes = [{ date: "2026-01-05", text: "slept badly" }]
+    snap.workouts[0].notes = "short session"
+    snap.workout_exercises[0].note = "felt heavy, dropped to 60kg"
+    const json = buildJson(snap)
+    resetStore()
+    await importSnapshotJson(json, { mode: "replace" })
+
+    const after = currentSnapshot()
+    expect(after.day_notes).toEqual([
+      { date: "2026-01-05", text: "slept badly" },
+    ])
+    expect(after.workouts.find((w) => w.date === "2026-01-05")?.notes).toBe(
+      "short session"
+    )
+    expect(after.workout_exercises.map((we) => we.note)).toContain(
+      "felt heavy, dropped to 60kg"
+    )
+  })
+
   it("merge mode is idempotent: re-importing the same file adds nothing", async () => {
     const json = buildJson(populated())
     resetStore()

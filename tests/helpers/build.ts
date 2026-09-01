@@ -34,8 +34,14 @@ export function workout(id: number, date: string, gym = "", status: "planned" | 
   }
 }
 
-export function we(id: number, workoutId: number, exerciseId: number, order = 0) {
-  return { id, workout_id: workoutId, exercise_id: exerciseId, order }
+export function we(
+  id: number,
+  workoutId: number,
+  exerciseId: number,
+  order = 0,
+  note = ""
+) {
+  return { id, workout_id: workoutId, exercise_id: exerciseId, order, note }
 }
 
 export function set(

@@ -290,6 +290,8 @@ export async function importFitnotesCsv(
           id: nextId(),
           workout_id: workout.id,
           exercise_id: exRow.id,
+          // FitNotes has no per-exercise-per-day note field to map from.
+          note: "",
           order: siblingsForWorkout,
         }
         wesByPair.set(pairKey, we)

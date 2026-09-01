@@ -124,6 +124,31 @@ describe("hydrate: crash-log replay", () => {
     ])
   })
 
+  it("replays a set_exercise_note op onto the last persisted snapshot", async () => {
+    const key = freshKey()
+    const store = storageFor(key)
+
+    const base = emptySnapshot("seed-device")
+    base.workout_exercises = [
+      { id: 7, workout_id: 1, exercise_id: 1, order: 0, note: "" },
+    ]
+    await store.writeSnapshot(await serialize(base))
+    await store.appendPending(
+      JSON.stringify({
+        op: "set_exercise_note",
+        weId: 7,
+        text: "felt heavy",
+      })
+    )
+
+    configure(key)
+    await hydrate()
+
+    expect(
+      currentSnapshot().workout_exercises.find((we) => we.id === 7)?.note
+    ).toBe("felt heavy")
+  })
+
   it("replays a patch_workout note op onto the last persisted snapshot", async () => {
     const key = freshKey()
     const store = storageFor(key)
