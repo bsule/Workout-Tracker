@@ -62,6 +62,18 @@ function dayNoteFor(snap: Snapshot, date: string): string {
   return snap.day_notes?.find((n) => n.date === date)?.text ?? ""
 }
 
+/** FitNotes has one Notes field per workout, but we keep two (the day note
+ *  and the session note). Join them so neither is lost on export. */
+export function combinedNoteFor(
+  snap: Snapshot,
+  w: { date: string; notes?: string }
+): string {
+  const day = dayNoteFor(snap, w.date).trim()
+  const session = (w.notes ?? "").trim()
+  if (day && session && day !== session) return `${day}\n${session}`
+  return day || session
+}
+
 export function buildCsv(snap: Snapshot): string {
   const exMap = exerciseLookup(snap)
 
@@ -108,7 +120,7 @@ export function buildCsv(snap: Snapshot): string {
         csvCell(s.was_pr),
         csvCell(s.note),
         escapeCsv(w.gym || ""),
-        csvCell(dayNoteFor(snap, w.date) || w.notes),
+        csvCell(combinedNoteFor(snap, w)),
       ].join(",")
     )
   }
@@ -139,7 +151,7 @@ export function buildJson(snap: Snapshot, username = ""): string {
       started_at: w.started_at,
       finished_at: w.finished_at,
       gym: w.gym,
-      notes: dayNoteFor(snap, w.date) || w.notes,
+      notes: w.notes,
       exercises: (wesByWorkout.get(w.id) ?? [])
         .slice()
         .sort((a, b) => a.order - b.order || a.id - b.id)
@@ -185,7 +197,9 @@ export function buildJson(snap: Snapshot, username = ""): string {
     .map((n) => ({ date: n.date, text: n.text }))
 
   const payload = {
-    version: 1,
+    // v2: `workouts[].notes` is the per-session note only. In v1 it carried
+    // the day note, so the importer reads it differently per version.
+    version: 2,
     exported_at: new Date().toISOString(),
     weight_unit: "kg",
     user: { username },

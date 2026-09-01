@@ -1,11 +1,13 @@
 import type { Category, ExerciseKind, UserSettings, WorkoutStatus } from "../types"
 
+// v6: workout.notes is canonical again — a per-session note that lives
+//     alongside, not instead of, the per-date day_notes row.
 // v5: add day_notes (per-date notes, independent of workouts).
 // v4: add is_position_pr / was_position_pr to SetRow.
 // v3: add soft-delete support to ExerciseRow.
 // v2: add kind to ExerciseRow, distance/time fields to SetRow.
 // Older snapshots are migrated in blob.ts:migrate().
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 
 export interface ExerciseRow {
   id: number
@@ -23,6 +25,7 @@ export interface WorkoutRow {
   started_at: string | null
   finished_at: string | null
   gym: string
+  /** Per-session note. Independent of the day_notes row for the same date. */
   notes: string
   created_at: string
 }

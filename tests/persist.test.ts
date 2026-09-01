@@ -124,6 +124,40 @@ describe("hydrate: crash-log replay", () => {
     ])
   })
 
+  it("replays a patch_workout note op onto the last persisted snapshot", async () => {
+    const key = freshKey()
+    const store = storageFor(key)
+
+    const base: ReturnType<typeof emptySnapshot> = {
+      ...emptySnapshot("seed-device"),
+      workouts: [
+        {
+          id: 7,
+          date: "2026-08-16",
+          status: "done",
+          started_at: null,
+          finished_at: null,
+          gym: "",
+          notes: "",
+          created_at: "2026-08-16T08:00:00.000Z",
+        },
+      ],
+    }
+    await store.writeSnapshot(await serialize(base))
+    await store.appendPending(
+      JSON.stringify({
+        op: "patch_workout",
+        id: 7,
+        patch: { notes: "dropped to 3x5" },
+      })
+    )
+
+    configure(key)
+    await hydrate()
+
+    expect(currentSnapshot().workouts[0].notes).toBe("dropped to 3x5")
+  })
+
   it("starts fresh (no throw) when storage is empty", async () => {
     const key = freshKey()
     configure(key)

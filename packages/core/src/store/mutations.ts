@@ -461,7 +461,13 @@ export function renameGym(id: number, name: string): GymRow | null {
   return result
 }
 
-// ---- day notes ----------------------------------------------------
+// ---- notes ---------------------------------------------------------
+
+/** Set the per-session note on a workout. Whitespace-only text clears it.
+ *  Distinct from setDayNote: this one dies with the workout. */
+export function setWorkoutNote(id: number, text: string): WorkoutRow | null {
+  return patchWorkout(id, { notes: text.trim() })
+}
 
 /** Upsert a per-date note. Empty / whitespace text deletes the row. */
 export function setDayNote(date: string, text: string): void {

@@ -17,6 +17,7 @@
 
 import { unzipSync, zipSync } from "fflate"
 import type { Snapshot } from "../store/schema"
+import { combinedNoteFor } from "./snapshot"
 
 const APPLE_EPOCH_MS = Date.UTC(2001, 0, 1)
 const KG_TO_LB = 2.20462262
@@ -241,7 +242,7 @@ function populate(db: SqlJsDatabase, snap: Snapshot): void {
         appleTs(w.started_at),
         null,
         appleTs(w.finished_at),
-        snap.day_notes?.find((n) => n.date === w.date)?.text || w.notes || null,
+        combinedNoteFor(snap, w) || null,
         null,
       ]
     )
