@@ -62,6 +62,8 @@ interface RawJsonExerciseRef {
 
 interface RawJsonWorkoutExercise {
   order?: number
+  /** Absent in exports from before schema v7. */
+  note?: string
   exercise: RawJsonExerciseRef
   sets?: RawJsonSet[]
 }
@@ -391,6 +393,7 @@ export async function importSnapshotJson(
           workout_id: workout.id,
           exercise_id: exRow.id,
           order: typeof we.order === "number" ? we.order : siblings,
+          note: typeof we.note === "string" ? we.note.trim() : "",
         }
         wesByPair.set(pairKey, weRow)
         newWes.push(weRow)

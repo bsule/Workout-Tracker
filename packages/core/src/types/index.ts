@@ -60,6 +60,8 @@ export interface WorkoutExercise {
   id: number
   exercise: Exercise
   order: number
+  /** Note about this exercise on this day. See WorkoutExerciseRow.note. */
+  note: string
   sets: WorkoutSet[]
 }
 
@@ -99,6 +101,10 @@ export interface HistorySet {
 
 export interface ExerciseHistoryDay {
   date: string
+  /** The workout_exercise note for this exercise on this day. Empty when
+   *  there is none. Two workout_exercises can land on the same date (rare),
+   *  in which case their notes are joined. */
+  note: string
   sets: HistorySet[]
 }
 

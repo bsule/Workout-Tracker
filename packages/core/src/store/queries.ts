@@ -126,11 +126,15 @@ export function getExerciseHistoryQ(id: number): ExerciseHistoryDay[] {
       .sort((a, b) => a.order - b.order)
       .map(historySetFromRow)
     if (histSets.length === 0) continue
+    const note = (we.note ?? "").trim()
     const day = byDate.get(w.date)
     if (day) {
       day.sets.push(...histSets)
+      // Same exercise twice in one day: keep both notes rather than letting
+      // the first row win silently.
+      if (note) day.note = day.note ? `${day.note} — ${note}` : note
     } else {
-      byDate.set(w.date, { date: w.date, sets: histSets })
+      byDate.set(w.date, { date: w.date, note, sets: histSets })
     }
   }
   return [...byDate.values()].sort((a, b) => (a.date < b.date ? 1 : -1))

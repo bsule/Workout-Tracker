@@ -82,6 +82,7 @@ export function weFromRow(
   return {
     id: we.id,
     order: we.order,
+    note: we.note ?? "",
     exercise: exerciseLookup(we.exercise_id, ix),
     sets,
   }

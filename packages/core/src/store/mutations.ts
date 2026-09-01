@@ -262,6 +262,7 @@ export function addExerciseToWorkout(
     workout_id: workoutId,
     exercise_id: exerciseId,
     order: 0,
+    note: "",
   }
   applyMutation((snap) => {
     const dup = snap.workout_exercises.find(
@@ -469,6 +470,24 @@ export function setWorkoutNote(id: number, text: string): WorkoutRow | null {
   return patchWorkout(id, { notes: text.trim() })
 }
 
+/** Set the note on one exercise within one workout. Whitespace-only text
+ *  clears it. Narrower than setWorkoutNote (the whole session) and wider
+ *  than a set's own note. */
+export function setExerciseNote(weId: number, text: string): void {
+  const trimmed = text.trim()
+  applyMutation((snap) => {
+    const target = snap.workout_exercises.find((we) => we.id === weId)
+    if (!target || target.note === trimmed) return snap
+    return {
+      ...snap,
+      workout_exercises: snap.workout_exercises.map((we) =>
+        we.id === weId ? { ...we, note: trimmed } : we
+      ),
+    }
+  })
+  recordPending({ op: "set_exercise_note", weId, text: trimmed })
+}
+
 /** Upsert a per-date note. Empty / whitespace text deletes the row. */
 export function setDayNote(date: string, text: string): void {
   const trimmed = text.trim()
@@ -504,6 +523,10 @@ export function copyFromWorkout(
         workout_id: targetId,
         exercise_id: swe.exercise_id,
         order: order++,
+        // Deliberately not copied. The note describes how that exercise went
+        // on the source day; carrying it forward would assert something about
+        // a session the user has not done yet.
+        note: "",
       }
       newWes.push(newWe)
       if (withSets) {

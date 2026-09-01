@@ -429,6 +429,16 @@ function applyOne(snap: Snapshot, op: OpEnvelope): Snapshot {
       const id = op.id as number
       return { ...snap, gyms: snap.gyms.filter((g) => g.id !== id) }
     }
+    case "set_exercise_note": {
+      const weId = op.weId as number
+      const text = ((op.text as string) ?? "").trim()
+      return {
+        ...snap,
+        workout_exercises: snap.workout_exercises.map((we) =>
+          we.id === weId ? { ...we, note: text } : we
+        ),
+      }
+    }
     case "set_day_note": {
       const date = op.date as string
       const text = ((op.text as string) ?? "").trim()
