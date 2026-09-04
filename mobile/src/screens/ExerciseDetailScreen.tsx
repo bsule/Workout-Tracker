@@ -21,11 +21,11 @@ import { useSettings } from "../settings/SettingsProvider"
 import {
   GraphPanel,
   PastHistory,
-  RecordsPanel,
   SettingsPanel,
+  SummaryPanel,
 } from "./SetLoggerScreen"
 
-type SubTab = "history" | "graph" | "records" | "settings"
+type SubTab = "history" | "graph" | "summary" | "settings"
 
 function todayString(): string {
   const d = new Date()
@@ -111,8 +111,8 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
           />
         )}
         {tab === "graph" && <GraphPanel days={history} unit={unit} />}
-        {tab === "records" && (
-          <RecordsPanel
+        {tab === "summary" && (
+          <SummaryPanel
             days={history}
             unit={unit}
             onPressDate={openCalendarAtDate}
@@ -130,7 +130,7 @@ function SubTabBar({ tab, onChange }: { tab: SubTab; onChange: (t: SubTab) => vo
   const items: { key: SubTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
     { key: "history", label: "History", icon: "list-outline" },
     { key: "graph", label: "Graph", icon: "stats-chart-outline" },
-    { key: "records", label: "Records", icon: "trophy-outline" },
+    { key: "summary", label: "Summary", icon: "trophy-outline" },
     { key: "settings", label: "Settings", icon: "settings-outline" },
   ]
   return (
