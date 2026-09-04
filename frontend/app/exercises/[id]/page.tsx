@@ -18,13 +18,13 @@ import { FullPageLoader, LoadingBlock } from "@/components/ui/Spinner"
 import { Button } from "@/components/ui/button"
 import { ExerciseChart } from "@/components/workouts/ExerciseChart"
 import { ExerciseHistory } from "@/components/workouts/ExerciseHistory"
-import { ExerciseRecords } from "@/components/workouts/ExerciseRecords"
+import { ExerciseSummary } from "@/components/workouts/ExerciseSummary"
 import { localApi as api, useHydrated, useStore } from "@/lib/store"
 import { getExerciseHistoryQ, listExercisesQ } from "@/lib/store/queries"
 import { cn } from "@/lib/utils"
 import type { Exercise, ExerciseHistoryDay } from "@/types"
 
-type Tab = "chart" | "records" | "history" | "settings"
+type Tab = "chart" | "summary" | "history" | "settings"
 
 export default function ExerciseDetailPage({
   params,
@@ -139,11 +139,11 @@ export default function ExerciseDetailPage({
               <ExerciseChart history={history} />
             ))}
 
-          {tab === "records" &&
+          {tab === "summary" &&
             (history === null ? (
               <LoadingBlock />
             ) : (
-              <ExerciseRecords history={allHistory} />
+              <ExerciseSummary history={allHistory} />
             ))}
 
           {tab === "history" &&
@@ -177,7 +177,7 @@ function Tabs({
       badge: priorCount > 0 ? String(priorCount) : undefined,
     },
     { id: "chart", label: "Graph", icon: <Activity className="size-4" /> },
-    { id: "records", label: "Records", icon: <Trophy className="size-4" /> },
+    { id: "summary", label: "Summary", icon: <Trophy className="size-4" /> },
     {
       id: "settings",
       label: "Settings",
