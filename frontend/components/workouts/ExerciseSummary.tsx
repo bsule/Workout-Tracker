@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { ChevronDown, Trophy, X } from "lucide-react"
+import { ChevronDown, ScrollText, X } from "lucide-react"
 import type { ExerciseHistoryDay, HistorySet } from "@/types"
 import { cn, parseLocalDate } from "@/lib/utils"
 import { formatWeight } from "@/lib/units"
@@ -113,7 +113,7 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
   if (history.length === 0) {
     return (
       <div className="rounded-2xl border border-white/10 bg-card/40 p-6 text-center">
-        <Trophy className="mx-auto size-5 text-muted-foreground" />
+        <ScrollText className="mx-auto size-5 text-muted-foreground" />
         <p className="mt-2 text-sm text-muted-foreground">
           Nothing logged for this exercise yet. Log a few sets to see your last
           session and your records here.
