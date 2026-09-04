@@ -125,6 +125,10 @@ export interface UserSettings {
    *  ticking "Xs since last set" label under the set list. Hides itself
    *  once 30 min have elapsed regardless of this setting. */
   show_time_since_last_set?: boolean
+  /** Optional UI flag: when true (default), the log-set page's workout tab
+   *  shows the "Last time" card under the set list — the previous session's
+   *  sets and the top weights for this exercise. */
+  show_last_time?: boolean
   /** The active AI provider used by the AI Plan screen. Defaults to
    *  "openai" when unset. The matching API key is stored separately in
    *  secure storage (see mobile/src/ai/keys.ts). */
