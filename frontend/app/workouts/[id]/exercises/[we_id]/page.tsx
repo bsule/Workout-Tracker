@@ -26,11 +26,11 @@ import { ExerciseNoteField } from "@/components/workouts/ExerciseNoteField"
 import { SetLogger } from "@/components/workouts/SetLogger"
 import { ExerciseChart } from "@/components/workouts/ExerciseChart"
 import { ExerciseHistory } from "@/components/workouts/ExerciseHistory"
-import { ExerciseRecords } from "@/components/workouts/ExerciseRecords"
+import { ExerciseSummary } from "@/components/workouts/ExerciseSummary"
 import { cn } from "@/lib/utils"
 import type { ExerciseHistoryDay } from "@/types"
 
-type Tab = "track" | "chart" | "records" | "history" | "settings"
+type Tab = "track" | "chart" | "summary" | "history" | "settings"
 
 export default function ExerciseLoggerPage({
   params,
@@ -166,11 +166,11 @@ export default function ExerciseLoggerPage({
         )
       )}
 
-      {tab === "records" && (
+      {tab === "summary" && (
         history === null ? (
           <LoadingBlock />
         ) : (
-          <ExerciseRecords history={allHistory} />
+          <ExerciseSummary history={allHistory} excludeDate={workout?.date} />
         )
       )}
 
@@ -276,7 +276,7 @@ function Tabs({
       badge: priorCount > 0 ? String(priorCount) : undefined,
     },
     { id: "chart", label: "Graph", icon: <Activity className="size-4" /> },
-    { id: "records", label: "Records", icon: <Trophy className="size-4" /> },
+    { id: "summary", label: "Summary", icon: <Trophy className="size-4" /> },
     {
       id: "settings",
       label: "Settings",
