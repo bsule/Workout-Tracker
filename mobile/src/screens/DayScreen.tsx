@@ -48,6 +48,7 @@ import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { CollapseIn, FadeHighlight, SlideDownIn } from "../components/Fade"
 import { HoldPressable } from "../components/HoldPressable"
 import { NotePreview } from "../components/NotePreview"
+import { NoteSheet } from "../components/NoteSheet"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
 import { useActiveDateAndSetter } from "../state/activeDate"
@@ -396,10 +397,13 @@ export function DayScreen({ navigation, route }: any) {
         }}
       />
       </View>
-      <DayNoteEditorSheet
+      <NoteSheet
         visible={noteSheetOpen}
-        kind={noteKind}
         mode={noteSheetMode}
+        title={noteKind === "day" ? "Day notes" : "Workout notes"}
+        placeholder={
+          noteKind === "day" ? "How did today go?" : "How did the session go?"
+        }
         draft={noteDraft}
         original={noteOriginal}
         onChangeDraft={setNoteDraft}
@@ -1027,40 +1031,32 @@ function SummaryStrip({
             <Pressable
               onPress={onOpenNotes}
               unstable_pressDelay={0}
+              // Dim rather than wash: the row runs the width of the meta
+              // column, so a background fill reads as a bar across the card.
               style={({ pressed }) => [
                 styles.summaryNoteHit,
-                pressedStyle(pressed),
+                pressed && { opacity: 0.55 },
               ]}
               hitSlop={8}
             >
               <Text style={styles.summaryMetaLabel}>Day</Text>
-              <Text
-                style={styles.summaryNoteText}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {note.replace(/\s+/g, " ").trim()}
-              </Text>
+              <NotePreview note={note} style={styles.summaryNoteLine} />
             </Pressable>
           )}
           {!!workoutNote.trim() && (
             <Pressable
               onPress={onOpenWorkoutNotes}
               unstable_pressDelay={0}
+              // Dim rather than wash: the row runs the width of the meta
+              // column, so a background fill reads as a bar across the card.
               style={({ pressed }) => [
                 styles.summaryNoteHit,
-                pressedStyle(pressed),
+                pressed && { opacity: 0.55 },
               ]}
               hitSlop={8}
             >
               <Text style={styles.summaryMetaLabel}>Workout</Text>
-              <Text
-                style={styles.summaryNoteText}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {workoutNote.replace(/\s+/g, " ").trim()}
-              </Text>
+              <NotePreview note={workoutNote} style={styles.summaryNoteLine} />
             </Pressable>
           )}
         </View>
@@ -1280,143 +1276,6 @@ function GymPickerModal({
             ) : null}
           </>
         )}
-      </View>
-    </Animated.View>
-  )
-}
-
-const NOTE_FADE_MS = 180
-function DayNoteEditorSheet({
-  visible,
-  kind,
-  mode,
-  original,
-  draft,
-  onChangeDraft,
-  onEdit,
-  onClose,
-  onSave,
-}: {
-  visible: boolean
-  kind: NoteKind
-  mode: "view" | "edit"
-  original: string
-  draft: string
-  onChangeDraft: (s: string) => void
-  onEdit: () => void
-  onClose: () => void
-  onSave: () => void
-}) {
-  const dirty = draft.trim() !== (original ?? "").trim()
-  const inputRef = useRef<TextInput | null>(null)
-  const opacity = useRef(new Animated.Value(0)).current
-  const [mounted, setMounted] = useState(visible)
-
-  useEffect(() => {
-    if (visible) {
-      setMounted(true)
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: NOTE_FADE_MS,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start()
-      return
-    }
-    Animated.timing(opacity, {
-      toValue: 0,
-      duration: NOTE_FADE_MS,
-      easing: Easing.in(Easing.cubic),
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) setMounted(false)
-    })
-  }, [visible, opacity])
-
-  useEffect(() => {
-    if (!visible || mode !== "edit") return
-    const f = requestAnimationFrame(() => inputRef.current?.focus())
-    return () => cancelAnimationFrame(f)
-  }, [visible, mode])
-
-  function handleSave() {
-    if (!dirty) return
-    const save = onSave
-    Keyboard.dismiss()
-    onClose()
-    setTimeout(save, NOTE_FADE_MS + 40)
-  }
-
-  if (!mounted) return null
-
-  const viewing = mode === "view"
-  const noteText = (original || draft).trim()
-
-  return (
-    <Animated.View
-      pointerEvents={visible ? "auto" : "none"}
-      style={[styles.noteOverlay, { opacity }]}
-    >
-      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-      <View
-        style={styles.noteOverlayCard}
-        onStartShouldSetResponder={() => true}
-      >
-        <Text style={styles.noteOverlayTitle}>
-          {kind === "day" ? "Day notes" : "Workout notes"}
-        </Text>
-        {viewing ? (
-          <ScrollView
-            style={styles.noteViewScroll}
-            keyboardShouldPersistTaps="handled"
-          >
-            <Text style={styles.noteViewText}>{noteText}</Text>
-          </ScrollView>
-        ) : (
-          <TextInput
-            ref={inputRef}
-            value={draft}
-            onChangeText={onChangeDraft}
-            placeholder={
-              kind === "day" ? "How did today go?" : "How did the session go?"
-            }
-            placeholderTextColor={theme.colors.muted}
-            multiline
-            style={styles.noteSheetInput}
-          />
-        )}
-        <View style={styles.noteSheetActions}>
-          {viewing ? (
-            <>
-              <Button
-                label="Close"
-                variant="secondary"
-                onPress={onClose}
-                style={{ flex: 1 }}
-              />
-              <Button
-                label="Edit"
-                onPress={onEdit}
-                style={{ flex: 1 }}
-              />
-            </>
-          ) : (
-            <>
-              <Button
-                label="Cancel"
-                variant="secondary"
-                onPress={onClose}
-                style={{ flex: 1 }}
-              />
-              <Button
-                label="Save"
-                onPress={handleSave}
-                disabled={!dirty}
-                style={{ flex: 1 }}
-              />
-            </>
-          )}
-        </View>
       </View>
     </Animated.View>
   )
@@ -1778,58 +1637,14 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     flexShrink: 1,
   },
-  summaryNoteText: {
+  // One line of a note preview. No flexShrink: the style lands on every line
+  // inside NotePreview's column, where shrinking squashes their heights
+  // instead of narrowing them.
+  summaryNoteLine: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.xs,
     fontWeight: "600",
     lineHeight: 16,
-    flexShrink: 1,
-  },
-  noteOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    paddingTop: 80,
-    paddingHorizontal: theme.spacing[4],
-    zIndex: 50,
-    elevation: 50,
-  },
-  noteOverlayCard: {
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.radius.lg,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    padding: theme.spacing[4],
-    gap: theme.spacing[3],
-  },
-  noteOverlayTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.md,
-    fontWeight: "800",
-  },
-  noteViewScroll: {
-    maxHeight: 220,
-  },
-  noteViewText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    lineHeight: 22,
-  },
-  noteSheetInput: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    backgroundColor: "rgba(255,255,255,0.04)",
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    borderRadius: theme.radius.md,
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[3],
-    height: 96,
-    maxHeight: 160,
-    textAlignVertical: "top",
-  },
-  noteSheetActions: {
-    flexDirection: "row",
-    gap: theme.spacing[3],
   },
   banner: {
     flexDirection: "row",
