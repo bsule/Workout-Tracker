@@ -9,7 +9,7 @@ import {
   History as HistoryIcon,
   ListPlus,
   Settings as SettingsIcon,
-  Trophy,
+  ScrollText,
 } from "lucide-react"
 import {
   useStore,
@@ -276,7 +276,7 @@ function Tabs({
       badge: priorCount > 0 ? String(priorCount) : undefined,
     },
     { id: "chart", label: "Graph", icon: <Activity className="size-4" /> },
-    { id: "summary", label: "Summary", icon: <Trophy className="size-4" /> },
+    { id: "summary", label: "Summary", icon: <ScrollText className="size-4" /> },
     {
       id: "settings",
       label: "Settings",
