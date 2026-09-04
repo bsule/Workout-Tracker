@@ -223,6 +223,11 @@ const FIELD_H_FALLBACK = 70
 // How long the exercise-note row takes to appear the first time.
 const EX_NOTE_REVEAL_MS = 260
 
+// The "Last time" card's collapse. Height is a layout property, so it runs on
+// the JS driver — see the save path, which holds the store mutation back for
+// this long when the card is collapsing so the shrink has a clear thread.
+const LAST_TIME_COLLAPSE_MS = 190
+
 // Layout half of that reveal: the downward shift of everything under the
 // note row. No `create`/`delete` sections, so only views that already exist
 // animate. See the reveal state for why this is not a height animation.
@@ -466,8 +471,13 @@ export function SetLoggerScreen({ route, navigation }: any) {
   const weId = resolved?.weId ?? -1
   const unit = useWeightUnit()
   const step = defaultStep(unit)
-  const { showOneRm, showPositionPrs, showRestTime, showTimeSinceLastSet } =
-    useSettings()
+  const {
+    showOneRm,
+    showPositionPrs,
+    showRestTime,
+    showTimeSinceLastSet,
+    showLastTime,
+  } = useSettings()
   const [tab, setTab] = useState<SubTab>("workout")
 
   const snapshot = useStore((s) => s.snapshot)
@@ -537,8 +547,9 @@ export function SetLoggerScreen({ route, navigation }: any) {
     tab === "summary" ||
     // The workout tab's "Last time" card reads history as well. Gated on
     // firstPaintDone so the push animation and the first commit still pay
-    // nothing for the query — only later commits do.
-    (tab === "workout" && firstPaintDone)
+    // nothing for the query — only later commits do, and none at all when
+    // the card is switched off.
+    (tab === "workout" && firstPaintDone && showLastTime)
   const history: ExerciseHistoryDay[] = useMemo(() => {
     if (exerciseId == null || !needsHistory) return EMPTY_HISTORY
     return getExerciseHistoryQ(exerciseId)
@@ -799,6 +810,22 @@ export function SetLoggerScreen({ route, navigation }: any) {
 
   // Note about this exercise on this day. Separate from a set's own note and
   // from the session note on the workout.
+  // The menu hangs off the header button, so it needs the button's position in
+  // window coordinates — a padding guess is wrong the moment the safe-area
+  // inset changes. Measured on press, handed to a Modal, which shares that
+  // coordinate space.
+  const menuBtnRef = useRef<View | null>(null)
+  const [menuAnchor, setMenuAnchor] = useState<{ top: number; right: number } | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+  function openMenu() {
+    menuBtnRef.current?.measureInWindow((x, y, w, h) => {
+      setMenuAnchor({
+        top: y + h + 6,
+        right: Math.max(8, Dimensions.get("window").width - (x + w)),
+      })
+      setMenuOpen(true)
+    })
+  }
   const [exNoteOpen, setExNoteOpen] = useState(false)
   const [exNoteMode, setExNoteMode] = useState<"view" | "edit">("view")
   const [exNoteDraft, setExNoteDraft] = useState("")
@@ -815,32 +842,10 @@ export function SetLoggerScreen({ route, navigation }: any) {
     setExerciseNote(we.id, exNoteDraft)
   }
 
-  // The note row only renders once a real workout_exercise row exists (see
-  // the render site). On the pendingCreate path that row lands right after
-  // the first set is saved, so the note would pop into the header with no
-  // transition.
-  //
-  // Two halves make the reveal, and neither one runs on the JS thread. The
-  // row fades and slides in on the native driver (below); the header/form
-  // shift it causes is handed to LayoutAnimation at the save site. An
-  // earlier version animated the row's `height` with a JS-driven value.
-  // That stuttered: every frame relaid out the whole screen, and those
-  // frames land while the create-workout + create-we + addSet burst is
-  // still occupying the JS thread.
+  // A note needs a real workout_exercise row to hang on. On the pendingCreate
+  // path that row lands right after the first set is saved, so until then the
+  // header menu's note item is disabled and says why.
   const exNoteShown = (we?.id ?? -1) > 0
-  const exNoteReveal = useRef(new Animated.Value(exNoteShown ? 1 : 0)).current
-  useEffect(() => {
-    if (!exNoteShown) return
-    Animated.timing(exNoteReveal, {
-      toValue: 1,
-      duration: EX_NOTE_REVEAL_MS,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start()
-    // exNoteReveal is a stable ref. A screen that opens with the row
-    // already present starts at 1, so this is a no-op there.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exNoteShown])
 
   // Smooth edit-mode transition. Single Animated.Value, fully native-driven
   // (scale + opacity). The "white border while editing" effect is done via
@@ -1049,6 +1054,9 @@ export function SetLoggerScreen({ route, navigation }: any) {
   function save() {
     Keyboard.dismiss()
     setError(null)
+    // Whether the day already had a logged set before this save. Authoring a
+    // planned workout does not count: those are targets, not a session.
+    const hadLoggedSet = sets.some((s) => !s.is_planned)
     if (reps <= 0) {
       setError(isCardio ? "Set a level of at least 1." : "Add at least 1 rep to log this set.")
       return
@@ -1061,9 +1069,6 @@ export function SetLoggerScreen({ route, navigation }: any) {
       setError("Set a time of at least 1 minute.")
       return
     }
-    // Whether the day already had a logged set before this save. Authoring a
-    // planned workout does not count: those are targets, not a session.
-    const hadLoggedSet = sets.some((s) => !s.is_planned)
     try {
       if (editingSetId != null) {
         // Editing requires `resolved` (you can't edit a set that doesn't
@@ -1130,7 +1135,6 @@ export function SetLoggerScreen({ route, navigation }: any) {
         if (queued) {
           // Logging against a planned set: same row, fade weight/reps update
           // would be jarring — skip animation.
-          if (!hadLoggedSet) LayoutAnimation.configureNext(EX_NOTE_SHIFT_ANIM)
           setOptimisticLogged(true)
           logPlannedSet(queued.id, { weight: isCardio ? weight : toKg(weight, unit), reps })
         } else {
@@ -1145,11 +1149,10 @@ export function SetLoggerScreen({ route, navigation }: any) {
               ? predictPrFlags(exerciseId, resolved.weId, w, r)
               : { isPr: false, isPosPr: false, position: 0 }
           // The first logged set of the day collapses the "Last time" card.
-          // Configure the shrink here, on the click frame, with the same
-          // update-only config the note-row shift uses: a `create`/`delete`
-          // section would put a JS opacity animation on the placeholder row
-          // that mounts in this very commit, which is what SET_ANIM avoids.
-          if (!hadLoggedSet) LayoutAnimation.configureNext(EX_NOTE_SHIFT_ANIM)
+          // Flipping this on the click frame is what starts that collapse
+          // under the finger; the card animates its own height, so there is
+          // no LayoutAnimation to configure here.
+          const willCollapseCard = !optimisticLogged && !hadLoggedSet
           setOptimisticLogged(true)
           setPendingAdd({
             weight: w,
@@ -1170,7 +1173,14 @@ export function SetLoggerScreen({ route, navigation }: any) {
           // invisible.
           const wasResolved = resolved
           const pending = route.params?.pendingCreate
-          requestAnimationFrame(() => {
+          // Normally one frame is enough of a head start. On the first set of
+          // the day it is not: the "Last time" card is collapsing, that is a
+          // height animation on the JS driver, and this commit — PR recompute,
+          // index rebuild, full list re-render — would stall it half way. Hold
+          // it back past the collapse instead. Nothing visible waits on it:
+          // the placeholder row is already on screen from the click frame.
+          // Same trick as the edit-mode save above.
+          const runMutation = () => {
             if (wasResolved) {
               api.addSet(wasResolved.weId, { weight: w, reps: r })
               return
@@ -1190,7 +1200,12 @@ export function SetLoggerScreen({ route, navigation }: any) {
             LayoutAnimation.configureNext(EX_NOTE_SHIFT_ANIM)
             setResolved(ids)
             api.addSet(ids.weId, { weight: w, reps: r })
-          })
+          }
+          if (willCollapseCard) {
+            setTimeout(runMutation, LAST_TIME_COLLAPSE_MS + 40)
+          } else {
+            requestAnimationFrame(runMutation)
+          }
         }
       }
     } catch (e: any) {
@@ -1218,6 +1233,22 @@ export function SetLoggerScreen({ route, navigation }: any) {
             color={theme.colors.foreground}
           />
         </Pressable>
+        <Pressable
+          ref={menuBtnRef}
+          onPress={openMenu}
+          hitSlop={8}
+          unstable_pressDelay={0}
+          style={({ pressed }) => [
+            styles.headerMenuBtn,
+            pressedStyle(pressed),
+          ]}
+        >
+          <Ionicons
+            name="ellipsis-horizontal"
+            size={20}
+            color={theme.colors.foreground}
+          />
+        </Pressable>
       </View>
       {/* Fixed header + form so the layout doesn't reflow when sets are added.
        *  Pressable wrapper so a tap on empty form-area background dismisses
@@ -1227,49 +1258,32 @@ export function SetLoggerScreen({ route, navigation }: any) {
         <View style={styles.titleWrap}>
           <Text style={styles.exerciseName}>{we.exercise.name}</Text>
           <Text style={styles.exerciseMeta}>{we.exercise.category}</Text>
+          {/* Only when there is something to read. Writing the first one is
+              the header menu's job — a standing "Add a note" prompt under
+              every exercise name was more chrome than the screen carried. */}
+          {!!we.note.trim() && (
+            <Pressable
+              onPress={openExerciseNote}
+              hitSlop={8}
+              style={styles.exNoteRow}
+            >
+              <Ionicons
+                name="document-text-outline"
+                size={12}
+                color={theme.colors.muted}
+              />
+              {/* The wrapper takes the row's remaining width. exNoteText must
+                  NOT: it is applied per line inside NotePreview's column,
+                  where flex:1 makes every line stretch instead of stacking. */}
+              <View style={styles.exNoteBody}>
+                <NotePreview note={we.note} style={styles.exNoteText} />
+              </View>
+            </Pressable>
+          )}
           {/* Hidden for the pendingCreate stub, whose id is -1: there is no
            *  workout_exercise row yet, so a note written here would be
            *  dropped without telling the user. The stub is replaced within a
            *  frame or two of the real row landing. */}
-          {exNoteShown && (
-            <Animated.View
-              style={{
-                opacity: exNoteReveal,
-                transform: [
-                  {
-                    translateY: exNoteReveal.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-6, 0],
-                    }),
-                  },
-                ],
-              }}
-            >
-              <Pressable
-                onPress={openExerciseNote}
-                hitSlop={8}
-                style={styles.exNoteRow}
-              >
-                <Ionicons
-                  name="document-text-outline"
-                  size={12}
-                  color={theme.colors.muted}
-                />
-                <View style={styles.exNoteBody}>
-                  {we.note.trim() ? (
-                    <NotePreview note={we.note} style={styles.exNoteText} />
-                  ) : (
-                    <Text
-                      style={[styles.exNoteText, styles.exNoteEmpty]}
-                      numberOfLines={1}
-                    >
-                      Add a note for this exercise
-                    </Text>
-                  )}
-                </View>
-              </Pressable>
-            </Animated.View>
-          )}
         </View>
 
         {tab === "workout" && !firstPaintDone && (
@@ -1482,7 +1496,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
               onDelete={(s) => startDelete(s.id)}
             />
           )}
-          {tab === "workout" && firstPaintDone && (
+          {tab === "workout" && firstPaintDone && showLastTime && (
             <LastTimePanel
               days={history}
               currentDate={workout.date}
@@ -1522,6 +1536,29 @@ export function SetLoggerScreen({ route, navigation }: any) {
           onSave={persistNote}
         />
       )}
+      <HeaderMenu
+        visible={menuOpen}
+        anchor={menuAnchor}
+        noteEnabled={exNoteShown}
+        note={we.note}
+        lastTimeOn={showLastTime}
+        onToggleLastTime={() => {
+          setMenuOpen(false)
+          // Past the fade: the card appearing or leaving under a menu that is
+          // still on screen reads as two things moving at once.
+          setTimeout(
+            () => api.updateSettings({ show_last_time: !showLastTime }),
+            MENU_FADE_MS + 40
+          )
+        }}
+        onClose={() => setMenuOpen(false)}
+        onNote={() => {
+          setMenuOpen(false)
+          // Past the fade, like the date menu: opening the sheet mid-fade
+          // puts two overlays on screen at once.
+          setTimeout(openExerciseNote, MENU_FADE_MS + 40)
+        }}
+      />
       {firstPaintDone && (
         <NoteEditorSheet
           visible={exNoteOpen}
@@ -1911,12 +1948,37 @@ const LastTimePanel = memo(function LastTimePanel({
     }).start()
   }, [open, spin])
 
-  const toggle = useCallback(() => {
-    // Only the manual toggle animates its own height. An automatic collapse
-    // rides the commit that added the set, which already configured one.
-    LayoutAnimation.configureNext(EXPAND_ANIM)
-    setManual(!open)
-  }, [open])
+  // The body is two stacked layers inside one box whose height eases between
+  // their measured heights — the same trick as the form/selection-bar swap
+  // above. LayoutAnimation was doing this job badly: on the save path the
+  // only safe config is update-only, so the chips and records vanished on the
+  // spot and just the empty box slid, which read as no animation at all.
+  const progress = useRef(new Animated.Value(open ? 1 : 0)).current
+  const [collapsedH, setCollapsedH] = useState<number | null>(null)
+  const [expandedH, setExpandedH] = useState<number | null>(null)
+  useEffect(() => {
+    Animated.timing(progress, {
+      toValue: open ? 1 : 0,
+      // Closing is quicker: the user has already read it and wants the space.
+      duration: open ? 240 : 190,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false, // height is a layout prop
+    }).start()
+  }, [open, progress])
+
+  const bodyHeight =
+    collapsedH != null && expandedH != null
+      ? progress.interpolate({
+          inputRange: [0, 1],
+          outputRange: [collapsedH, expandedH],
+        })
+      : // Before the first measure: clip to the collapsed layer when closed
+        // (it is absolute, so it still measures), natural height when open.
+        open
+          ? undefined
+          : ((collapsedH ?? 0) as unknown as number)
+
+  const toggle = useCallback(() => setManual((v) => !(v ?? open)), [open])
 
   if (!last && top.length === 0) return null
 
@@ -1980,66 +2042,99 @@ const LastTimePanel = memo(function LastTimePanel({
         )}
       </View>
 
-      {!open && !!collapsedLine && (
-        <Text style={styles.lastTimeSummary} numberOfLines={1}>
-          {collapsedLine}
-        </Text>
-      )}
-
-      {open && (last ? (
-        <View style={styles.lastTimeChips}>
-          {last.sets.map((s) => (
-            <View key={s.id} style={styles.lastTimeChip}>
-              <Text style={styles.lastTimeChipText}>
-                {formatWeight(s.weight, unit)}
-                <Text style={styles.lastTimeChipX}> × </Text>
-                {s.reps}
-              </Text>
-            </View>
-          ))}
-        </View>
-      ) : (
-        <Text style={styles.lastTimeEmpty}>
-          No earlier session for this exercise.
-        </Text>
-      ))}
-
-      {open && top.length > 0 && (
-        <>
-          <View style={styles.lastTimeRule} />
-          <Text style={styles.lastTimeLabel}>Top weights</Text>
-          {top.map((r) => (
-            <View key={r.reps} style={styles.topRow}>
-              <Text style={styles.topWeight}>
-                {formatWeight(r.weightKg, unit)}
-                <Text style={styles.topUnit}> {unit}</Text>
-              </Text>
-              <Text style={styles.topReps}>
-                × {r.reps} {r.reps === 1 ? "rep" : "reps"}
-              </Text>
-              <Text style={styles.topDate}>{recordDate(r.date)}</Text>
-            </View>
-          ))}
-          {onShowMore && (
-            <Pressable
-              onPress={onShowMore}
-              hitSlop={8}
-              unstable_pressDelay={0}
-              style={({ pressed }) => [
-                styles.lastTimeMore,
-                pressed && { opacity: 0.55 },
-              ]}
-            >
-              <Text style={styles.lastTimeMoreText}>Show more</Text>
-              <Ionicons
-                name="chevron-forward"
-                size={13}
-                color={theme.colors.muted}
-              />
-            </Pressable>
+      <Animated.View
+        style={[
+          { overflow: "hidden" },
+          bodyHeight != null && { height: bodyHeight },
+        ]}
+      >
+        {/* Collapsed layer. Absolute, so it measures its own height without
+            contributing to the box's natural height. */}
+        <Animated.View
+          onLayout={(e: LayoutChangeEvent) =>
+            setCollapsedH(Math.round(e.nativeEvent.layout.height))
+          }
+          pointerEvents="none"
+          style={[
+            styles.lastTimeCollapsedLayer,
+            {
+              opacity: progress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [1, 0],
+              }),
+            },
+          ]}
+        >
+          {!!collapsedLine && (
+            <Text style={styles.lastTimeSummary} numberOfLines={1}>
+              {collapsedLine}
+            </Text>
           )}
-        </>
-      )}
+        </Animated.View>
+
+        <Animated.View
+          onLayout={(e: LayoutChangeEvent) =>
+            setExpandedH(Math.round(e.nativeEvent.layout.height))
+          }
+          pointerEvents={open ? "auto" : "none"}
+          style={{ opacity: progress, gap: theme.spacing[2] }}
+        >
+          {last ? (
+            <View style={styles.lastTimeChips}>
+              {last.sets.map((s) => (
+                <View key={s.id} style={styles.lastTimeChip}>
+                  <Text style={styles.lastTimeChipText}>
+                    {formatWeight(s.weight, unit)}
+                    <Text style={styles.lastTimeChipX}> × </Text>
+                    {s.reps}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.lastTimeEmpty}>
+              No earlier session for this exercise.
+            </Text>
+          )}
+
+          {top.length > 0 && (
+            <>
+              <View style={styles.lastTimeRule} />
+              <Text style={styles.lastTimeLabel}>Top weights</Text>
+              {top.map((r) => (
+                <View key={r.reps} style={styles.topRow}>
+                  <Text style={styles.topWeight}>
+                    {formatWeight(r.weightKg, unit)}
+                    <Text style={styles.topUnit}> {unit}</Text>
+                  </Text>
+                  <Text style={styles.topReps}>
+                    × {r.reps} {r.reps === 1 ? "rep" : "reps"}
+                  </Text>
+                  <Text style={styles.topDate}>{recordDate(r.date)}</Text>
+                </View>
+              ))}
+              {onShowMore && (
+                <Pressable
+                  onPress={onShowMore}
+                  hitSlop={8}
+                  unstable_pressDelay={0}
+                  style={({ pressed }) => [
+                    styles.lastTimeMore,
+                    pressed && { opacity: 0.55 },
+                  ]}
+                >
+                  <Text style={styles.lastTimeMoreText}>Show more</Text>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={13}
+                    color={theme.colors.muted}
+                  />
+                </Pressable>
+              )}
+            </>
+          )}
+        </Animated.View>
+      </Animated.View>
     </View>
   )
 })
@@ -3193,6 +3288,152 @@ export const SummaryPanel = memo(function SummaryPanel({
   )
 })
 
+const MENU_FADE_MS = 150
+
+/**
+ * The header's overflow menu. One item today — the exercise note — but it is
+ * where a per-exercise action belongs now that the note prompt no longer sits
+ * under the title.
+ *
+ * The note item is disabled until the day has a set. Before that there is no
+ * workout_exercise row to hang a note on, so a note written then would be
+ * dropped without telling anyone. The row says why rather than vanishing.
+ */
+function HeaderMenu({
+  visible,
+  anchor,
+  noteEnabled,
+  note,
+  lastTimeOn,
+  onClose,
+  onNote,
+  onToggleLastTime,
+}: {
+  visible: boolean
+  /** Where the card's top-right corner goes, in window coordinates. Measured
+   *  from the header button on press — a fixed padding is wrong as soon as
+   *  the safe-area inset differs. */
+  anchor: { top: number; right: number } | null
+  noteEnabled: boolean
+  /** The saved note. Only its emptiness matters here — it picks Add or Edit.
+   *  The note itself reads under the exercise name. */
+  note: string
+  lastTimeOn: boolean
+  onClose: () => void
+  onNote: () => void
+  onToggleLastTime: () => void
+}) {
+  const opacity = useRef(new Animated.Value(0)).current
+  const [mounted, setMounted] = useState(visible)
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true)
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: MENU_FADE_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start()
+      return
+    }
+    Animated.timing(opacity, {
+      toValue: 0,
+      duration: MENU_FADE_MS,
+      easing: Easing.linear,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setMounted(false)
+    })
+  }, [visible, opacity])
+
+  if (!mounted || !anchor) return null
+
+  const color = noteEnabled ? theme.colors.foreground : theme.colors.muted
+  const hasNote = !!note.trim()
+
+  return (
+    <Modal
+      transparent
+      visible
+      animationType="none"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      {/* Backdrop and card are siblings, not nested — one tap dismisses. */}
+      <Animated.View
+        style={[StyleSheet.absoluteFill, styles.menuBackdrop, { opacity }]}
+      >
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      </Animated.View>
+      {/* Grows out of the button it hangs from, the way an iOS menu does:
+          transformOrigin puts the anchor at the card's top-right corner, so
+          the scale reads as the menu unfolding rather than zooming. */}
+      <Animated.View
+        style={[
+          styles.menuCard,
+          { top: anchor.top, right: anchor.right },
+          {
+            opacity,
+            transformOrigin: "top right",
+            transform: [
+              {
+                scale: opacity.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.85, 1],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        <Pressable
+          onPress={noteEnabled ? onNote : undefined}
+          disabled={!noteEnabled}
+          style={({ pressed }) => [
+            styles.menuRow,
+            styles.menuRowBorder,
+            pressed && noteEnabled && styles.menuRowPressed,
+          ]}
+        >
+          <View style={styles.menuRowBody}>
+            <Text style={[styles.menuRowText, { color }]} numberOfLines={1}>
+              {hasNote ? "Edit exercise note" : "Add exercise note"}
+            </Text>
+            {!noteEnabled && (
+              <Text style={styles.menuRowHint} numberOfLines={1}>
+                Log a set first
+              </Text>
+            )}
+          </View>
+          <Ionicons name="document-text-outline" size={17} color={color} />
+        </Pressable>
+
+        <Pressable
+          onPress={onToggleLastTime}
+          style={({ pressed }) => [
+            styles.menuRow,
+            pressed && styles.menuRowPressed,
+          ]}
+        >
+          <View style={styles.menuRowBody}>
+            <Text style={styles.menuRowText} numberOfLines={1}>
+              Last time card
+            </Text>
+          </View>
+          {/* A checkmark for the on state, like an iOS menu, rather than a
+              switch: the row itself is the toggle. */}
+          <Ionicons
+            name={lastTimeOn ? "checkmark" : "square-outline"}
+            size={17}
+            color={lastTimeOn ? theme.colors.primary : theme.colors.muted}
+          />
+        </Pressable>
+      </Animated.View>
+    </Modal>
+  )
+}
+
 /**
  * What a record row opens: the date it was set, and every set logged for this
  * exercise that day. Tap the backdrop to dismiss, or the calendar button to
@@ -4251,6 +4492,69 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  // Auto margin rather than space-between on the row, so the back chevron
+  // keeps its own left position whatever else lands in the header.
+  headerMenuBtn: {
+    marginLeft: "auto",
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  // Anchored under the header at the right edge, where the button is.
+  // The dim is light: an iOS menu shades what is behind it, it does not
+  // black it out.
+  menuBackdrop: { backgroundColor: "rgba(0,0,0,0.25)" },
+  menuCard: {
+    position: "absolute",
+    minWidth: 240,
+    maxWidth: 300,
+    backgroundColor: theme.colors.inputBg,
+    borderRadius: theme.radius.lg,
+    borderColor: theme.colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingVertical: 4,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOpacity: 0.45,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 16,
+  },
+  // Label first, icon on the trailing edge — an iOS menu row, not the day
+  // screen's icon-tile list.
+  menuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: 12,
+  },
+  menuRowBorder: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.border,
+  },
+  menuRowPressed: { backgroundColor: "rgba(255,255,255,0.06)" },
+  menuRowBody: { flex: 1, gap: 1 },
+  menuRowText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "600",
+  },
+  menuRowHint: { color: theme.colors.muted, fontSize: theme.fontSize.xs },
+  exNoteRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    paddingTop: 2,
+  },
+  exNoteBody: { flex: 1 },
+  exNoteText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 17,
+  },
   fixedTop: { padding: theme.spacing[4], gap: theme.spacing[4] },
   // The form and the bar stack on top of each other inside the animated
   // height wrapper - see the swap itself.
@@ -4280,6 +4584,14 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
     backgroundColor: "rgba(255,255,255,0.02)",
     gap: theme.spacing[2],
+  },
+  // Stacked on top of the expanded body so both measure independently. Not in
+  // flow, so the box's natural height is the expanded one.
+  lastTimeCollapsedLayer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
   },
   lastTimeHead: {
     flexDirection: "row",
@@ -4386,13 +4698,6 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.xs,
     lineHeight: 15,
   },
-  exNoteRow: { flexDirection: "row", alignItems: "flex-start", gap: 6, paddingTop: 2 },
-  // The wrapper takes the row's remaining width. exNoteText must NOT: it is
-  // applied per line inside NotePreview's column, where flex:1 makes every
-  // line stretch to fill the column height instead of stacking.
-  exNoteBody: { flex: 1 },
-  exNoteText: { color: theme.colors.foreground, fontSize: theme.fontSize.sm, lineHeight: 17 },
-  exNoteEmpty: { color: theme.colors.muted, fontStyle: "italic" },
   exerciseName: { color: theme.colors.foreground, fontSize: theme.fontSize.xl, fontWeight: "800" },
   exerciseMeta: { color: theme.colors.muted, fontSize: theme.fontSize.xs, textTransform: "uppercase", letterSpacing: 1.2 },
   card: {

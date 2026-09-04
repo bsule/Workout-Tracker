@@ -9,6 +9,7 @@ interface SettingsValue {
   showPositionPrs: boolean
   showRestTime: boolean
   showTimeSinceLastSet: boolean
+  showLastTime: boolean
 }
 
 const Ctx = createContext<SettingsValue | null>(null)
@@ -23,6 +24,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       showPositionPrs: settings.show_position_prs ?? true,
       showRestTime: settings.show_rest_time ?? true,
       showTimeSinceLastSet: settings.show_time_since_last_set ?? true,
+      showLastTime: settings.show_last_time ?? true,
     }),
     [
       settings.weight_unit,
@@ -31,6 +33,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       settings.show_position_prs,
       settings.show_rest_time,
       settings.show_time_since_last_set,
+      settings.show_last_time,
     ]
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
