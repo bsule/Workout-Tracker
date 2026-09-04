@@ -204,6 +204,35 @@ function animateNext() {
 // swap itself.
 const SWAP_MS = 240
 
+// How long the enter/leave-edit transition runs. Drives editAnim (border,
+// button labels) and the form's height change, so the extra "Rest (sec)"
+// field slides in as one motion with the rest of the edit styling.
+const EDIT_MS = 280
+
+// The log-set card's `gap`. Needed as a number so the collapsed "Rest (sec)"
+// row can cancel it out — see the row itself.
+const CARD_GAP = 16
+
+// Height of one NumericField: label (~14) + its 8px gap + the 48px input row.
+// Only a fallback — the real height is measured off the Reps field at runtime
+// (see fieldHeight). It exists so the rest row can never end up invisible if
+// that measurement has not landed yet.
+const FIELD_H_FALLBACK = 70
+
+// How long the exercise-note row takes to appear the first time.
+const EX_NOTE_REVEAL_MS = 260
+
+// Layout half of that reveal: the downward shift of everything under the
+// note row. No `create`/`delete` sections, so only views that already exist
+// animate. See the reveal state for why this is not a height animation.
+const EX_NOTE_SHIFT_ANIM = {
+  duration: EX_NOTE_REVEAL_MS,
+  update: {
+    type: LayoutAnimation.Types.easeInEaseOut,
+    duration: EX_NOTE_REVEAL_MS,
+  },
+} as const
+
 const EMPTY_HISTORY: ExerciseHistoryDay[] = []
 
 // Heaviest set from the most recent prior workout for this exercise, used to
@@ -766,6 +795,33 @@ export function SetLoggerScreen({ route, navigation }: any) {
     setExerciseNote(we.id, exNoteDraft)
   }
 
+  // The note row only renders once a real workout_exercise row exists (see
+  // the render site). On the pendingCreate path that row lands right after
+  // the first set is saved, so the note would pop into the header with no
+  // transition.
+  //
+  // Two halves make the reveal, and neither one runs on the JS thread. The
+  // row fades and slides in on the native driver (below); the header/form
+  // shift it causes is handed to LayoutAnimation at the save site. An
+  // earlier version animated the row's `height` with a JS-driven value.
+  // That stuttered: every frame relaid out the whole screen, and those
+  // frames land while the create-workout + create-we + addSet burst is
+  // still occupying the JS thread.
+  const exNoteShown = (we?.id ?? -1) > 0
+  const exNoteReveal = useRef(new Animated.Value(exNoteShown ? 1 : 0)).current
+  useEffect(() => {
+    if (!exNoteShown) return
+    Animated.timing(exNoteReveal, {
+      toValue: 1,
+      duration: EX_NOTE_REVEAL_MS,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start()
+    // exNoteReveal is a stable ref. A screen that opens with the row
+    // already present starts at 1, so this is a no-op there.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exNoteShown])
+
   // Smooth edit-mode transition. Single Animated.Value, fully native-driven
   // (scale + opacity). The "white border while editing" effect is done via
   // an absolute-positioned overlay whose opacity rides this value — mixing
@@ -778,16 +834,17 @@ export function SetLoggerScreen({ route, navigation }: any) {
   useEffect(() => {
     Animated.timing(editAnim, {
       toValue: editingSetId != null ? 1 : 0,
-      duration: 280,
+      duration: EDIT_MS,
       easing: Easing.inOut(Easing.cubic),
       useNativeDriver: true,
     }).start()
   }, [editingSetId, editAnim])
 
   function startEdit(s: WorkoutSet) {
-    // No layout animation: the form layout no longer changes when entering
-    // edit mode (only colors/labels flip). Wrapping in LayoutAnimation made
-    // every set row in the list animate too, which felt like a freeze.
+    // No LayoutAnimation here: it made every set row in the list animate
+    // too, which felt like a freeze. The form's own height change (the
+    // "Rest (sec)" field appearing) is animated by formHeightAnim instead,
+    // which is scoped to the form's wrapper.
     setEditingSetId(s.id)
     setWeight(
       isCardio
@@ -829,21 +886,102 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // screen's first paint.
   const [barHeight, setBarHeight] = useState(64)
 
+  const swapMounted = useRef(false)
+
   useEffect(() => {
+    // Nothing to swap on the first paint, and running it would pin the
+    // wrapper to the placeholder height before the form has ever laid out.
+    if (!swapMounted.current) {
+      swapMounted.current = true
+      return
+    }
     // Entering selection hides the form without unmounting it (see the swap
     // itself), so a focused NumericField would otherwise leave the keyboard
     // up over an invisible input.
     if (selectionMode) Keyboard.dismiss()
-    Animated.timing(swapAnim, {
+    // Pin the wrapper to the form's current height for the collapse: an
+    // animated height needs a number on both ends.
+    setSwapFromHeight(formHeightRef.current)
+    const anim = Animated.timing(swapAnim, {
       toValue: selectionMode ? 1 : 0,
       duration: SWAP_MS,
       easing: Easing.inOut(Easing.cubic),
       useNativeDriver: false, // height can't run on the native driver
-    }).start()
+    })
+    anim.start(({ finished }) => {
+      // Back on the form: hand the height back to layout so the form can
+      // grow and shrink on its own again.
+      if (finished && !selectionMode) setSwapFromHeight(null)
+    })
+    return () => anim.stop()
     // swapAnim is a stable ref; re-running this on every render would
     // restart the animation from its current position each time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectionMode])
+
+  // Explicit height for the swap wrapper, or null for "auto".
+  //
+  // Auto is the resting state, and it is what keeps the form and the set list
+  // in step: the form is a normal flow child, so when it grows or shrinks the
+  // wrapper and everything below it move in the same layout pass. Driving the
+  // wrapper off the form's *measured* height instead left the list a beat
+  // behind — the form re-laid out at once, and the wrapper only caught up
+  // after onLayout had reported the new height.
+  //
+  // A number is only needed for the form <-> selection-bar collapse, which
+  // runs between two known heights. It holds the form's height at the moment
+  // the collapse starts, and goes back to null once the wrapper settles back
+  // on the form.
+  const [swapFromHeight, setSwapFromHeight] = useState<number | null>(null)
+  // Latest laid-out height of the form. The form keeps its natural height
+  // even while the wrapper clips it (a flow child does not shrink to fit a
+  // shorter parent), so this stays right across a collapse.
+  const formHeightRef = useRef(FORM_PLACEHOLDER_STYLE.minHeight)
+
+  function onFormLayout(e: LayoutChangeEvent) {
+    const h = Math.round(e.nativeEvent.layout.height)
+    if (h > 0) formHeightRef.current = h
+  }
+
+  const swapHeight = useMemo(
+    () =>
+      swapFromHeight == null
+        ? null
+        : swapAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [swapFromHeight, barHeight],
+          }),
+    [swapFromHeight, barHeight, swapAnim]
+  )
+
+  // The "Rest (sec)" field only exists while editing a set that has a rest
+  // anchor. It unfolds instead of popping in, so the card's height change and
+  // the set list's shift are one motion, on editAnim's clock.
+  const restShown =
+    editingSetId != null && showRestTime && editingRestAnchorIso != null
+  const restReveal = useRef(new Animated.Value(0)).current
+  // Height the rest row unfolds to. It is measured off the Reps field, not
+  // off the rest row itself: the rest row lives inside a clipped, height-0
+  // wrapper when hidden, and a child in there never reports a usable height.
+  // Reps is always on screen and is the same NumericField shape (label, no
+  // unit), so its height is the rest row's height.
+  const [fieldHeight, setFieldHeight] = useState(0)
+
+  useEffect(() => {
+    const anim = Animated.timing(restReveal, {
+      toValue: restShown ? 1 : 0,
+      duration: EDIT_MS,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: false, // height can't run on the native driver
+    })
+    anim.start()
+    return () => anim.stop()
+  }, [restShown, restReveal])
+
+  function onFieldLayout(e: LayoutChangeEvent) {
+    const h = Math.round(e.nativeEvent.layout.height)
+    if (h > 0) setFieldHeight((prev) => (prev === h ? prev : h))
+  }
 
   function toggleSelected(id: number) {
     const next = selectedIds.includes(id)
@@ -909,10 +1047,14 @@ export function SetLoggerScreen({ route, navigation }: any) {
         // exist yet). Bail otherwise.
         if (!resolved) return
         // Flip the form back to add-mode FIRST so the editAnim effect kicks
-        // off the border-color/scale transition. Defer the actual mutation
-        // by one frame so the store update (which forces a full SetList
-        // re-render and PR recompute) doesn't happen on the same frame
-        // as the form transition.
+        // off the border-color/scale transition, then defer the mutation
+        // past the whole transition — not just one frame. The store update
+        // forces a PR recompute and a full SetList re-render, which blocks
+        // JS for longer than a frame, and the card's collapse is a height
+        // animation, so it runs on the JS driver and stalls with it. One
+        // frame of headroom was enough for the native-driven border but not
+        // for the collapse: Save snapped shut while Cancel (no mutation)
+        // animated. Same trick as the note editor's handleSave.
         const w = isCardio ? weight : toKg(weight, unit)
         const r = reps
         const id = editingSetId
@@ -929,7 +1071,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
           : null
         setEditingSetId(null)
         setEditingRestAnchorIso(null)
-        requestAnimationFrame(() => {
+        setTimeout(() => {
           if (editingPlanned) {
             logPlannedSet(id, { weight: w, reps: r })
           } else {
@@ -939,7 +1081,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
               ...(newCreatedAt ? { created_at: newCreatedAt } : {}),
             })
           }
-        })
+        }, EDIT_MS + 40)
       } else if (isPlanned) {
         // isPlanned only true for an existing planned workout — already resolved.
         if (!resolved) return
@@ -1008,6 +1150,12 @@ export function SetLoggerScreen({ route, navigation }: any) {
               const we = addExerciseToWorkout(wid, pending.exerciseId)
               return { workoutId: wid, weId: we.id }
             })
+            // This commit is where the exercise-note row first mounts,
+            // which pushes the form and the set list down by a row. Only
+            // `update` is configured: the shift animates natively, while
+            // newly created views (the note row, the new set row) are left
+            // alone so they keep their own fade-ins.
+            LayoutAnimation.configureNext(EX_NOTE_SHIFT_ANIM)
             setResolved(ids)
             api.addSet(ids.weId, { weight: w, reps: r })
           })
@@ -1051,26 +1199,44 @@ export function SetLoggerScreen({ route, navigation }: any) {
            *  workout_exercise row yet, so a note written here would be
            *  dropped without telling the user. The stub is replaced within a
            *  frame or two of the real row landing. */}
-          {we.id > 0 && (
-            <Pressable onPress={openExerciseNote} hitSlop={8} style={styles.exNoteRow}>
-              <Ionicons
-                name="document-text-outline"
-                size={12}
-                color={theme.colors.muted}
-              />
-              <View style={styles.exNoteBody}>
-                {we.note.trim() ? (
-                  <NotePreview note={we.note} style={styles.exNoteText} />
-                ) : (
-                  <Text
-                    style={[styles.exNoteText, styles.exNoteEmpty]}
-                    numberOfLines={1}
-                  >
-                    Add a note for this exercise
-                  </Text>
-                )}
-              </View>
-            </Pressable>
+          {exNoteShown && (
+            <Animated.View
+              style={{
+                opacity: exNoteReveal,
+                transform: [
+                  {
+                    translateY: exNoteReveal.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-6, 0],
+                    }),
+                  },
+                ],
+              }}
+            >
+              <Pressable
+                onPress={openExerciseNote}
+                hitSlop={8}
+                style={styles.exNoteRow}
+              >
+                <Ionicons
+                  name="document-text-outline"
+                  size={12}
+                  color={theme.colors.muted}
+                />
+                <View style={styles.exNoteBody}>
+                  {we.note.trim() ? (
+                    <NotePreview note={we.note} style={styles.exNoteText} />
+                  ) : (
+                    <Text
+                      style={[styles.exNoteText, styles.exNoteEmpty]}
+                      numberOfLines={1}
+                    >
+                      Add a note for this exercise
+                    </Text>
+                  )}
+                </View>
+              </Pressable>
+            </Animated.View>
           )}
         </View>
 
@@ -1092,15 +1258,15 @@ export function SetLoggerScreen({ route, navigation }: any) {
           // the selection clears. Both layers stay mounted the whole time,
           // absolutely positioned on top of each other, and cross-fade via
           // swapAnim - only their opacity and this wrapper's height ever
-          // change, so nothing below this ~260px card re-lays out.
+          // change, so nothing below this card re-lays out. The form side of
+          // the height comes from the form's own measured height (see
+          // onFormLayout), not a constant, so entering edit mode grows the
+          // card instead of clipping its buttons.
           <Animated.View
-            style={{
-              height: swapAnim.interpolate({
-                inputRange: [0, 1],
-                outputRange: [FORM_PLACEHOLDER_STYLE.minHeight, barHeight],
-              }),
-              overflow: "hidden",
-            }}
+            style={[
+              { overflow: "hidden" },
+              swapHeight != null && { height: swapHeight },
+            ]}
           >
             <Animated.View
               onLayout={(e: LayoutChangeEvent) =>
@@ -1141,10 +1307,10 @@ export function SetLoggerScreen({ route, navigation }: any) {
             </Animated.View>
 
             <Animated.View
+              onLayout={onFormLayout}
               pointerEvents={selectionMode ? "none" : "auto"}
               style={[
                 styles.card,
-                styles.swapLayer,
                 {
                   opacity: swapAnim.interpolate({
                     inputRange: [0, 1],
@@ -1174,21 +1340,44 @@ export function SetLoggerScreen({ route, navigation }: any) {
                 onChange={setWeight}
                 allowDecimal
               />
-              <NumericField
-                label={isCardio ? "Level" : "Reps"}
-                value={reps}
-                step={1}
-                min={0}
-                onChange={setReps}
-              />
-              {editingSetId != null && showRestTime && editingRestAnchorIso != null && (
+              <View onLayout={onFieldLayout}>
                 <NumericField
-                  label="Rest (sec)"
-                  value={restSec}
-                  step={5}
+                  label={isCardio ? "Level" : "Reps"}
+                  value={reps}
+                  step={1}
                   min={0}
-                  onChange={setRestSec}
+                  onChange={setReps}
                 />
+              </View>
+              {showRestTime && (
+                // Stays mounted and collapses to height 0 rather than
+                // unmounting, so entering and leaving edit mode animates. The
+                // negative margin cancels the card's `gap` while the row is
+                // collapsed, so a hidden row adds nothing to the card.
+                // fieldHeight comes from the Reps field - see its declaration.
+                <Animated.View
+                  pointerEvents={restShown ? "auto" : "none"}
+                  style={{
+                    overflow: "hidden",
+                    opacity: restReveal,
+                    height: restReveal.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0, fieldHeight || FIELD_H_FALLBACK],
+                    }),
+                    marginTop: restReveal.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-CARD_GAP, 0],
+                    }),
+                  }}
+                >
+                  <NumericField
+                    label="Rest (sec)"
+                    value={restSec}
+                    step={5}
+                    min={0}
+                    onChange={setRestSec}
+                  />
+                </Animated.View>
               )}
               {error && <Text style={styles.error}>{error}</Text>}
               <View style={{ flexDirection: "row", gap: 12 }}>
