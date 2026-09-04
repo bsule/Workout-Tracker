@@ -42,6 +42,7 @@ import {
   estimateOneRm,
   formatWeight,
   fromKg,
+  getDayNoteQ,
   getExerciseHistoryQ,
   getState,
   getWorkoutByDateQ,
@@ -69,7 +70,7 @@ import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
 import { useSettings, useWeightUnit } from "../settings/SettingsProvider"
 
-type SubTab = "workout" | "history" | "graph" | "records" | "settings"
+type SubTab = "workout" | "history" | "graph" | "summary" | "settings"
 
 // Predict whether a hypothetical (weight, reps) added to `weId` would be the
 // current overall PR / position PR for `exerciseId`. Mirrors the dominance
@@ -531,7 +532,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // synchronous React commit triggered by add/delete-set mutations, where
   // every saved millisecond delays the new row's fade-in start.
   const needsHistory =
-    tab === "history" || tab === "graph" || tab === "records"
+    tab === "history" || tab === "graph" || tab === "summary"
   const history: ExerciseHistoryDay[] = useMemo(() => {
     if (exerciseId == null || !needsHistory) return EMPTY_HISTORY
     return getExerciseHistoryQ(exerciseId)
@@ -685,7 +686,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
     [navigation]
   )
 
-  // Records-tab date taps push CalendarDate on top of the stack instead of
+  // Summary-tab date taps push CalendarDate on top of the stack instead of
   // jumping to the Calendar tab. The tab jump pops SetLogger and unfreezes
   // every pre-mounted tab on the same frame (a visible "sec" freeze); a stack
   // push keeps MainTabs frozen, so the calendar opens instantly and the
@@ -785,9 +786,14 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // Note about this exercise on this day. Separate from a set's own note and
   // from the session note on the workout.
   const [exNoteOpen, setExNoteOpen] = useState(false)
+  const [exNoteMode, setExNoteMode] = useState<"view" | "edit">("view")
   const [exNoteDraft, setExNoteDraft] = useState("")
   function openExerciseNote() {
-    setExNoteDraft(we?.note ?? "")
+    const n = we?.note ?? ""
+    setExNoteDraft(n)
+    // Read the note first, edit on demand. An empty note has nothing to read,
+    // so that case still opens straight into the input.
+    setExNoteMode(n.trim() ? "view" : "edit")
     setExNoteOpen(true)
   }
   function persistExerciseNote() {
@@ -1451,11 +1457,12 @@ export function SetLoggerScreen({ route, navigation }: any) {
             />
           )}
           {tab === "graph" && <GraphPanel days={history} unit={unit} />}
-          {tab === "records" && (
-            <RecordsPanel
+          {tab === "summary" && (
+            <SummaryPanel
               days={history}
               unit={unit}
               onPressDate={pushCalendarAtDate}
+              excludeDate={workout.date}
             />
           )}
           {tab === "settings" && <SettingsPanel navigation={navigation} />}
@@ -1487,6 +1494,10 @@ export function SetLoggerScreen({ route, navigation }: any) {
           onChangeDraft={setExNoteDraft}
           onClose={() => setExNoteOpen(false)}
           onSave={persistExerciseNote}
+          title="Exercise note"
+          placeholder="How this exercise went today"
+          mode={exNoteMode}
+          onEdit={() => setExNoteMode("edit")}
         />
       )}
       <PlannedSetActionsModal
@@ -1675,7 +1686,7 @@ function SubTabBar({ tab, onChange }: { tab: SubTab; onChange: (t: SubTab) => vo
     { key: "workout", label: "Workout", icon: "barbell-outline" },
     { key: "history", label: "History", icon: "list-outline" },
     { key: "graph", label: "Graph", icon: "stats-chart-outline" },
-    { key: "records", label: "Records", icon: "trophy-outline" },
+    { key: "summary", label: "Summary", icon: "trophy-outline" },
     { key: "settings", label: "Settings", icon: "settings-outline" },
   ]
   return (
@@ -1708,6 +1719,73 @@ function SubTabBar({ tab, onChange }: { tab: SubTab; onChange: (t: SubTab) => vo
   )
 }
 
+/**
+ * The note on a read-only day card. Collapsed it is NotePreview's two lines;
+ * tapping it opens the whole thing. Notes can run long, and a card that opened
+ * them by default pushed its own sets off the screen.
+ *
+ * Defined here rather than reusing the Summary tab's `CollapsibleNote`: that
+ * one carries a label because it renders three note kinds side by side. A day
+ * card shows one note, so a label would say nothing.
+ */
+function ExpandableNote({ note }: { note: string }) {
+  const [open, setOpen] = useState(false)
+  const spin = useRef(new Animated.Value(0)).current
+  const text = note.trim()
+
+  const toggle = useCallback(() => {
+    LayoutAnimation.configureNext(EXPAND_ANIM)
+    setOpen((v) => {
+      Animated.timing(spin, {
+        toValue: v ? 0 : 1,
+        duration: 240,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start()
+      return !v
+    })
+  }, [spin])
+
+  if (!text) return null
+
+  return (
+    <Pressable
+      onPress={toggle}
+      hitSlop={6}
+      unstable_pressDelay={0}
+      // Dim the text instead of `pressedStyle`. The row runs the full width of
+      // the card, so a background wash reads as a bar across the header rather
+      // than as feedback on the note.
+      style={({ pressed }) => [styles.dayCardNoteRow, pressed && { opacity: 0.55 }]}
+    >
+      {/* The wrapper takes the row's remaining width. dayCardNote must NOT: it
+          is applied per line inside NotePreview's column, where flex:1 makes
+          every line stretch instead of stacking. */}
+      <View style={styles.dayCardNoteBody}>
+        {open ? (
+          <Text style={styles.dayCardNote}>{text}</Text>
+        ) : (
+          <NotePreview note={text} style={styles.dayCardNote} />
+        )}
+      </View>
+      <Animated.View
+        style={{
+          transform: [
+            {
+              rotate: spin.interpolate({
+                inputRange: [0, 1],
+                outputRange: ["0deg", "180deg"],
+              }),
+            },
+          ],
+        }}
+      >
+        <Ionicons name="chevron-down" size={12} color={theme.colors.muted} />
+      </Animated.View>
+    </Pressable>
+  )
+}
+
 const HistoryDayCard = memo(function HistoryDayCard({
   day,
   onPressDate,
@@ -1718,7 +1796,10 @@ const HistoryDayCard = memo(function HistoryDayCard({
   return (
     <View style={styles.dayCard}>
       <View style={styles.dayCardHeader}>
-        <Text style={styles.dayDate}>{niceDate(day.date)}</Text>
+        <View style={styles.dayCardTitleCol}>
+          <Text style={styles.dayDate}>{niceDate(day.date)}</Text>
+          <ExpandableNote note={day.note} />
+        </View>
         {onPressDate && (
           <Pressable
             onPress={() => onPressDate(day.date)}
@@ -1737,11 +1818,6 @@ const HistoryDayCard = memo(function HistoryDayCard({
           </Pressable>
         )}
       </View>
-      {!!day.note && (
-        <View style={styles.dayCardNoteWrap}>
-          <NotePreview note={day.note} style={styles.dayCardNote} />
-        </View>
-      )}
       <SharedSetList sets={day.sets} showNotes />
     </View>
   )
@@ -2412,116 +2488,94 @@ export function SettingsPanel({ navigation }: { navigation: any }) {
   )
 }
 
-interface RecordCard {
-  label: string
-  value: string
-  sub?: string
-  icon: keyof typeof Ionicons.glyphMap
-  color: string
-  date: string | null
-}
+// Gold, reused for the "best estimated 1RM" marker on the rep rows.
+const GOLD = "#facc15"
 
-// Distinct hues per record so the page reads at a glance. These are the
-// brightened category palette tones, repurposed.
-const RECORD_COLORS = {
-  oneRm: "#facc15",      // yellow — 1RM "trophy"
-  heaviest: "#ef4444",   // red — peak weight
-  reps: "#22d3ee",       // cyan — endurance
-  setVolume: "#ec4899",  // pink/magenta — single-set volume
-  sessionVolume: "#8b5cf6", // violet — total session
+// How the rep-record rows are ordered, and what the bar in each row measures.
+// The bar always tracks the active sort, so the list reads as one shape.
+type RepSort = "weight" | "oneRm" | "reps" | "recent"
+const REP_SORTS: { key: RepSort; label: string; hint: string }[] = [
+  { key: "weight", label: "Heaviest", hint: "Top weight first" },
+  { key: "oneRm", label: "Best 1RM", hint: "Strongest set first" },
+  { key: "reps", label: "Most reps", hint: "Highest rep count first" },
+  { key: "recent", label: "Recent", hint: "Newest record first" },
+]
+
+// Rows shown before the "Show all" toggle is tapped.
+const REP_ROWS_COLLAPSED = 3
+
+// Expand/collapse inside the Summary tab — the "Show all" rep rows and the
+// collapsible notes. Revealed content fades in while the container height
+// eases, so each toggle reads as one motion instead of a jump. Opacity is safe
+// here (unlike SET_ANIM): the Summary tab never mounts the swipeable set list,
+// so there are no native-driven Animated nodes for it to collide with.
+const EXPAND_ANIM = {
+  duration: 260,
+  create: {
+    type: LayoutAnimation.Types.easeInEaseOut,
+    property: LayoutAnimation.Properties.opacity,
+    duration: 240,
+  },
+  update: {
+    type: LayoutAnimation.Types.easeInEaseOut,
+    duration: 260,
+  },
+  delete: {
+    type: LayoutAnimation.Types.easeInEaseOut,
+    property: LayoutAnimation.Properties.opacity,
+    duration: 160,
+  },
 } as const
 
-export const RecordsPanel = memo(function RecordsPanel({
+/**
+ * The "Summary" sub-tab (was "Records"): what you did last time for this
+ * exercise, the notes attached to that day, and your best set at every rep
+ * count you have performed.
+ *
+ * `excludeDate` is the date being logged right now — the set logger passes its
+ * workout date. The last-session card then shows the newest session *before*
+ * that date, so it never mirrors the sets you are entering on this screen.
+ * ExerciseDetailScreen omits it: there the newest session is the last one.
+ */
+export const SummaryPanel = memo(function SummaryPanel({
   days,
   unit,
   onPressDate,
+  excludeDate,
 }: {
   days: ExerciseHistoryDay[]
   unit: "kg" | "lb"
   onPressDate?: (date: string) => void
+  excludeDate?: string
 }) {
-  const records = useMemo<RecordCard[]>(() => {
-    let bestOneRmKg = 0
-    let bestOneRmReps = 0
-    let bestOneRmSetWeight = 0
-    let bestOneRmDate: string | null = null
-    let heaviestKg = 0
-    let heaviestReps = 0
-    let heaviestDate: string | null = null
-    let bestSetVolumeKg = 0
-    let bestSetVolumeReps = 0
-    let bestSetVolumeWeight = 0
-    let bestSetVolumeDate: string | null = null
-    let bestSessionVolumeKg = 0
-    let bestSessionDate: string | null = null
-
-    for (const day of days) {
-      let sessionVolume = 0
-      for (const s of day.sets) {
-        if (s.weight == null || s.reps == null) continue
-        if (s.estimated_one_rm > bestOneRmKg) {
-          bestOneRmKg = s.estimated_one_rm
-          bestOneRmReps = s.reps
-          bestOneRmSetWeight = s.weight
-          bestOneRmDate = day.date
-        }
-        if (s.weight > heaviestKg) {
-          heaviestKg = s.weight
-          heaviestReps = s.reps
-          heaviestDate = day.date
-        }
-        const setVol = s.weight * s.reps
-        if (setVol > bestSetVolumeKg) {
-          bestSetVolumeKg = setVol
-          bestSetVolumeWeight = s.weight
-          bestSetVolumeReps = s.reps
-          bestSetVolumeDate = day.date
-        }
-        sessionVolume += setVol
-      }
-      if (sessionVolume > bestSessionVolumeKg) {
-        bestSessionVolumeKg = sessionVolume
-        bestSessionDate = day.date
-      }
+  // getExerciseHistoryQ returns days newest-first, so the first match wins.
+  const lastDay = useMemo(() => {
+    const today = todayString()
+    for (const d of days) {
+      // Never a session that has not happened yet. A workout dated in the
+      // future can carry logged sets, and it sorts to the front — the History
+      // tab drops those days for the same reason.
+      if (d.date > today) continue
+      if (excludeDate && d.date >= excludeDate) continue
+      return d
     }
+    return null
+  }, [days, excludeDate])
 
-    if (bestOneRmKg === 0) return []
-
-    return [
-      {
-        label: "Best 1RM (estimated)",
-        value: `${formatWeight(bestOneRmKg, unit)} ${unit}`,
-        sub: `from ${formatWeight(bestOneRmSetWeight, unit)} ${unit} × ${bestOneRmReps}`,
-        icon: "trophy",
-        color: RECORD_COLORS.oneRm,
-        date: bestOneRmDate,
-      },
-      {
-        label: "Heaviest set",
-        value: `${formatWeight(heaviestKg, unit)} ${unit}`,
-        sub: `× ${heaviestReps} reps`,
-        icon: "barbell",
-        color: RECORD_COLORS.heaviest,
-        date: heaviestDate,
-      },
-      {
-        label: "Best set volume",
-        value: `${formatWeight(bestSetVolumeKg, unit)} ${unit}`,
-        sub: `${formatWeight(bestSetVolumeWeight, unit)} × ${bestSetVolumeReps}`,
-        icon: "flash",
-        color: RECORD_COLORS.setVolume,
-        date: bestSetVolumeDate,
-      },
-      {
-        label: "Best session volume",
-        value: `${formatWeight(bestSessionVolumeKg, unit)} ${unit}`,
-        sub: bestSessionDate ? recordDate(bestSessionDate) : undefined,
-        icon: "flame",
-        color: RECORD_COLORS.sessionVolume,
-        date: bestSessionDate,
-      },
-    ]
-  }, [days, unit])
+  // The three note kinds that can hang off that date (see CLAUDE.md). They are
+  // independent rows in the snapshot; any of them can be empty. `days` is
+  // rebuilt on every snapshot change, so keying on it keeps these fresh.
+  const lastNotes = useMemo(() => {
+    if (!lastDay) return []
+    const out: { label: string; text: string }[] = []
+    const exercise = lastDay.note.trim()
+    if (exercise) out.push({ label: "Exercise", text: exercise })
+    const session = (getWorkoutByDateQ(lastDay.date)?.notes ?? "").trim()
+    if (session) out.push({ label: "Session", text: session })
+    const day = getDayNoteQ(lastDay.date).trim()
+    if (day) out.push({ label: "Day", text: day })
+    return out
+  }, [days, lastDay])
 
   // Flatten weight×reps sets with their set position (order is 0-based, so the
   // set number shown to the user is order+1) and the date performed.
@@ -2551,187 +2605,561 @@ export const RecordsPanel = memo(function RecordsPanel({
 
   // "all" pools every position; otherwise restrict to one set number.
   const [scope, setScope] = useState<"all" | number>("all")
-  const [pickerOpen, setPickerOpen] = useState(false)
+  const [sort, setSort] = useState<RepSort>("weight")
+  const [showAllRows, setShowAllRows] = useState(false)
+  const [picker, setPicker] = useState<"scope" | "sort" | null>(null)
+  // The day whose sets the record popup is showing, or null when closed.
+  const [recordDay, setRecordDay] = useState<ExerciseHistoryDay | null>(null)
+
+  // Drives the "Show all" chevron flip. Separate from the LayoutAnimation
+  // because it is a transform, which LayoutAnimation cannot animate.
+  const moreSpin = useRef(new Animated.Value(0)).current
+  const toggleShowAllRows = useCallback(() => {
+    LayoutAnimation.configureNext(EXPAND_ANIM)
+    setShowAllRows((v) => {
+      Animated.timing(moreSpin, {
+        toValue: v ? 0 : 1,
+        duration: 240,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start()
+      return !v
+    })
+  }, [moreSpin])
+
+  // Collapse back to the top rows whenever the list itself changes shape.
+  const resetRows = useCallback(() => {
+    setShowAllRows(false)
+    moreSpin.setValue(0)
+  }, [moreSpin])
+
+  const openRecordDay = useCallback(
+    (date: string) => {
+      setRecordDay(days.find((d) => d.date === date) ?? null)
+    },
+    [days]
+  )
 
   const scoped = useMemo(
     () => (scope === "all" ? wrSets : wrSets.filter((s) => s.setNum === scope)),
     [wrSets, scope]
   )
 
-  // Best (heaviest) weight at each rep count actually performed in scope,
-  // sorted by rep count ascending. Only performed rep counts appear.
+  // One row per rep count actually performed in scope: the heaviest weight at
+  // that rep count, the day it happened, how many times that rep count was
+  // used, and the 1RM it estimates to.
   const repRows = useMemo(() => {
-    const best = new Map<number, { weightKg: number; date: string }>()
+    const best = new Map<
+      number,
+      { weightKg: number; date: string; count: number }
+    >()
     for (const s of scoped) {
       const cur = best.get(s.reps)
-      if (!cur || s.weightKg > cur.weightKg) {
-        best.set(s.reps, { weightKg: s.weightKg, date: s.date })
+      if (!cur) {
+        best.set(s.reps, { weightKg: s.weightKg, date: s.date, count: 1 })
+        continue
+      }
+      cur.count += 1
+      if (s.weightKg > cur.weightKg) {
+        cur.weightKg = s.weightKg
+        cur.date = s.date
       }
     }
-    return [...best.entries()]
-      .map(([reps, v]) => ({ reps, ...v }))
-      .sort((a, b) => a.reps - b.reps)
-  }, [scoped])
+    const rows = [...best.entries()].map(([reps, v]) => ({
+      reps,
+      weightKg: v.weightKg,
+      date: v.date,
+      count: v.count,
+      oneRmKg: estimateOneRm(v.weightKg, reps),
+    }))
 
-  const scopeBest1RM = useMemo(
-    () => scoped.reduce((m, s) => (s.oneRm > m ? s.oneRm : m), 0),
-    [scoped]
-  )
+    // `metric` is what the bar measures — always the active sort, so the bar
+    // lengths and the row order tell the same story. "Recent" has no useful
+    // magnitude, so it falls back to weight.
+    const metric = (r: (typeof rows)[number]) =>
+      sort === "reps" ? r.reps : sort === "oneRm" ? r.oneRmKg : r.weightKg
 
-  if (records.length === 0) {
+    rows.sort((a, b) => {
+      if (sort === "recent") {
+        if (a.date !== b.date) return a.date < b.date ? 1 : -1
+        return b.weightKg - a.weightKg
+      }
+      const diff = metric(b) - metric(a)
+      // Ties break on the harder set: more reps at the same weight.
+      return diff !== 0 ? diff : b.reps - a.reps
+    })
+
+    const maxMetric = rows.reduce((m, r) => (metric(r) > m ? metric(r) : m), 0)
+
+    // The single strongest row, by index rather than by value: several rep
+    // counts can estimate to the same 1RM, and marking every tie made the
+    // whole table gold. Ties go to the row that did more reps for it.
+    let topIdx = -1
+    for (let i = 0; i < rows.length; i++) {
+      if (topIdx < 0) {
+        topIdx = i
+        continue
+      }
+      const best = rows[topIdx]
+      if (rows[i].oneRmKg > best.oneRmKg) topIdx = i
+      else if (rows[i].oneRmKg === best.oneRmKg && rows[i].reps > best.reps) {
+        topIdx = i
+      }
+    }
+
+    return rows.map((r, i) => ({
+      ...r,
+      share: maxMetric > 0 ? metric(r) / maxMetric : 0,
+      isTopOneRm: i === topIdx,
+    }))
+  }, [scoped, sort])
+
+  const visibleRows = showAllRows
+    ? repRows
+    : repRows.slice(0, REP_ROWS_COLLAPSED)
+
+  if (days.length === 0) {
     return (
       <View style={[styles.empty, { marginTop: theme.spacing[3] }]}>
         <Text style={styles.emptyText}>
-          No records yet. Log a few sets to see your bests here.
+          Nothing logged for this exercise yet. Log a few sets to see your last
+          session and your records here.
         </Text>
       </View>
     )
   }
 
+  const sortLabel =
+    REP_SORTS.find((s) => s.key === sort)?.label ?? REP_SORTS[0].label
+
   return (
     <View style={{ paddingVertical: theme.spacing[3], gap: theme.spacing[3] }}>
-      <Text style={styles.section}>Personal records</Text>
-      {records.map((r) => {
-        const tappable = onPressDate != null && r.date != null
-        return (
-          <Pressable
-            key={r.label}
-            disabled={!tappable}
-            // Match the history calendar button: fire the press immediately
-            // instead of waiting out Pressable's default press-in delay inside
-            // the ScrollView, which made the tap feel laggy before navigating.
-            unstable_pressDelay={0}
-            onPress={tappable ? () => onPressDate!(r.date!) : undefined}
-            style={({ pressed }) => [
-              styles.recordCard,
-              { borderLeftColor: r.color, borderLeftWidth: 4 },
-              tappable && pressed && pressedStyle(pressed),
-            ]}
-          >
-            <View
-              style={[
-                styles.recordIconCircle,
-                { backgroundColor: r.color + "26" },
-              ]}
-            >
-              <Ionicons name={r.icon} size={20} color={r.color} />
-            </View>
+      <Text style={styles.section}>Last session</Text>
+      {lastDay ? (
+        <View style={styles.dayCard}>
+          <View style={styles.dayCardHeader}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.recordLabel}>{r.label}</Text>
-              <View style={styles.recordValueRow}>
-                <Text style={[styles.recordValue, { color: r.color }]}>
-                  {r.value}
-                </Text>
-              </View>
-              {r.sub && <Text style={styles.recordSub}>{r.sub}</Text>}
+              <Text style={styles.dayDate}>{niceDate(lastDay.date)}</Text>
+              <Text style={styles.summaryAgo}>{agoLabel(lastDay.date)}</Text>
             </View>
-            {tappable && (
-              <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={theme.colors.muted}
-              />
+            {onPressDate && (
+              <Pressable
+                onPress={() => onPressDate(lastDay.date)}
+                hitSlop={10}
+                unstable_pressDelay={0}
+                style={({ pressed }) => [
+                  styles.dayCardCalBtn,
+                  pressedStyle(pressed),
+                ]}
+              >
+                <Ionicons
+                  name="calendar-outline"
+                  size={16}
+                  color={theme.colors.muted}
+                />
+              </Pressable>
             )}
-          </Pressable>
-        )
-      })}
-
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginTop: theme.spacing[2],
-        }}
-      >
-        <Text style={styles.section}>By set</Text>
-        <Pressable
-          onPress={() => setPickerOpen(true)}
-          style={({ pressed }) => [
-            styles.setPickerTrigger,
-            pressedStyle(pressed),
-          ]}
-        >
-          <Text style={styles.setPickerTriggerText}>
-            {scope === "all" ? "All sets" : `Set ${scope}`}
-          </Text>
-          <Ionicons name="chevron-down" size={14} color={theme.colors.muted} />
-        </Pressable>
-      </View>
-
-      <View style={styles.scopeSummary}>
-        {scopeBest1RM > 0 && (
-          <Text style={styles.scopeSummaryText}>
-            Best 1RM ≈{" "}
-            {roundForDisplay(fromKg(scopeBest1RM, unit), unit).toFixed(
-              unit === "kg" ? 1 : 0
-            )}{" "}
-            {unit}
-          </Text>
-        )}
-        <Text style={[styles.scopeSummaryText, { marginLeft: "auto" }]}>
-          {scoped.length} {scoped.length === 1 ? "set" : "sets"}
-        </Text>
-      </View>
-
-      <View style={styles.repPrTable}>
-        {repRows.map((row, i) => (
-          <View
-            key={row.reps}
-            style={[
-              styles.repPrRow,
-              i < repRows.length - 1 && styles.repPrRowDivider,
-            ]}
-          >
-            <Text style={styles.repPrReps}>
-              {row.reps} {row.reps === 1 ? "rep" : "reps"}
-            </Text>
-            <Text style={styles.repPrWeight}>
-              {`${formatWeight(row.weightKg, unit)} ${unit}`}
-            </Text>
-            <Text style={styles.repPrDate}>{recordDate(row.date)}</Text>
           </View>
-        ))}
-      </View>
+          {lastNotes.length > 0 && (
+            <View style={styles.summaryNotes}>
+              {lastNotes.map((n) => (
+                <CollapsibleNote key={n.label} label={n.label} text={n.text} />
+              ))}
+            </View>
+          )}
+          <SharedSetList sets={lastDay.sets} showNotes />
+        </View>
+      ) : (
+        <View style={styles.empty}>
+          <Text style={styles.emptyText}>
+            No earlier session for this exercise.
+          </Text>
+        </View>
+      )}
 
-      <SetPickerOverlay
-        visible={pickerOpen}
-        scope={scope}
-        setNumbers={setNumbers}
-        wrSets={wrSets}
-        onClose={() => setPickerOpen(false)}
-        onSelect={(opt) => {
-          setScope(opt)
-          setPickerOpen(false)
-        }}
-      />
+      {repRows.length > 0 && (
+        <>
+          <Text style={[styles.section, { marginTop: theme.spacing[2] }]}>
+            Rep records
+          </Text>
+
+          <View style={styles.repPrPickerRow}>
+            <PickerTrigger
+              icon="layers-outline"
+              label={scope === "all" ? "All sets" : `Set ${scope}`}
+              onPress={() => setPicker("scope")}
+            />
+            <PickerTrigger
+              icon="swap-vertical-outline"
+              label={sortLabel}
+              onPress={() => setPicker("sort")}
+            />
+          </View>
+
+          <View style={styles.repPrTable}>
+            {visibleRows.map((row, i) => (
+              <Pressable
+                key={row.reps}
+                // Fire immediately rather than waiting out Pressable's default
+                // press-in delay inside the ScrollView — same reason as the
+                // day card's calendar button.
+                unstable_pressDelay={0}
+                onPress={() => openRecordDay(row.date)}
+                style={({ pressed }) => [
+                  styles.repPrRow,
+                  i < visibleRows.length - 1 && styles.repPrRowDivider,
+                  row.isTopOneRm && styles.repPrRowTop,
+                  pressedStyle(pressed),
+                ]}
+              >
+                <View style={styles.repPrTopLine}>
+                  <Text style={styles.repPrWeight}>
+                    {formatWeight(row.weightKg, unit)}
+                    <Text style={styles.repPrUnit}> {unit}</Text>
+                  </Text>
+                  <Text style={styles.repPrReps}>
+                    × {row.reps} {row.reps === 1 ? "rep" : "reps"}
+                  </Text>
+                  {row.isTopOneRm && (
+                    <View style={styles.repPrBestChip}>
+                      <Text style={styles.repPrBestChipText}>Best</Text>
+                    </View>
+                  )}
+                  <Text style={styles.repPrDate}>{recordDate(row.date)}</Text>
+                </View>
+                <View style={styles.repPrBarTrack}>
+                  <View
+                    style={[
+                      styles.repPrBarFill,
+                      {
+                        width: `${Math.max(2, row.share * 100)}%`,
+                        // Shorter bars also sit back, so the ranking reads
+                        // even where two rows are close in length.
+                        opacity: 0.45 + row.share * 0.55,
+                      },
+                      row.isTopOneRm && { backgroundColor: GOLD },
+                    ]}
+                  />
+                </View>
+              </Pressable>
+            ))}
+
+            {repRows.length > REP_ROWS_COLLAPSED && (
+              <Pressable
+                onPress={toggleShowAllRows}
+                style={({ pressed }) => [
+                  styles.repPrMoreRow,
+                  pressedStyle(pressed),
+                ]}
+              >
+                <Text style={styles.repPrMoreText}>
+                  {showAllRows
+                    ? `Show top ${REP_ROWS_COLLAPSED}`
+                    : `Show all ${repRows.length} rep counts`}
+                </Text>
+                <Animated.View
+                  style={{
+                    transform: [
+                      {
+                        rotate: moreSpin.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: ["0deg", "180deg"],
+                        }),
+                      },
+                    ],
+                  }}
+                >
+                  <Ionicons
+                    name="chevron-down"
+                    size={14}
+                    color={theme.colors.primary}
+                  />
+                </Animated.View>
+              </Pressable>
+            )}
+          </View>
+
+          <OptionPickerOverlay
+            visible={picker === "scope"}
+            title="Show set"
+            options={[
+              {
+                key: "all",
+                label: "All sets",
+                hint: `${wrSets.length} ${wrSets.length === 1 ? "set" : "sets"}`,
+                active: scope === "all",
+              },
+              ...setNumbers.map((n) => {
+                const count = wrSets.filter((s) => s.setNum === n).length
+                return {
+                  key: String(n),
+                  label: `Set ${n}`,
+                  hint: `${count} ${count === 1 ? "time" : "times"}`,
+                  active: scope === n,
+                }
+              }),
+            ]}
+            onClose={() => setPicker(null)}
+            onSelect={(key) => {
+              setScope(key === "all" ? "all" : Number(key))
+              resetRows()
+              setPicker(null)
+            }}
+          />
+
+          <OptionPickerOverlay
+            visible={picker === "sort"}
+            title="Sort by"
+            options={REP_SORTS.map((s) => ({
+              key: s.key,
+              label: s.label,
+              hint: s.hint,
+              active: sort === s.key,
+            }))}
+            onClose={() => setPicker(null)}
+            onSelect={(key) => {
+              setSort(key as RepSort)
+              resetRows()
+              setPicker(null)
+            }}
+          />
+
+          <RecordDayPopup
+            day={recordDay}
+            onClose={() => setRecordDay(null)}
+            onPressDate={onPressDate}
+          />
+        </>
+      )}
     </View>
   )
 })
 
-// Centered, scrollable set-number picker. Mirrors NoteEditorSheet: the fade is
+/**
+ * What a record row opens: the date it was set, and every set logged for this
+ * exercise that day. Tap the backdrop to dismiss, or the calendar button to
+ * open that day — same as the last-session card.
+ *
+ * `day` doubles as the visibility flag. The last non-null value is held in
+ * `shown` so the card still has content to render while it fades out.
+ */
+function RecordDayPopup({
+  day,
+  onClose,
+  onPressDate,
+}: {
+  day: ExerciseHistoryDay | null
+  onClose: () => void
+  onPressDate?: (date: string) => void
+}) {
+  const opacity = useRef(new Animated.Value(0)).current
+  const [shown, setShown] = useState<ExerciseHistoryDay | null>(day)
+
+  // Leaving for the calendar skips the fade: a native Modal sits above the
+  // whole app, so fading it out over the incoming screen would put 150ms of
+  // dimmed backdrop on top of the push. Unmount it this commit, navigate on
+  // the next frame. The pending fade-out's callback is guarded on `finished`,
+  // so a reopen inside that window cannot blank the new content.
+  const goToDate = useCallback(() => {
+    if (!shown || !onPressDate) return
+    const date = shown.date
+    opacity.setValue(0)
+    setShown(null)
+    onClose()
+    requestAnimationFrame(() => onPressDate(date))
+  }, [shown, onPressDate, onClose, opacity])
+
+  useEffect(() => {
+    if (day) {
+      setShown(day)
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: PICKER_FADE_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start()
+      return
+    }
+    Animated.timing(opacity, {
+      toValue: 0,
+      duration: PICKER_FADE_MS,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setShown(null)
+    })
+  }, [day, opacity])
+
+  if (!shown) return null
+
+  return (
+    <Modal transparent visible animationType="none" statusBarTranslucent onRequestClose={onClose}>
+      <Animated.View style={[styles.pickerOverlay, { opacity }]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        {/* Backdrop and card are siblings, not nested — that is what keeps a
+            single tap enough to dismiss.
+
+            box-none, unlike the option picker's card: the set list below is
+            plain Views, so nothing inside claims the touch, and a responder
+            claimed here would block the list's native scroll gesture on a day
+            with many sets. The option picker can claim it because each of its
+            rows is a Pressable that takes the touch first. The cost is that a
+            tap on this card's padding closes the popup — it is read-only, so
+            that discards nothing. */}
+        <View style={styles.pickerCard} pointerEvents="box-none">
+          <View style={styles.recordDayHead}>
+            <View style={styles.pickerTitleCol}>
+              <Text style={styles.pickerTitle}>{niceDate(shown.date)}</Text>
+              <ExpandableNote note={shown.note} />
+            </View>
+            {onPressDate && (
+              <Pressable
+                onPress={goToDate}
+                hitSlop={10}
+                unstable_pressDelay={0}
+                style={({ pressed }) => [
+                  styles.dayCardCalBtn,
+                  pressedStyle(pressed),
+                ]}
+              >
+                <Ionicons
+                  name="calendar-outline"
+                  size={18}
+                  color={theme.colors.muted}
+                />
+              </Pressable>
+            )}
+          </View>
+          <ScrollView
+            style={styles.pickerScroll}
+            contentContainerStyle={styles.recordDaySets}
+            showsVerticalScrollIndicator
+          >
+            <SharedSetList sets={shown.sets} showNotes />
+          </ScrollView>
+        </View>
+      </Animated.View>
+    </Modal>
+  )
+}
+
+/**
+ * One note on the last-session card. Collapsed it is a single line — a label,
+ * the first line of the note, a chevron. Tapping expands the full text. Notes
+ * can run long, and rendering them all open pushed the sets off the screen.
+ */
+function CollapsibleNote({ label, text }: { label: string; text: string }) {
+  const [open, setOpen] = useState(false)
+  const spin = useRef(new Animated.Value(0)).current
+  const firstLine = text.split("\n").find((l) => l.trim())?.trim() ?? ""
+
+  const toggle = useCallback(() => {
+    LayoutAnimation.configureNext(EXPAND_ANIM)
+    setOpen((v) => {
+      Animated.timing(spin, {
+        toValue: v ? 0 : 1,
+        duration: 240,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start()
+      return !v
+    })
+  }, [spin])
+
+  return (
+    <Pressable
+      onPress={toggle}
+      unstable_pressDelay={0}
+      hitSlop={6}
+      style={({ pressed }) => [styles.summaryNote, pressedStyle(pressed)]}
+    >
+      <View style={styles.summaryNoteHead}>
+        <Text style={styles.summaryNoteLabel}>{label}</Text>
+        <Text
+          style={[
+            styles.summaryNotePreview,
+            // Kept mounted but blank when open, so the label and chevron hold
+            // their positions instead of snapping together mid-animation.
+            open && { opacity: 0 },
+          ]}
+          numberOfLines={1}
+        >
+          {firstLine}
+        </Text>
+        <Animated.View
+          style={{
+            transform: [
+              {
+                rotate: spin.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: ["0deg", "180deg"],
+                }),
+              },
+            ],
+          }}
+        >
+          <Ionicons
+            name="chevron-down"
+            size={14}
+            color={theme.colors.muted}
+          />
+        </Animated.View>
+      </View>
+      {open && <Text style={styles.summaryNoteText}>{text}</Text>}
+    </Pressable>
+  )
+}
+
+function PickerTrigger({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap
+  label: string
+  onPress: () => void
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.setPickerTrigger, pressedStyle(pressed)]}
+    >
+      <Ionicons name={icon} size={13} color={theme.colors.muted} />
+      <Text style={styles.setPickerTriggerText} numberOfLines={1}>
+        {label}
+      </Text>
+      <Ionicons name="chevron-down" size={14} color={theme.colors.muted} />
+    </Pressable>
+  )
+}
+
+// Centered, scrollable option picker. Mirrors NoteEditorSheet: the fade is
 // a single JS-driven Animated opacity, so there's no react-native-modal
 // backdrop transition to flicker on open/close. A core Modal hosts it only so
-// it escapes RecordsPanel's ScrollView and centers on the screen — its native
+// it escapes SummaryPanel's ScrollView and centers on the screen — its native
 // fade is disabled (animationType="none"); we mount it instantly and run our
 // own fade, unmounting after the fade-out completes. The dimmed backdrop and
 // the card are siblings (not nested), so a single tap closes/selects — nesting
 // Pressables is what previously needed a double tap.
 const PICKER_FADE_MS = 150
-function SetPickerOverlay({
+interface PickerOption {
+  key: string
+  label: string
+  hint?: string
+  active: boolean
+}
+function OptionPickerOverlay({
   visible,
-  scope,
-  setNumbers,
-  wrSets,
+  title,
+  options,
   onClose,
   onSelect,
 }: {
   visible: boolean
-  scope: "all" | number
-  setNumbers: number[]
-  wrSets: { setNum: number }[]
+  title: string
+  options: PickerOption[]
   onClose: () => void
-  onSelect: (opt: "all" | number) => void
+  onSelect: (key: string) => void
 }) {
   const opacity = useRef(new Animated.Value(0)).current
   const [mounted, setMounted] = useState(visible)
@@ -2759,8 +3187,6 @@ function SetPickerOverlay({
 
   if (!mounted) return null
 
-  const options = ["all", ...setNumbers] as ("all" | number)[]
-
   return (
     <Modal transparent visible animationType="none" statusBarTranslucent onRequestClose={onClose}>
       <Animated.View style={[styles.pickerOverlay, { opacity }]}>
@@ -2769,42 +3195,35 @@ function SetPickerOverlay({
             don't fall through to the backdrop; option Pressables still claim
             their own taps first. */}
         <View style={styles.pickerCard} onStartShouldSetResponder={() => true}>
-          <Text style={styles.pickerTitle}>Show set</Text>
+          <Text style={styles.pickerTitle}>{title}</Text>
           <ScrollView
             style={styles.pickerScroll}
             contentContainerStyle={styles.pickerScrollContent}
             showsVerticalScrollIndicator
           >
-            {options.map((opt) => {
-              const active = opt === scope
-              const count =
-                opt === "all"
-                  ? wrSets.length
-                  : wrSets.filter((s) => s.setNum === opt).length
-              return (
-                <Pressable
-                  key={String(opt)}
-                  onPress={() => onSelect(opt)}
-                  style={({ pressed }) => [
-                    styles.setPickerOption,
-                    active && styles.setPickerOptionActive,
-                    pressedStyle(pressed),
+            {options.map((opt) => (
+              <Pressable
+                key={opt.key}
+                onPress={() => onSelect(opt.key)}
+                style={({ pressed }) => [
+                  styles.setPickerOption,
+                  opt.active && styles.setPickerOptionActive,
+                  pressedStyle(pressed),
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.setPickerOptionText,
+                    opt.active && { color: theme.colors.primary },
                   ]}
                 >
-                  <Text
-                    style={[
-                      styles.setPickerOptionText,
-                      active && { color: theme.colors.primary },
-                    ]}
-                  >
-                    {opt === "all" ? "All sets" : `Set ${opt}`}
-                  </Text>
-                  <Text style={styles.setPickerOptionCount}>
-                    {count} {count === 1 ? "time" : "times"}
-                  </Text>
-                </Pressable>
-              )
-            })}
+                  {opt.label}
+                </Text>
+                {!!opt.hint && (
+                  <Text style={styles.setPickerOptionCount}>{opt.hint}</Text>
+                )}
+              </Pressable>
+            ))}
           </ScrollView>
         </View>
       </Animated.View>
@@ -2827,8 +3246,31 @@ function niceDate(d: string): string {
   })
 }
 
+// "Yesterday" / "6 days ago" / "3 weeks ago" for the last-session header. Both
+// sides are floored to local midnight so the answer follows calendar days, not
+// elapsed hours — a session 20 hours ago still reads "Yesterday".
+function agoLabel(date: string): string {
+  const then = new Date(date + "T00:00:00")
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const days = Math.round((today.getTime() - then.getTime()) / 86400000)
+  if (days <= 0) return "Today"
+  if (days === 1) return "Yesterday"
+  if (days < 7) return `${days} days ago`
+  if (days < 30) {
+    const w = Math.floor(days / 7)
+    return w === 1 ? "1 week ago" : `${w} weeks ago`
+  }
+  if (days < 365) {
+    const m = Math.floor(days / 30)
+    return m === 1 ? "1 month ago" : `${m} months ago`
+  }
+  const y = Math.floor(days / 365)
+  return y === 1 ? "1 year ago" : `${y} years ago`
+}
+
 // Records show the year only when it differs from the current year (a PR can
-// be years old) — dropped the weekday to keep it compact in the By-Set rows.
+// be years old) — dropped the weekday to keep it compact in the rep rows.
 function recordDate(d: string): string {
   const dt = new Date(d + "T00:00:00")
   const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" }
@@ -3408,6 +3850,10 @@ function NoteEditorSheet({
   onChangeDraft,
   onClose,
   onSave,
+  title = "Note",
+  placeholder = "Add a note for this set…",
+  mode = "edit",
+  onEdit,
 }: {
   visible: boolean
   original: string
@@ -3415,6 +3861,13 @@ function NoteEditorSheet({
   onChangeDraft: (s: string) => void
   onClose: () => void
   onSave: () => void
+  title?: string
+  placeholder?: string
+  /** "view" shows the saved note read-only behind a Close/Edit pair. Callers
+   *  that have nothing to read — a set note, or an exercise with no note yet —
+   *  leave this at "edit" and land straight in the input. */
+  mode?: "view" | "edit"
+  onEdit?: () => void
 }) {
   const dirty = draft.trim() !== (original ?? "").trim()
   const inputRef = useRef<TextInput | null>(null)
@@ -3424,16 +3877,13 @@ function NoteEditorSheet({
   useEffect(() => {
     if (visible) {
       setMounted(true)
-      // Focus after one frame so the keyboard rises against an already
-      // visible card (no focus-during-fade-in flash).
-      const f = requestAnimationFrame(() => inputRef.current?.focus())
       Animated.timing(opacity, {
         toValue: 1,
         duration: NOTE_FADE_MS,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }).start()
-      return () => cancelAnimationFrame(f)
+      return
     }
     Animated.timing(opacity, {
       toValue: 0,
@@ -3444,6 +3894,15 @@ function NoteEditorSheet({
       if (finished) setMounted(false)
     })
   }, [visible, opacity])
+
+  // Focus after one frame so the keyboard rises against an already visible
+  // card (no focus-during-fade-in flash). Keyed on `mode` too, so tapping Edit
+  // in a view-first sheet raises the keyboard the same way.
+  useEffect(() => {
+    if (!visible || mode !== "edit") return
+    const f = requestAnimationFrame(() => inputRef.current?.focus())
+    return () => cancelAnimationFrame(f)
+  }, [visible, mode])
 
   function handleSave() {
     if (!dirty) return
@@ -3457,6 +3916,8 @@ function NoteEditorSheet({
 
   if (!mounted) return null
 
+  const viewing = mode === "view"
+
   return (
     <Animated.View
       pointerEvents={visible ? "auto" : "none"}
@@ -3464,29 +3925,53 @@ function NoteEditorSheet({
     >
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
       <View style={styles.noteOverlayCard} pointerEvents="box-none">
-        <Text style={styles.noteOverlayTitle}>Note</Text>
-        <TextInput
-          ref={inputRef}
-          value={draft}
-          onChangeText={onChangeDraft}
-          placeholder="Add a note for this set…"
-          placeholderTextColor={theme.colors.muted}
-          multiline
-          style={styles.noteSheetInput}
-        />
+        <Text style={styles.noteOverlayTitle}>{title}</Text>
+        {viewing ? (
+          <ScrollView
+            style={styles.noteViewScroll}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator
+          >
+            <Text style={styles.noteViewText}>{(original || draft).trim()}</Text>
+          </ScrollView>
+        ) : (
+          <TextInput
+            ref={inputRef}
+            value={draft}
+            onChangeText={onChangeDraft}
+            placeholder={placeholder}
+            placeholderTextColor={theme.colors.muted}
+            multiline
+            style={styles.noteSheetInput}
+          />
+        )}
         <View style={styles.noteSheetActions}>
-          <Button
-            label="Cancel"
-            variant="secondary"
-            onPress={onClose}
-            style={{ flex: 1 }}
-          />
-          <Button
-            label="Save"
-            onPress={handleSave}
-            disabled={!dirty}
-            style={{ flex: 1 }}
-          />
+          {viewing ? (
+            <>
+              <Button
+                label="Close"
+                variant="secondary"
+                onPress={onClose}
+                style={{ flex: 1 }}
+              />
+              <Button label="Edit" onPress={onEdit} style={{ flex: 1 }} />
+            </>
+          ) : (
+            <>
+              <Button
+                label="Cancel"
+                variant="secondary"
+                onPress={onClose}
+                style={{ flex: 1 }}
+              />
+              <Button
+                label="Save"
+                onPress={handleSave}
+                disabled={!dirty}
+                style={{ flex: 1 }}
+              />
+            </>
+          )}
         </View>
       </View>
     </Animated.View>
@@ -3523,11 +4008,21 @@ const styles = StyleSheet.create({
   },
   listScrollContent: { paddingHorizontal: theme.spacing[4], paddingBottom: theme.spacing[8] },
   titleWrap: { gap: 4 },
-  dayCardNoteWrap: { marginBottom: theme.spacing[2] },
+  // Notes sit inside the card header, under the title — same as the exercise
+  // cards on the day and calendar screens. Keep these two in step with
+  // `exerciseTitleCol` / `exerciseNote` in DayScreen and DayWorkoutContent.
+  dayCardTitleCol: { flex: 1, gap: 2 },
+  dayCardNoteRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    paddingVertical: 1,
+  },
+  dayCardNoteBody: { flex: 1 },
   dayCardNote: {
     color: theme.colors.muted,
     fontSize: theme.fontSize.xs,
-    lineHeight: 16,
+    lineHeight: 15,
   },
   exNoteRow: { flexDirection: "row", alignItems: "flex-start", gap: 6, paddingTop: 2 },
   // The wrapper takes the row's remaining width. exNoteText must NOT: it is
@@ -3759,11 +4254,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: theme.spacing[4],
     gap: theme.spacing[3],
+    // The card is what bounds a long note, and the scroll area shrinks inside
+    // it. A maxHeight on the scroll area alone left the card free to grow.
+    maxHeight: "70%",
   },
   noteOverlayTitle: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.md,
     fontWeight: "800",
+  },
+  // Read-only body of the sheet. Keep in step with NoteSheet's viewer.
+  noteViewScroll: { flexGrow: 0, flexShrink: 1 },
+  noteViewText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 22,
   },
   noteSheetInput: {
     color: theme.colors.foreground,
@@ -4128,45 +4633,66 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.foreground,
     borderColor: theme.colors.foreground,
   },
-  // Records cards
-  recordCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[3],
-    backgroundColor: theme.colors.card,
-    borderColor: "rgba(255,255,255,0.05)",
-    borderWidth: 1,
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing[4],
-  },
-  recordIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  recordLabel: {
+  // Summary tab — last session
+  summaryAgo: {
     color: theme.colors.muted,
     fontSize: theme.fontSize.xs,
-    textTransform: "uppercase",
-    letterSpacing: 1.2,
-    fontWeight: "700",
+    marginTop: 1,
   },
-  recordValueRow: {
+  // Notes sit in their own strip between the day header and the set list,
+  // padded to line up with SetList's rows and closed off by the same hairline
+  // the set rows use.
+  summaryNotes: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[3],
+    gap: theme.spacing[2],
+    borderBottomColor: "rgba(255,255,255,0.18)",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  // A full-width card, not a text strip: the collapsed row is a tap target, so
+  // it needs real height and padding rather than the 2pt it started with.
+  summaryNote: {
+    minHeight: 42,
+    justifyContent: "center",
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+  },
+  summaryNoteHead: {
     flexDirection: "row",
-    alignItems: "baseline",
-    gap: 4,
-    marginTop: 2,
+    alignItems: "center",
+    gap: theme.spacing[2],
   },
-  recordValue: {
-    fontSize: theme.fontSize.xl,
-    fontWeight: "800",
-  },
-  recordSub: {
+  summaryNoteLabel: {
     color: theme.colors.muted,
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  // Collapsed: one line of the note, truncated. flexShrink lets it give way to
+  // the label and the chevron instead of pushing them off the row.
+  summaryNotePreview: {
+    flex: 1,
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.xs,
+    fontStyle: "italic",
+  },
+  summaryNoteText: {
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-    marginTop: 2,
+    fontStyle: "italic",
+    lineHeight: 18,
+    marginTop: 3,
+  },
+  // The scope and sort triggers share a row and split it evenly — two full
+  // words ("All sets", "Most reps") don't fit beside the heading on a phone.
+  repPrPickerRow: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
   },
   repPrTable: {
     backgroundColor: theme.colors.card,
@@ -4176,40 +4702,91 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   repPrRow: {
-    flexDirection: "row",
-    alignItems: "center",
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
+    borderLeftWidth: 3,
+    borderLeftColor: "transparent",
   },
   repPrRowDivider: {
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.border,
   },
-  repPrRowMuted: {
-    opacity: 0.4,
+  // The row holding the best estimated 1RM in the current scope. Every row
+  // carries the transparent edge so marking one never shifts its text.
+  repPrRowTop: {
+    borderLeftColor: GOLD,
+    backgroundColor: "rgba(250,204,21,0.05)",
   },
-  repPrReps: {
-    width: 72,
-    color: theme.colors.muted,
-    fontSize: theme.fontSize.sm,
-    fontWeight: "700",
+  repPrBestChip: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: "rgba(250,204,21,0.16)",
+  },
+  repPrBestChipText: {
+    color: GOLD,
+    fontSize: 9,
+    fontWeight: "800",
     textTransform: "uppercase",
     letterSpacing: 1,
   },
+  repPrTopLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  // Rows lead with the weight now: the list sorts by it, so it is the column
+  // the eye should land on first.
   repPrWeight: {
-    flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.md,
+    fontWeight: "800",
+  },
+  repPrUnit: {
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: "600",
+  },
+  repPrReps: {
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.sm,
     fontWeight: "700",
   },
-  repPrTextMuted: {
-    color: theme.colors.muted,
-  },
+  // Pushed right by auto margin rather than by flexing the rep count, so the
+  // "Best" chip stays next to the set it describes.
   repPrDate: {
+    marginLeft: "auto",
     color: theme.colors.muted,
     fontSize: theme.fontSize.xs,
   },
+  repPrBarTrack: {
+    height: 4,
+    borderRadius: 2,
+    marginTop: 8,
+    backgroundColor: theme.colors.border,
+    overflow: "hidden",
+  },
+  repPrBarFill: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: theme.colors.primary,
+  },
+  repPrMoreRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: theme.spacing[3],
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border,
+  },
+  repPrMoreText: {
+    color: theme.colors.primary,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "700",
+  },
   setPickerTrigger: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
@@ -4221,20 +4798,10 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.card,
   },
   setPickerTriggerText: {
+    flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: "700",
-  },
-  scopeSummary: {
-    flexDirection: "row",
-    gap: theme.spacing[3],
-    marginTop: theme.spacing[2],
-    marginBottom: theme.spacing[1],
-  },
-  scopeSummaryText: {
-    color: theme.colors.muted,
-    fontSize: theme.fontSize.xs,
-    fontWeight: "600",
   },
   pickerOverlay: {
     flex: 1,
@@ -4254,6 +4821,15 @@ const styles = StyleSheet.create({
     padding: theme.spacing[4],
     gap: theme.spacing[2],
   },
+  // A row inside pickerCard, which is a column. The title column takes the
+  // flex here rather than on the card, where flex:1 would stretch the title
+  // block and squash the set list under it.
+  recordDayHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  pickerTitleCol: { flex: 1, gap: 2 },
   pickerTitle: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.md,
@@ -4265,6 +4841,9 @@ const styles = StyleSheet.create({
   },
   pickerScrollContent: {
     gap: theme.spacing[1],
+  },
+  recordDaySets: {
+    marginHorizontal: -theme.spacing[4],
   },
   setPickerOption: {
     flexDirection: "row",
