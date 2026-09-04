@@ -532,7 +532,13 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // synchronous React commit triggered by add/delete-set mutations, where
   // every saved millisecond delays the new row's fade-in start.
   const needsHistory =
-    tab === "history" || tab === "graph" || tab === "summary"
+    tab === "history" ||
+    tab === "graph" ||
+    tab === "summary" ||
+    // The workout tab's "Last time" card reads history as well. Gated on
+    // firstPaintDone so the push animation and the first commit still pay
+    // nothing for the query — only later commits do.
+    (tab === "workout" && firstPaintDone)
   const history: ExerciseHistoryDay[] = useMemo(() => {
     if (exerciseId == null || !needsHistory) return EMPTY_HISTORY
     return getExerciseHistoryQ(exerciseId)
@@ -618,6 +624,12 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // for `skipFade` so it appears at full opacity (no double-fade flicker).
   // `baseIds` snapshots the set ids at click-time — that's how we detect the
   // new row even if a concurrent delete keeps `sets.length` unchanged.
+  // Flipped on the click frame by a save that logs a set, so the "Last time"
+  // card can start collapsing under the finger instead of waiting for the
+  // store commit two frames later. Never cleared: once the store catches up,
+  // `sets` says the same thing, and a fresh screen starts false again.
+  const [optimisticLogged, setOptimisticLogged] = useState(false)
+
   const [pendingAdd, setPendingAdd] = useState<{
     weight: number
     reps: number
@@ -691,6 +703,8 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // every pre-mounted tab on the same frame (a visible "sec" freeze); a stack
   // push keeps MainTabs frozen, so the calendar opens instantly and the
   // workout stays underneath. Mirrors ExerciseDetail's openCalendarAtDate.
+  const showSummaryTab = useCallback(() => setTab("summary"), [])
+
   const pushCalendarAtDate = useCallback(
     (date: string) => {
       navigation.navigate("CalendarDate", { date })
@@ -1047,6 +1061,9 @@ export function SetLoggerScreen({ route, navigation }: any) {
       setError("Set a time of at least 1 minute.")
       return
     }
+    // Whether the day already had a logged set before this save. Authoring a
+    // planned workout does not count: those are targets, not a session.
+    const hadLoggedSet = sets.some((s) => !s.is_planned)
     try {
       if (editingSetId != null) {
         // Editing requires `resolved` (you can't edit a set that doesn't
@@ -1113,6 +1130,8 @@ export function SetLoggerScreen({ route, navigation }: any) {
         if (queued) {
           // Logging against a planned set: same row, fade weight/reps update
           // would be jarring — skip animation.
+          if (!hadLoggedSet) LayoutAnimation.configureNext(EX_NOTE_SHIFT_ANIM)
+          setOptimisticLogged(true)
           logPlannedSet(queued.id, { weight: isCardio ? weight : toKg(weight, unit), reps })
         } else {
           // Optimistic placeholder: render an immediate fading-in row so the
@@ -1125,6 +1144,13 @@ export function SetLoggerScreen({ route, navigation }: any) {
             resolved && exerciseId != null
               ? predictPrFlags(exerciseId, resolved.weId, w, r)
               : { isPr: false, isPosPr: false, position: 0 }
+          // The first logged set of the day collapses the "Last time" card.
+          // Configure the shrink here, on the click frame, with the same
+          // update-only config the note-row shift uses: a `create`/`delete`
+          // section would put a JS opacity animation on the placeholder row
+          // that mounts in this very commit, which is what SET_ANIM avoids.
+          if (!hadLoggedSet) LayoutAnimation.configureNext(EX_NOTE_SHIFT_ANIM)
+          setOptimisticLogged(true)
           setPendingAdd({
             weight: w,
             reps: r,
@@ -1456,6 +1482,16 @@ export function SetLoggerScreen({ route, navigation }: any) {
               onDelete={(s) => startDelete(s.id)}
             />
           )}
+          {tab === "workout" && firstPaintDone && (
+            <LastTimePanel
+              days={history}
+              currentDate={workout.date}
+              unit={unit}
+              hasSets={sets.some((s) => !s.is_planned) || optimisticLogged}
+              onPressDate={pushCalendarAtDate}
+              onShowMore={showSummaryTab}
+            />
+          )}
           {tab === "graph" && <GraphPanel days={history} unit={unit} />}
           {tab === "summary" && (
             <SummaryPanel
@@ -1686,7 +1722,7 @@ function SubTabBar({ tab, onChange }: { tab: SubTab; onChange: (t: SubTab) => vo
     { key: "workout", label: "Workout", icon: "barbell-outline" },
     { key: "history", label: "History", icon: "list-outline" },
     { key: "graph", label: "Graph", icon: "stats-chart-outline" },
-    { key: "summary", label: "Summary", icon: "trophy-outline" },
+    { key: "summary", label: "Summary", icon: "reader-outline" },
     { key: "settings", label: "Settings", icon: "settings-outline" },
   ]
   return (
@@ -1785,6 +1821,228 @@ function ExpandableNote({ note }: { note: string }) {
     </Pressable>
   )
 }
+
+/**
+ * Best weight at each rep count, heaviest first. One row per rep count, so a
+ * 5-rep best and an 8-rep best both survive; ties go to the harder set.
+ */
+function topRepRecords(
+  days: ExerciseHistoryDay[],
+  limit: number
+): { reps: number; weightKg: number; date: string }[] {
+  const best = new Map<number, { weightKg: number; date: string }>()
+  for (const day of days) {
+    for (const s of day.sets) {
+      if (s.weight == null || s.reps == null) continue
+      const cur = best.get(s.reps)
+      if (!cur || s.weight > cur.weightKg) {
+        best.set(s.reps, { weightKg: s.weight, date: day.date })
+      }
+    }
+  }
+  return [...best.entries()]
+    .map(([reps, v]) => ({ reps, weightKg: v.weightKg, date: v.date }))
+    .sort((a, b) => b.weightKg - a.weightKg || b.reps - a.reps)
+    .slice(0, limit)
+}
+
+/**
+ * "What happened before" for the tab you log from. Deliberately not the
+ * Summary tab's layout — that one is a full day card with a set list and note
+ * strips, and it would dwarf the form above it. Here the last session is a row
+ * of chips and the records are three tight lines.
+ *
+ * Renders nothing when the exercise has no weight×reps history: a cardio
+ * exercise has no top weights, and a first session has no last time.
+ */
+const LastTimePanel = memo(function LastTimePanel({
+  days,
+  currentDate,
+  unit,
+  hasSets,
+  onPressDate,
+  onShowMore,
+}: {
+  days: ExerciseHistoryDay[]
+  /** The day being logged. Its own sets are already on screen above. */
+  currentDate: string
+  unit: "kg" | "lb"
+  /** Whether the day being logged has a set yet. Drives the default height:
+   *  the card earns its full size only while there is nothing above it. */
+  hasSets: boolean
+  onPressDate?: (date: string) => void
+  /** Opens the Summary tab, which carries the full record table. */
+  onShowMore?: () => void
+}) {
+  const last = useMemo(() => {
+    for (const d of days) {
+      // `>=` also skips a future-dated session, which is not a "last time".
+      if (d.date >= currentDate) continue
+      const sets = d.sets.filter(
+        (s): s is typeof s & { weight: number; reps: number } =>
+          s.weight != null && s.reps != null
+      )
+      if (sets.length) return { date: d.date, sets }
+    }
+    return null
+  }, [days, currentDate])
+
+  // Records include today: a set logged a minute ago can be the new best, and
+  // seeing that land is the point.
+  const top = useMemo(() => topRepRecords(days, 3), [days])
+
+  // Open by default until the day has a set, then collapse to one line: the
+  // question "what did I do last time" outlives the first set, but the space
+  // it deserves does not. `null` means nobody has touched the chevron, so the
+  // card still follows the session; one tap and the choice is the user's for
+  // as long as the screen lives.
+  const [manual, setManual] = useState<boolean | null>(null)
+  // With no earlier session there is nothing to collapse to — the one-line
+  // stand-in would be blank — so that card stays open for its records.
+  const open = manual ?? (!hasSets || !last)
+
+  const spin = useRef(new Animated.Value(open ? 1 : 0)).current
+  useEffect(() => {
+    Animated.timing(spin, {
+      toValue: open ? 1 : 0,
+      duration: 240,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start()
+  }, [open, spin])
+
+  const toggle = useCallback(() => {
+    // Only the manual toggle animates its own height. An automatic collapse
+    // rides the commit that added the set, which already configured one.
+    LayoutAnimation.configureNext(EXPAND_ANIM)
+    setManual(!open)
+  }, [open])
+
+  if (!last && top.length === 0) return null
+
+  const collapsedLine = last
+    ? last.sets
+        .map((s) => `${formatWeight(s.weight, unit)}×${s.reps}`)
+        .join("   ")
+    : ""
+
+  return (
+    <View style={styles.lastTimeCard}>
+      <View style={styles.lastTimeHead}>
+        {/* A sibling of the calendar button rather than its parent: nesting
+            Pressables here is what made the picker card need a double tap. */}
+        <Pressable
+          onPress={toggle}
+          hitSlop={6}
+          unstable_pressDelay={0}
+          style={({ pressed }) => [
+            styles.lastTimeToggle,
+            pressed && { opacity: 0.55 },
+          ]}
+        >
+          <Text style={styles.lastTimeLabel}>Last time</Text>
+          {last && <Text style={styles.lastTimeAgo}>{agoLabel(last.date)}</Text>}
+          <Animated.View
+            style={{
+              transform: [
+                {
+                  rotate: spin.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ["0deg", "180deg"],
+                  }),
+                },
+              ],
+            }}
+          >
+            <Ionicons
+              name="chevron-down"
+              size={13}
+              color={theme.colors.muted}
+            />
+          </Animated.View>
+        </Pressable>
+        {last && onPressDate && (
+          <Pressable
+            onPress={() => onPressDate(last.date)}
+            hitSlop={10}
+            unstable_pressDelay={0}
+            style={({ pressed }) => [
+              styles.lastTimeCalBtn,
+              pressedStyle(pressed),
+            ]}
+          >
+            <Ionicons
+              name="calendar-outline"
+              size={15}
+              color={theme.colors.muted}
+            />
+          </Pressable>
+        )}
+      </View>
+
+      {!open && !!collapsedLine && (
+        <Text style={styles.lastTimeSummary} numberOfLines={1}>
+          {collapsedLine}
+        </Text>
+      )}
+
+      {open && (last ? (
+        <View style={styles.lastTimeChips}>
+          {last.sets.map((s) => (
+            <View key={s.id} style={styles.lastTimeChip}>
+              <Text style={styles.lastTimeChipText}>
+                {formatWeight(s.weight, unit)}
+                <Text style={styles.lastTimeChipX}> × </Text>
+                {s.reps}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Text style={styles.lastTimeEmpty}>
+          No earlier session for this exercise.
+        </Text>
+      ))}
+
+      {open && top.length > 0 && (
+        <>
+          <View style={styles.lastTimeRule} />
+          <Text style={styles.lastTimeLabel}>Top weights</Text>
+          {top.map((r) => (
+            <View key={r.reps} style={styles.topRow}>
+              <Text style={styles.topWeight}>
+                {formatWeight(r.weightKg, unit)}
+                <Text style={styles.topUnit}> {unit}</Text>
+              </Text>
+              <Text style={styles.topReps}>
+                × {r.reps} {r.reps === 1 ? "rep" : "reps"}
+              </Text>
+              <Text style={styles.topDate}>{recordDate(r.date)}</Text>
+            </View>
+          ))}
+          {onShowMore && (
+            <Pressable
+              onPress={onShowMore}
+              hitSlop={8}
+              unstable_pressDelay={0}
+              style={({ pressed }) => [
+                styles.lastTimeMore,
+                pressed && { opacity: 0.55 },
+              ]}
+            >
+              <Text style={styles.lastTimeMoreText}>Show more</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={13}
+                color={theme.colors.muted}
+              />
+            </Pressable>
+          )}
+        </>
+      )}
+    </View>
+  )
+})
 
 const HistoryDayCard = memo(function HistoryDayCard({
   day,
@@ -4011,6 +4269,110 @@ const styles = StyleSheet.create({
   // Notes sit inside the card header, under the title — same as the exercise
   // cards on the day and calendar screens. Keep these two in step with
   // `exerciseTitleCol` / `exerciseNote` in DayScreen and DayWorkoutContent.
+  // Workout tab "Last time" card. Flatter and tighter than the Summary tab's
+  // day card on purpose: it sits under the form you are typing into, so it
+  // must read as a footnote, not as a second screen.
+  lastTimeCard: {
+    marginTop: theme.spacing[4],
+    padding: theme.spacing[3],
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: "rgba(255,255,255,0.02)",
+    gap: theme.spacing[2],
+  },
+  lastTimeHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  // Takes the whole row apart from the calendar button, so the collapsed card
+  // is one wide target rather than a chevron to aim at.
+  lastTimeToggle: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    minHeight: 28,
+  },
+  // Collapsed stand-in for the chips: the same sets on one truncated line.
+  lastTimeSummary: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.xs,
+    fontWeight: "700",
+  },
+  lastTimeLabel: {
+    color: theme.colors.muted,
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  // Pushed right by auto margin so the calendar button keeps the far edge.
+  lastTimeAgo: {
+    marginLeft: "auto",
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.xs,
+  },
+  lastTimeCalBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  // Leads to the Summary tab, so it points forward rather than down like the
+  // in-place "Show all" toggle on that tab's own table. Full width and 40pt
+  // tall: as a bare line of text it was a hard target to hit.
+  lastTimeMore: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    minHeight: 40,
+    marginTop: 2,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border,
+  },
+  lastTimeMoreText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.xs,
+    fontWeight: "700",
+  },
+  lastTimeChips: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  lastTimeChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+  },
+  lastTimeChipText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.xs,
+    fontWeight: "700",
+  },
+  lastTimeChipX: { color: theme.colors.muted, fontWeight: "400" },
+  lastTimeEmpty: { color: theme.colors.muted, fontSize: theme.fontSize.xs },
+  lastTimeRule: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: theme.colors.border,
+    marginTop: 2,
+  },
+  topRow: { flexDirection: "row", alignItems: "baseline", gap: theme.spacing[2] },
+  topWeight: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "800",
+  },
+  topUnit: { color: theme.colors.muted, fontSize: 10, fontWeight: "600" },
+  topReps: { color: theme.colors.muted, fontSize: theme.fontSize.xs, fontWeight: "600" },
+  topDate: {
+    marginLeft: "auto",
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.xs,
+  },
   dayCardTitleCol: { flex: 1, gap: 2 },
   dayCardNoteRow: {
     flexDirection: "row",

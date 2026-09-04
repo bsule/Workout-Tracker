@@ -130,7 +130,7 @@ function SubTabBar({ tab, onChange }: { tab: SubTab; onChange: (t: SubTab) => vo
   const items: { key: SubTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
     { key: "history", label: "History", icon: "list-outline" },
     { key: "graph", label: "Graph", icon: "stats-chart-outline" },
-    { key: "summary", label: "Summary", icon: "trophy-outline" },
+    { key: "summary", label: "Summary", icon: "reader-outline" },
     { key: "settings", label: "Settings", icon: "settings-outline" },
   ]
   return (
