@@ -101,7 +101,13 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: theme.spacing[4], paddingBottom: theme.spacing[6] }}
+        // No top inset: the fixed header above already ends in its own
+        // padding, which is the line every tab's first card starts on. Same
+        // as the set logger's scroll container.
+        contentContainerStyle={{
+          paddingHorizontal: theme.spacing[4],
+          paddingBottom: theme.spacing[6],
+        }}
       >
         {tab === "history" && (
           <PastHistory
@@ -138,7 +144,14 @@ function SubTabBar({ tab, onChange }: { tab: SubTab; onChange: (t: SubTab) => vo
       {items.map((it) => {
         const active = tab === it.key
         return (
-          <Pressable key={it.key} onPress={() => onChange(it.key)} style={styles.subTabBtn}>
+          <Pressable
+            key={it.key}
+            onPress={() => onChange(it.key)}
+            // Catches the few points above the bar's top border as well; the
+            // only thing up there is the scroll view's bottom padding.
+            hitSlop={{ top: 6 }}
+            style={styles.subTabBtn}
+          >
             <Ionicons
               name={it.icon}
               size={20}
@@ -205,19 +218,28 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
   },
   statValue: { color: theme.colors.foreground, fontSize: theme.fontSize.lg, fontWeight: "700" },
+  // The bottom inset belongs to the buttons, not to the bar. As bar padding
+  // it was 24pt of dead space directly under the labels — exactly where a
+  // thumb lands reaching down — and it left each button at 42pt, under the
+  // 44pt minimum and 10pt shorter than the main tab bar.
   subTabBar: {
     flexDirection: "row",
     backgroundColor: theme.colors.background,
     borderTopColor: theme.colors.border,
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingTop: 8,
-    paddingBottom: 24,
   },
+  // This copy had no vertical padding at all, so its buttons were 34pt — the
+  // smallest targets in the app. Keep in step with SetLoggerScreen's copy.
   subTabBtn: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     gap: 2,
+    borderRadius: theme.radius.md,
+    minHeight: 48,
+    paddingTop: 4,
+    paddingBottom: 28,
   },
   subTabLabel: {
     color: theme.colors.muted,
