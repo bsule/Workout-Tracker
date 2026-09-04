@@ -1770,6 +1770,9 @@ function SubTabBar({ tab, onChange }: { tab: SubTab; onChange: (t: SubTab) => vo
           <Pressable
             key={it.key}
             onPress={() => onChange(it.key)}
+            // Catches the few points above the bar's top border as well; the
+            // only thing up there is the scroll view's bottom padding.
+            hitSlop={{ top: 6 }}
             style={styles.subTabBtn}
           >
             <Ionicons
@@ -2206,13 +2209,13 @@ export function PastHistory({
   )
   if (past.length === 0) {
     return (
-      <View style={[styles.empty, { marginTop: theme.spacing[2] }]}>
+      <View style={styles.empty}>
         <Text style={styles.emptyText}>No past workouts for this exercise yet.</Text>
       </View>
     )
   }
   return (
-    <View style={{ paddingVertical: theme.spacing[3], gap: theme.spacing[3] }}>
+    <View style={{ gap: theme.spacing[3] }}>
       <Text style={styles.section}>Past sessions</Text>
       {past.map((day) => (
         <HistoryDayCard key={day.date} day={day} onPressDate={onPressDate} />
@@ -2255,7 +2258,7 @@ export function PastHistoryList({
   )
   if (past.length === 0) {
     return (
-      <View style={[styles.empty, { marginTop: theme.spacing[2] }]}>
+      <View style={styles.empty}>
         <Text style={styles.emptyText}>No past workouts for this exercise yet.</Text>
       </View>
     )
@@ -2649,7 +2652,7 @@ function SvgLineChart({
                   <Circle
                     cx={xFor(i)}
                     cy={yFor(p.value)}
-                    r={isActive ? 5 : isPeak ? 4 : 3}
+                    r={isActive ? 6.5 : isPeak ? 5 : 4}
                     fill={isPeak ? theme.colors.secondary : theme.colors.primary}
                   />
                   <Circle
@@ -2823,7 +2826,7 @@ function shortDate(date: string): string {
 
 export function SettingsPanel({ navigation }: { navigation: any }) {
   return (
-    <View style={{ paddingVertical: theme.spacing[3], gap: theme.spacing[3] }}>
+    <View style={{ gap: theme.spacing[3] }}>
       <Text style={styles.section}>Tools</Text>
       <Pressable
         onPress={() => navigation.navigate("OneRepMax")}
@@ -3073,7 +3076,7 @@ export const SummaryPanel = memo(function SummaryPanel({
 
   if (days.length === 0) {
     return (
-      <View style={[styles.empty, { marginTop: theme.spacing[3] }]}>
+      <View style={styles.empty}>
         <Text style={styles.emptyText}>
           Nothing logged for this exercise yet. Log a few sets to see your last
           session and your records here.
@@ -3086,7 +3089,7 @@ export const SummaryPanel = memo(function SummaryPanel({
     REP_SORTS.find((s) => s.key === sort)?.label ?? REP_SORTS[0].label
 
   return (
-    <View style={{ paddingVertical: theme.spacing[3], gap: theme.spacing[3] }}>
+    <View style={{ gap: theme.spacing[3] }}>
       <Text style={styles.section}>Last session</Text>
       {lastDay ? (
         <View style={styles.dayCard}>
@@ -3418,15 +3421,17 @@ function HeaderMenu({
         >
           <View style={styles.menuRowBody}>
             <Text style={styles.menuRowText} numberOfLines={1}>
-              Last time card
+              {lastTimeOn ? "Hide Last time card" : "Show Last time card"}
             </Text>
           </View>
-          {/* A checkmark for the on state, like an iOS menu, rather than a
-              switch: the row itself is the toggle. */}
+          {/* An action row, like the note row above it — not a checkbox. A
+              checkmark that turns into an empty box asks you to work out
+              which state you are looking at; a label that names what the tap
+              does, next to an icon that shows it, does not. */}
           <Ionicons
-            name={lastTimeOn ? "checkmark" : "square-outline"}
+            name={lastTimeOn ? "eye-off-outline" : "eye-outline"}
             size={17}
-            color={lastTimeOn ? theme.colors.primary : theme.colors.muted}
+            color={theme.colors.foreground}
           />
         </Pressable>
       </Animated.View>
@@ -4568,7 +4573,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
-  listScrollContent: { paddingHorizontal: theme.spacing[4], paddingBottom: theme.spacing[8] },
+  // Every sub-tab scrolls inside this — the History FlatList included — so
+  // any top inset belongs here and nowhere else. There is none: `fixedTop`
+  // already ends in 16pt of its own padding, which is the line the workout
+  // tab's form card starts on. Adding more here dropped every other tab's
+  // first card below it. The panels used to carry their own paddingVertical
+  // while the FlatList carried none, which is why they disagreed.
+  listScrollContent: {
+    paddingHorizontal: theme.spacing[4],
+    paddingBottom: theme.spacing[8],
+  },
   titleWrap: { gap: 4 },
   // Notes sit inside the card header, under the title — same as the exercise
   // cards on the day and calendar screens. Keep these two in step with
@@ -4991,21 +5005,29 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   // Sub-tab bar at the bottom of the SetLogger screen.
+  // The bottom inset belongs to the buttons, not to the bar. As bar padding
+  // it was 24pt of dead space directly under the labels — exactly where a
+  // thumb lands reaching down — and it left each button at 42pt, under the
+  // 44pt minimum and 10pt shorter than the main tab bar.
   subTabBar: {
     flexDirection: "row",
     backgroundColor: theme.colors.background,
     borderTopColor: theme.colors.border,
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingTop: 8,
-    paddingBottom: 24,
   },
+  // Same total height as before — the 24pt moved down here — so nothing on
+  // screen shifts, but the strip below the label is now part of the target.
+  // Keep in step with ExerciseDetailScreen's copy of this bar.
   subTabBtn: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     gap: 2,
     borderRadius: theme.radius.md,
-    paddingVertical: 4,
+    minHeight: 48,
+    paddingTop: 4,
+    paddingBottom: 28,
   },
   subTabLabel: {
     color: theme.colors.muted,
@@ -5061,7 +5083,6 @@ const styles = StyleSheet.create({
   },
   // Graph
   graphWrap: {
-    paddingVertical: theme.spacing[3],
     gap: theme.spacing[3],
   },
   metricSwitcher: {
@@ -5105,9 +5126,11 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 1.5,
   },
+  // Same treatment as the log-set form card: the page background, lifted off
+  // it by a brighter border rather than by a lighter fill.
   chartCard: {
-    backgroundColor: theme.colors.card,
-    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    borderColor: "rgba(255,255,255,0.12)",
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     padding: theme.spacing[4],
