@@ -17,10 +17,13 @@ import {
   getDayNoteQ,
   getPlannedDatesQ,
   getWorkoutByDateQ,
+  setDayNote,
   useStore,
 } from "@lift/core"
 import type { Category } from "@lift/core"
 import { DayWorkoutContent } from "../components/DayWorkoutContent"
+import { NotePreview } from "../components/NotePreview"
+import { NoteSheet } from "../components/NoteSheet"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { useActiveDateAndSetter } from "../state/activeDate"
 import { pressedStyle } from "../theme/pressable"
@@ -135,9 +138,28 @@ export function CalendarScreen({ navigation, route }: any) {
     [snapshot, selectedDate, detailReady]
   )
   const selectedNote = useMemo(
-    () => getDayNoteQ(selectedDate).replace(/\s+/g, " ").trim(),
+    () => getDayNoteQ(selectedDate),
     [snapshot, selectedDate]
   )
+
+  // Day note popup. Opens read-only — the note is what you came to read — and
+  // switches to the input only when you tap Edit.
+  const [noteOpen, setNoteOpen] = useState(false)
+  const [noteMode, setNoteMode] = useState<"view" | "edit">("view")
+  const [noteDraft, setNoteDraft] = useState("")
+  const [noteOriginal, setNoteOriginal] = useState("")
+  function openNoteViewer() {
+    const n = getDayNoteQ(selectedDate)
+    setNoteDraft(n)
+    setNoteOriginal(n)
+    setNoteMode("view")
+    setNoteOpen(true)
+  }
+  // Picking another day drops the popup rather than leaving it open over a
+  // note that is no longer the one on screen.
+  useEffect(() => {
+    setNoteOpen(false)
+  }, [selectedDate])
 
   const todayKey = todayString()
 
@@ -349,14 +371,18 @@ export function CalendarScreen({ navigation, route }: any) {
                   📍 {selectedGym}
                 </Text>
               )}
-              {!!selectedNote && (
-                <Text
-                  style={styles.detailNote}
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
+              {!!selectedNote.trim() && (
+                <Pressable
+                  onPress={openNoteViewer}
+                  hitSlop={6}
+                  unstable_pressDelay={0}
+                  style={({ pressed }) => [
+                    styles.detailNoteHit,
+                    pressed && { opacity: 0.55 },
+                  ]}
                 >
-                  {selectedNote}
-                </Text>
+                  <NotePreview note={selectedNote} style={styles.detailNote} />
+                </Pressable>
               )}
             </View>
             <View style={styles.detailActions}>
@@ -408,6 +434,18 @@ export function CalendarScreen({ navigation, route }: any) {
 
         </View>
       </ScrollView>
+      <NoteSheet
+        visible={noteOpen}
+        mode={noteMode}
+        title="Day notes"
+        placeholder="How did today go?"
+        draft={noteDraft}
+        original={noteOriginal}
+        onChangeDraft={setNoteDraft}
+        onEdit={() => setNoteMode("edit")}
+        onClose={() => setNoteOpen(false)}
+        onSave={() => setDayNote(selectedDate, noteDraft)}
+      />
     </StaticSafeAreaView>
   )
 }
@@ -620,6 +658,7 @@ const styles = StyleSheet.create({
     color: theme.colors.muted,
     fontSize: theme.fontSize.sm,
   },
+  detailNoteHit: { paddingVertical: 1 },
   detailNote: {
     color: theme.colors.muted,
     fontSize: theme.fontSize.sm,
