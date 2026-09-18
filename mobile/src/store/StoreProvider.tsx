@@ -10,7 +10,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const userKey = user?.username ?? "anon"
   const hydrated = useHydrated()
-  const snapshot = useStore((s) => s.snapshot)
+  const storeEmpty = useStore((s) => isStoreEmpty(s.snapshot))
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [restoreDismissedFor, setRestoreDismissedFor] = useState<string | null>(null)
 
@@ -50,7 +50,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const showRestore =
     user != null &&
     restoreDismissedFor !== userKey &&
-    isStoreEmpty(snapshot)
+    storeEmpty
   if (showRestore) {
     return (
       <View key={activeKey} style={{ flex: 1 }}>

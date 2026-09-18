@@ -21,54 +21,67 @@ export interface Indexes {
   dayNoteByDate: Map<string, DayNoteRow>
 }
 
+// Snapshot tables are immutable. Cache each table's indexes independently,
+// so a set edit does not rebuild workout/calendar/exercise lookup tables.
+// Weak keys allow old snapshots and their indexes to be garbage-collected.
+const exerciseCache = new WeakMap<ExerciseRow[], Indexes["exerciseById"]>()
+const workoutCache = new WeakMap<WorkoutRow[], Pick<Indexes,
+  "workoutById" | "workoutsByDate" | "workoutsByMonth">>()
+const weCache = new WeakMap<WorkoutExerciseRow[], Pick<Indexes,
+  "workoutExercisesByWorkout" | "workoutExercisesByExercise" | "weById">>()
+const setCache = new WeakMap<SetRow[], Indexes["setsByWorkoutExercise"]>()
+const noteCache = new WeakMap<DayNoteRow[], Indexes["dayNoteByDate"]>()
+const EMPTY_NOTES: DayNoteRow[] = []
+
 export function buildIndexes(snap: Snapshot): Indexes {
-  const exerciseById = new Map<number, ExerciseRow>()
-  for (const e of snap.exercises) exerciseById.set(e.id, e)
-
-  const workoutById = new Map<number, WorkoutRow>()
-  const workoutsByDate = new Map<string, WorkoutRow>()
-  const workoutsByMonth = new Map<string, WorkoutRow[]>()
-  for (const w of snap.workouts) {
-    workoutById.set(w.id, w)
-    workoutsByDate.set(w.date, w)
-    // w.date is "YYYY-MM-DD" — slice to "YYYY-MM" for the month bucket.
-    push(workoutsByMonth, w.date.slice(0, 7), w)
+  let exerciseById = exerciseCache.get(snap.exercises)
+  if (!exerciseById) {
+    exerciseById = new Map(snap.exercises.map((e) => [e.id, e]))
+    exerciseCache.set(snap.exercises, exerciseById)
   }
-
-  const workoutExercisesByWorkout = new Map<number, WorkoutExerciseRow[]>()
-  const workoutExercisesByExercise = new Map<number, WorkoutExerciseRow[]>()
-  const weById = new Map<number, WorkoutExerciseRow>()
-  for (const we of snap.workout_exercises) {
-    weById.set(we.id, we)
-    push(workoutExercisesByWorkout, we.workout_id, we)
-    push(workoutExercisesByExercise, we.exercise_id, we)
+  let workouts = workoutCache.get(snap.workouts)
+  if (!workouts) {
+    workouts = {
+      workoutById: new Map(), workoutsByDate: new Map(), workoutsByMonth: new Map(),
+    }
+    for (const w of snap.workouts) {
+      workouts.workoutById.set(w.id, w)
+      workouts.workoutsByDate.set(w.date, w)
+      push(workouts.workoutsByMonth, w.date.slice(0, 7), w)
+    }
+    workoutCache.set(snap.workouts, workouts)
   }
-  for (const list of workoutExercisesByWorkout.values()) {
-    list.sort((a, b) => a.order - b.order)
+  let exercises = weCache.get(snap.workout_exercises)
+  if (!exercises) {
+    exercises = {
+      workoutExercisesByWorkout: new Map(), workoutExercisesByExercise: new Map(), weById: new Map(),
+    }
+    for (const we of snap.workout_exercises) {
+      exercises.weById.set(we.id, we)
+      push(exercises.workoutExercisesByWorkout, we.workout_id, we)
+      push(exercises.workoutExercisesByExercise, we.exercise_id, we)
+    }
+    for (const list of exercises.workoutExercisesByWorkout.values()) {
+      list.sort((a, b) => a.order - b.order)
+    }
+    weCache.set(snap.workout_exercises, exercises)
   }
-
-  const setsByWorkoutExercise = new Map<number, SetRow[]>()
-  for (const s of snap.sets) {
-    push(setsByWorkoutExercise, s.workout_exercise_id, s)
+  let setsByWorkoutExercise = setCache.get(snap.sets)
+  if (!setsByWorkoutExercise) {
+    setsByWorkoutExercise = new Map()
+    for (const s of snap.sets) push(setsByWorkoutExercise, s.workout_exercise_id, s)
+    for (const list of setsByWorkoutExercise.values()) {
+      list.sort((a, b) => a.order - b.order)
+    }
+    setCache.set(snap.sets, setsByWorkoutExercise)
   }
-  for (const list of setsByWorkoutExercise.values()) {
-    list.sort((a, b) => a.order - b.order)
+  const notes = snap.day_notes ?? EMPTY_NOTES
+  let dayNoteByDate = noteCache.get(notes)
+  if (!dayNoteByDate) {
+    dayNoteByDate = new Map(notes.map((n) => [n.date, n]))
+    noteCache.set(notes, dayNoteByDate)
   }
-
-  const dayNoteByDate = new Map<string, DayNoteRow>()
-  for (const n of snap.day_notes ?? []) dayNoteByDate.set(n.date, n)
-
-  return {
-    exerciseById,
-    workoutById,
-    workoutsByDate,
-    workoutsByMonth,
-    workoutExercisesByWorkout,
-    workoutExercisesByExercise,
-    weById,
-    setsByWorkoutExercise,
-    dayNoteByDate,
-  }
+  return { exerciseById, ...workouts, ...exercises, setsByWorkoutExercise, dayNoteByDate }
 }
 
 function push<K, V>(map: Map<K, V[]>, key: K, value: V) {

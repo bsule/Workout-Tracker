@@ -400,13 +400,28 @@ export function updateSet(
 }
 
 export function deleteSet(setId: number): void {
+  deleteSets([setId])
+}
+
+/** Delete a selection with one record pass per affected exercise. */
+export function deleteSets(setIds: Iterable<number>): void {
+  const ids = new Set(setIds)
+  if (!ids.size) return
   applyMutation((snap) => {
-    const target = snap.sets.find((s) => s.id === setId)
-    if (!target) return snap
-    const next = { ...snap, sets: snap.sets.filter((s) => s.id !== setId) }
-    return recomputePrsForWe(next, target.workout_exercise_id)
+    const affectedWeIds = new Set<number>()
+    const sets = snap.sets.filter((s) => {
+      if (!ids.has(s.id)) return true
+      affectedWeIds.add(s.workout_exercise_id)
+      return false
+    })
+    if (!affectedWeIds.size) return snap
+    const exerciseIds = snap.workout_exercises
+      .filter((we) => affectedWeIds.has(we.id))
+      .map((we) => we.exercise_id)
+    return recomputePrsForExercises({ ...snap, sets }, exerciseIds)
   })
-  recordPending({ op: "delete_set", setId })
+  // Keep the existing crash-log format and replay behavior.
+  for (const setId of ids) recordPending({ op: "delete_set", setId })
 }
 
 // ---- gyms ---------------------------------------------------------

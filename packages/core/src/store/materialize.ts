@@ -75,10 +75,7 @@ export function weFromRow(
   we: WorkoutExerciseRow,
   ix: Indexes
 ): WorkoutExercise {
-  const sets = (ix.setsByWorkoutExercise.get(we.id) ?? [])
-    .slice()
-    .sort((a, b) => a.order - b.order)
-    .map(setFromRow)
+  const sets = (ix.setsByWorkoutExercise.get(we.id) ?? []).map(setFromRow)
   return {
     id: we.id,
     order: we.order,
@@ -89,10 +86,9 @@ export function weFromRow(
 }
 
 export function workoutFromRow(w: WorkoutRow, ix: Indexes): Workout {
-  const exercises = (ix.workoutExercisesByWorkout.get(w.id) ?? [])
-    .slice()
-    .sort((a, b) => a.order - b.order)
-    .map((we) => weFromRow(we, ix))
+  const exercises = (ix.workoutExercisesByWorkout.get(w.id) ?? []).map((we) =>
+    weFromRow(we, ix)
+  )
   const duration =
     w.started_at && w.finished_at
       ? Math.max(
