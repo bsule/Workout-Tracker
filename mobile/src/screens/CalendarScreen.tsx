@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
+  AccessibilityInfo,
   Animated,
-  Easing,
   InteractionManager,
-  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
-  useWindowDimensions,
+  VirtualizedList,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import {
@@ -21,6 +22,7 @@ import {
   useStore,
 } from "@lift/core"
 import type { Category } from "@lift/core"
+import { MONTH_COUNT, clampMonthIndex, monthAtIndex, monthHeightAtOffset, monthIndex } from "../calendar/monthPaging"
 import { DayWorkoutContent } from "../components/DayWorkoutContent"
 import { NotePreview } from "../components/NotePreview"
 import { NoteSheet } from "../components/NoteSheet"
@@ -125,8 +127,7 @@ export function CalendarScreen({ navigation, route }: any) {
   // Clearing the param afterwards prevents a later re-focus from replaying it.
   useEffect(() => {
     if (!incomingDate) return
-    setYear(parseYear(incomingDate))
-    setMonth(parseMonth(incomingDate))
+    jumpToMonth(monthIndex(parseYear(incomingDate), parseMonth(incomingDate)), false)
     setSelectedDate(incomingDate)
     setActiveDate(incomingDate)
     navigation.setParams({ date: undefined })
@@ -134,25 +135,8 @@ export function CalendarScreen({ navigation, route }: any) {
 
   const { firstDayOfWeek } = useSettings()
   const snapshot = useStore((s) => s.snapshot)
-  const cells = useMemo(
-    () => buildMonthGrid(year, month, firstDayOfWeek),
-    [year, month, firstDayOfWeek]
-  )
   const weekdayLabels =
     firstDayOfWeek === 1 ? WEEKDAY_LABELS_MONDAY : WEEKDAY_LABELS_SUNDAY
-  // Gated on detailReady like selectedGym: these two scan the snapshot to build
-  // the month's category dots / planned markers. Running them on a fresh
-  // CalendarDate push's first frame blocks the slide; deferring them lets the
-  // grid chrome paint instantly and the dots pop in a frame later. The
-  // pre-mounted Calendar tab has detailReady=true from boot, so it's unchanged.
-  const calendar = useMemo(
-    () => (detailReady ? getCalendarQ(year, month) : {}),
-    [snapshot, year, month, detailReady]
-  )
-  const plannedDates = useMemo(
-    () => new Set(detailReady ? getPlannedDatesQ(year, month) : []),
-    [snapshot, year, month, detailReady]
-  )
   // Gated on detailReady alongside DayWorkoutContent: getWorkoutByDateQ fully
   // materializes the day's sets, so running it during the transition would
   // reintroduce the freeze the deferral is meant to remove.
@@ -189,142 +173,74 @@ export function CalendarScreen({ navigation, route }: any) {
 
   const todayKey = todayString()
 
-  // ---- Month paging animation -------------------------------------------
-  // One Animated.Value drives the grid: it is the grid's horizontal offset in
-  // px, and the month's opacity is interpolated from it. A swipe writes the
-  // finger's dx into it; the arrow buttons animate it. Both therefore produce
-  // the same slide-and-fade.
-  //
-  // `span` is the travel that dims a month all the way down. Keep it and the
-  // durations short: the paging must read as a quick nudge, not a transition.
-  const { width: screenWidth } = useWindowDimensions()
-  const span = Math.max(56, screenWidth * 0.18)
-  const slide = useRef(new Animated.Value(0)).current
-  const animating = useRef(false)
-  const monthOpacity = useMemo(
-    () =>
-      slide.interpolate({
-        inputRange: [-span, 0, span],
-        outputRange: [0.15, 1, 0.15],
-        extrapolate: "clamp",
-      }),
-    [slide, span]
-  )
-
-  function shiftMonth(delta: number) {
-    let m = month + delta
-    let y = year
-    if (m < 1) {
-      m = 12
-      y -= 1
-    } else if (m > 12) {
-      m = 1
-      y += 1
+  // Use the platform's pager for continuous, native-thread finger tracking
+  // and deceleration. The old fade/swap animation jumped between two offsets.
+  const pager = useRef<VirtualizedList<number>>(null)
+  const paging = useRef(false)
+  const [pageWidth, setPageWidth] = useState(0)
+  const viewportHeight = useRef(new Animated.Value(0)).current
+  const visibleIndex = monthIndex(year, month)
+  const [reduceMotion, setReduceMotion] = useState(false)
+  useEffect(() => {
+    let active = true
+    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (active) setReduceMotion(enabled)
+    })
+    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", setReduceMotion)
+    return () => {
+      active = false
+      subscription.remove()
     }
-    setMonth(m)
-    setYear(y)
+  }, [])
+
+  const gridPadding = theme.spacing[2]
+  const rowHeight = Math.max(0, pageWidth - gridPadding * 2) / 7
+  const restingHeight = monthHeightAtOffset(visibleIndex * pageWidth, pageWidth, gridPadding, firstDayOfWeek)
+  useLayoutEffect(() => {
+    viewportHeight.setValue(restingHeight)
+  }, [restingHeight, viewportHeight])
+
+  function commitMonth(index: number) {
+    const date = monthAtIndex(index)
+    setYear(date.year)
+    setMonth(date.month)
   }
 
-  // Slide the current month out in `dir`, commit the new month while it is
-  // dimmed, then slide the new one in from the opposite edge. The entry starts
-  // one frame after the commit so React has painted the new grid.
-  function runMonthChange(dir: 1 | -1, commit: () => void, exitMs = 60) {
-    animating.current = true
-    const out = dir > 0 ? -span : span
-    Animated.timing(slide, {
-      toValue: out,
-      duration: exitMs,
-      easing: Easing.in(Easing.quad),
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (!finished) {
-        animating.current = false
-        return
-      }
-      commit()
-      slide.setValue(-out)
-      requestAnimationFrame(() => {
-        Animated.timing(slide, {
-          toValue: 0,
-          duration: 100,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: true,
-        }).start(() => {
-          animating.current = false
-        })
-      })
-    })
+  function finishPaging(event: NativeSyntheticEvent<NativeScrollEvent>) {
+    if (!pageWidth || !paging.current) return
+    paging.current = false
+    const index = clampMonthIndex(Math.round(event.nativeEvent.contentOffset.x / pageWidth))
+    viewportHeight.setValue(monthHeightAtOffset(index * pageWidth, pageWidth, gridPadding, firstDayOfWeek))
+    // Only the title/selection changes. The visible page, date cells, dots,
+    // and native scroll offset all stay exactly where the swipe left them.
+    commitMonth(index)
+  }
+
+  function jumpToMonth(index: number, animated: boolean) {
+    const target = clampMonthIndex(index)
+    paging.current = animated && target !== visibleIndex && pageWidth > 0
+    pager.current?.scrollToIndex({ index: target, animated: paging.current })
+    if (!paging.current) commitMonth(target)
   }
 
   function changeMonth(delta: number) {
-    if (animating.current) return
-    runMonthChange(delta > 0 ? 1 : -1, () => shiftMonth(delta))
+    if (paging.current || !pageWidth) return
+    jumpToMonth(visibleIndex + delta, !reduceMotion)
   }
 
   function goToday() {
-    if (animating.current) return
-    const d = new Date()
-    const y = d.getFullYear()
-    const m = d.getMonth() + 1
-    if (y === year && m === month) return
-    const dir = y * 12 + m > year * 12 + month ? 1 : -1
-    runMonthChange(dir, () => {
-      setYear(y)
-      setMonth(m)
-    })
+    if (paging.current) return
+    const date = new Date()
+    const target = monthIndex(date.getFullYear(), date.getMonth() + 1)
+    jumpToMonth(target, !reduceMotion && Math.abs(target - visibleIndex) === 1)
   }
 
-  // Horizontal drag on the calendar block: swipe left for the next month,
-  // right for the previous one. The grid trails the finger at 0.7x, capped at
-  // `span`, and snaps back when the drag is too small to page.
-  const pan = useMemo(
-    () =>
-      PanResponder.create({
-        // Never claim the touch on press-down: day cells must stay tappable.
-        onStartShouldSetPanResponder: () => false,
-        onMoveShouldSetPanResponder: (_e, g) =>
-          !animating.current &&
-          Math.abs(g.dx) > 8 &&
-          Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
-        onPanResponderTerminationRequest: () => false,
-        onPanResponderMove: (_e, g) => {
-          slide.setValue(Math.max(-span, Math.min(span, g.dx * 0.7)))
-        },
-        onPanResponderRelease: (_e, g) => {
-          const paged = Math.abs(g.dx) > span || Math.abs(g.vx) > 0.3
-          if (paged && !animating.current) {
-            const delta = g.dx < 0 ? 1 : -1
-            // Short exit: the finger already moved most of the way.
-            runMonthChange(delta, () => shiftMonth(delta), 45)
-            return
-          }
-          Animated.timing(slide, {
-            toValue: 0,
-            duration: 90,
-            easing: Easing.out(Easing.quad),
-            useNativeDriver: true,
-          }).start()
-        },
-        onPanResponderTerminate: () => {
-          Animated.timing(slide, {
-            toValue: 0,
-            duration: 90,
-            easing: Easing.out(Easing.quad),
-            useNativeDriver: true,
-          }).start()
-        },
-      }),
-    // Rebuilt when the month changes so the release handler shifts from the
-    // month on screen, not the one captured at mount.
-    [span, slide, year, month]
-  )
-
-  function openDay(date: string) {
+  const openDay = useCallback((date: string) => {
     setSelectedDate(date)
     // Make this date the "active" target for the global "+" tab too, so a
     // user who picks a calendar day then taps "+" adds to that day.
     setActiveDate(date)
-  }
+  }, [setActiveDate])
 
   function openSetLogger(workoutId: number, weId: number) {
     navigation.navigate("SetLogger", { workoutId, weId })
@@ -333,7 +249,7 @@ export function CalendarScreen({ navigation, route }: any) {
   return (
     <ScreenWrap pushed={pushed}>
       {/* Pinned calendar (header + weekdays + grid). */}
-      <View style={styles.pinned} {...pan.panHandlers}>
+      <View style={styles.pinned}>
         <View style={styles.header}>
           <NavArrowButton
             direction="back"
@@ -360,22 +276,67 @@ export function CalendarScreen({ navigation, route }: any) {
 
         <Animated.View
           style={[
-            styles.grid,
-            { padding: theme.spacing[2] },
-            { opacity: monthOpacity, transform: [{ translateX: slide }] },
+            styles.monthViewport,
+            { height: reduceMotion ? restingHeight : viewportHeight },
           ]}
+          onLayout={(event) => setPageWidth(event.nativeEvent.layout.width)}
         >
-          {cells.map((cell, i) => (
-            <DayCell
-              key={i}
-              cell={cell}
-              cats={cell.date ? calendar[cell.date] : undefined}
-              planned={cell.date ? plannedDates.has(cell.date) : false}
-              isToday={cell.date === todayKey}
-              isSelected={cell.date === selectedDate}
-              onPress={cell.date ? () => openDay(cell.date!) : undefined}
+          {pageWidth > 0 && (
+            <VirtualizedList<number>
+              key={pageWidth}
+              ref={pager}
+              initialScrollIndex={visibleIndex}
+              getItemCount={() => MONTH_COUNT}
+              getItem={(_data, index) => index}
+              getItemLayout={(_data, index) => ({ index, length: pageWidth, offset: index * pageWidth })}
+              keyExtractor={(index) => String(index)}
+              initialNumToRender={3}
+              maxToRenderPerBatch={3}
+              windowSize={5}
+              updateCellsBatchingPeriod={0}
+              removeClippedSubviews={false}
+              extraData={{ selectedDate, visibleIndex, detailReady, firstDayOfWeek, todayKey }}
+              renderItem={({ item: index }) => (
+                <MonthPage
+                  index={index}
+                  width={pageWidth}
+                  firstDayOfWeek={firstDayOfWeek}
+                  detailReady={detailReady}
+                  active={index === visibleIndex}
+                  selectedDate={selectedDate}
+                  todayKey={todayKey}
+                  onOpenDay={openDay}
+                />
+              )}
+              horizontal
+              pagingEnabled
+              directionalLockEnabled
+              bounces={false}
+              showsHorizontalScrollIndicator={false}
+              scrollEventThrottle={16}
+              onScroll={(event) => {
+                if (!reduceMotion) {
+                  viewportHeight.setValue(monthHeightAtOffset(
+                    event.nativeEvent.contentOffset.x, pageWidth, gridPadding, firstDayOfWeek
+                  ))
+                }
+              }}
+              onScrollBeginDrag={() => { paging.current = true }}
+              onScrollEndDrag={(event) => {
+                // A drag released exactly on a page may have no momentum
+                // callback. Unlock navigation in that case as well.
+                const { contentOffset, targetContentOffset, velocity } = event.nativeEvent
+                const destination = targetContentOffset?.x ?? contentOffset.x
+                const atRest = Math.abs(velocity?.x ?? 0) < 0.01
+                const onPage = Math.abs(contentOffset.x / pageWidth - Math.round(contentOffset.x / pageWidth)) < 0.001
+                if (atRest && onPage && Math.abs(destination - contentOffset.x) < 0.5) {
+                  finishPaging(event)
+                }
+              }}
+              onMomentumScrollEnd={finishPaging}
+              style={{ height: rowHeight * 6 + gridPadding * 2, flexGrow: 0, flexShrink: 0 }}
             />
-          ))}
+          )}
         </Animated.View>
       </View>
 
@@ -472,6 +433,45 @@ export function CalendarScreen({ navigation, route }: any) {
   )
 }
 
+const MonthPage = memo(function MonthPage({
+  index, width, firstDayOfWeek, detailReady, active, selectedDate, todayKey, onOpenDay,
+}: {
+  index: number
+  width: number
+  firstDayOfWeek: 0 | 1
+  detailReady: boolean
+  active: boolean
+  selectedDate: string
+  todayKey: string
+  onOpenDay: (date: string) => void
+}) {
+  const snapshot = useStore((s) => s.snapshot)
+  const { year, month } = monthAtIndex(index)
+  const cells = useMemo(() => buildMonthGrid(year, month, firstDayOfWeek), [year, month, firstDayOfWeek])
+  const calendar = useMemo(() => detailReady ? getCalendarQ(year, month) : {}, [snapshot, year, month, detailReady])
+  const plannedDates = useMemo(() => new Set(detailReady ? getPlannedDatesQ(year, month) : []), [snapshot, year, month, detailReady])
+  return (
+    <View
+      accessibilityElementsHidden={!active}
+      importantForAccessibility={active ? "auto" : "no-hide-descendants"}
+      pointerEvents={active ? "auto" : "none"}
+      style={[styles.grid, { width, padding: theme.spacing[2], alignSelf: "flex-start" }]}
+    >
+      {cells.map((cell, i) => (
+        <DayCell
+          key={cell.date ?? `blank-${i}`}
+          cell={cell}
+          cats={cell.date ? calendar[cell.date] : undefined}
+          planned={cell.date ? plannedDates.has(cell.date) : false}
+          isToday={cell.date === todayKey}
+          isSelected={cell.date === selectedDate}
+          onOpenDay={onOpenDay}
+        />
+      ))}
+    </View>
+  )
+})
+
 function niceLongDate(d: string): string {
   const dt = new Date(d + "T00:00:00")
   return dt.toLocaleDateString("en-US", {
@@ -503,25 +503,25 @@ function buildMonthGrid(
   for (let d = 1; d <= daysInMonth; d++) {
     cells.push({ date: ymd(year, month, d), day: d })
   }
-  // Pad to a 6×7 grid for stable layout.
+  // Complete the final week without adding empty rows.
   while (cells.length % 7 !== 0) cells.push({ date: null, day: null })
   return cells
 }
 
-function DayCell({
+const DayCell = memo(function DayCell({
   cell,
   cats,
   planned,
   isToday,
   isSelected,
-  onPress,
+  onOpenDay,
 }: {
   cell: Cell
   cats: Category[] | undefined
   planned: boolean
   isToday: boolean
   isSelected: boolean
-  onPress?: () => void
+  onOpenDay: (date: string) => void
 }) {
   const hasWorkout = cats !== undefined
   const isPlannedOnly = planned && (!cats || cats.length === 0)
@@ -534,7 +534,7 @@ function DayCell({
   }
 
   return (
-    <Pressable onPress={onPress} style={styles.cell}>
+    <Pressable onPress={() => onOpenDay(cell.date!)} style={styles.cell}>
       <View
         style={[
           styles.cellInner,
@@ -553,8 +553,8 @@ function DayCell({
         </Text>
         <View style={styles.dotsRow}>
           {hasWorkout && cats!.length > 0 ? (
-            cats!.slice(0, 4).map((c, i) => (
-              <View key={i} style={[styles.dot, { backgroundColor: colorFor(c) }]} />
+            cats!.slice(0, 4).map((c) => (
+              <View key={c} style={[styles.dot, { backgroundColor: colorFor(c) }]} />
             ))
           ) : isPlannedOnly ? (
             <View style={styles.plannedRing} />
@@ -563,7 +563,7 @@ function DayCell({
       </View>
     </Pressable>
   )
-}
+})
 
 const styles = StyleSheet.create({
   pinned: {
@@ -603,6 +603,9 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.xs,
     fontWeight: "700",
     letterSpacing: 1,
+  },
+  monthViewport: {
+    overflow: "hidden",
   },
   grid: {
     flexDirection: "row",
