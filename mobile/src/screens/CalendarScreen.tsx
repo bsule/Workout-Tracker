@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
   Animated,
   Easing,
@@ -24,6 +24,7 @@ import type { Category } from "@lift/core"
 import { DayWorkoutContent } from "../components/DayWorkoutContent"
 import { NotePreview } from "../components/NotePreview"
 import { NoteSheet } from "../components/NoteSheet"
+import { NavArrowButton } from "../components/NavArrowButton"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { useActiveDateAndSetter } from "../state/activeDate"
 import { pressedStyle } from "../theme/pressable"
@@ -37,6 +38,28 @@ const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
 ]
+
+/**
+ * The pushed CalendarDate route has a native header, which already clears the
+ * status bar; padding the top again there would push the grid down a bar's
+ * worth. The Calendar tab has no header, so it still needs the inset.
+ */
+function ScreenWrap({
+  pushed,
+  children,
+}: {
+  pushed: boolean
+  children: ReactNode
+}) {
+  if (pushed) {
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+        {children}
+      </View>
+    )
+  }
+  return <StaticSafeAreaView>{children}</StaticSafeAreaView>
+}
 
 function todayString(): string {
   const d = new Date()
@@ -67,6 +90,9 @@ function parseMonth(date?: string): number {
 
 export function CalendarScreen({ navigation, route }: any) {
   const incomingDate: string | undefined = route?.params?.date
+  // Same component, two routes: the bottom tab and the stack push from an
+  // exercise's history. Only the pushed one carries a native header.
+  const pushed = route?.name === "CalendarDate"
   const { setDate: setActiveDate } = useActiveDateAndSetter()
 
   // Lazy-init from the incoming date so the very first render already has
@@ -305,29 +331,25 @@ export function CalendarScreen({ navigation, route }: any) {
   }
 
   return (
-    <StaticSafeAreaView>
+    <ScreenWrap pushed={pushed}>
       {/* Pinned calendar (header + weekdays + grid). */}
       <View style={styles.pinned} {...pan.panHandlers}>
         <View style={styles.header}>
-          <Pressable
+          <NavArrowButton
+            direction="back"
+            accessibilityLabel="Previous month"
             onPress={() => changeMonth(-1)}
-            hitSlop={12}
-            style={({ pressed }) => [styles.navIconBtn, pressedStyle(pressed)]}
-          >
-            <Ionicons name="chevron-back" size={22} color={theme.colors.foreground} />
-          </Pressable>
+          />
           <Pressable onPress={goToday} style={({ pressed }) => [styles.titleWrap, pressedStyle(pressed)]}>
             <Text style={styles.title}>
               {MONTH_NAMES[month - 1]} {year}
             </Text>
           </Pressable>
-          <Pressable
+          <NavArrowButton
+            direction="forward"
+            accessibilityLabel="Next month"
             onPress={() => changeMonth(1)}
-            hitSlop={12}
-            style={({ pressed }) => [styles.navIconBtn, pressedStyle(pressed)]}
-          >
-            <Ionicons name="chevron-forward" size={22} color={theme.colors.foreground} />
-          </Pressable>
+          />
         </View>
 
         <View style={styles.weekdayRow}>
@@ -446,7 +468,7 @@ export function CalendarScreen({ navigation, route }: any) {
         onClose={() => setNoteOpen(false)}
         onSave={() => setDayNote(selectedDate, noteDraft)}
       />
-    </StaticSafeAreaView>
+    </ScreenWrap>
   )
 }
 
@@ -555,13 +577,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
-  },
-  navIconBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: "center",
-    justifyContent: "center",
   },
   titleWrap: {
     flex: 1,

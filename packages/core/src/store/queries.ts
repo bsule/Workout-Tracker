@@ -121,10 +121,22 @@ export function getExerciseHistoryQ(id: number): ExerciseHistoryDay[] {
     const w = indexes.workoutById.get(we.workout_id)
     if (!w || w.status === "planned") continue
     const sets = indexes.setsByWorkoutExercise.get(we.id) ?? []
+    // Position is assigned here, per workout_exercise, and deliberately
+    // before the same-date merge below: two workout_exercises on one date are
+    // two separate runs of the exercise, so the second one's sets are 1, 2, 3
+    // again, not 4, 5, 6. Only weight x reps sets take a position, matching
+    // the candidate filter in prs.ts - otherwise a cardio row would consume a
+    // slot and shift every real set's position by one.
+    let position = 0
     const histSets = sets
       .filter((s) => !s.is_planned)
-      .sort((a, b) => a.order - b.order)
-      .map(historySetFromRow)
+      .sort((a, b) => a.order - b.order || a.id - b.id)
+      .map((s) =>
+        historySetFromRow(
+          s,
+          s.weight != null && s.reps != null ? ++position : 0
+        )
+      )
     if (histSets.length === 0) continue
     const note = (we.note ?? "").trim()
     const day = byDate.get(w.date)

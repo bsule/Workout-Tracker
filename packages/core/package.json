@@ -14,6 +14,7 @@
     "./store/schema": "./src/store/schema.ts",
     "./store/seed": "./src/store/seed.ts",
     "./store/queries": "./src/store/queries.ts",
+    "./store/records": "./src/store/records.ts",
     "./store/ids": "./src/store/ids.ts",
     "./store/mutations": "./src/store/mutations.ts",
     "./store/prs": "./src/store/prs.ts",

@@ -269,7 +269,11 @@ export function RootNavigator() {
               // Slightly snappier than the global 180ms — the calendar
               // renders fully before the slide finishes, so a shorter
               // animation just gets the user to the content faster.
-              options={{ headerShown: false, animationDuration: 120 }}
+              // Native header, so this pushed instance gets the same back
+              // button as every other pushed screen. The Calendar *tab* is a
+              // different route inside MainTabs and keeps its own headerless
+              // options, so it is untouched.
+              options={{ title: "", animationDuration: 120 }}
             />
             <Stack.Screen
               name="EditExercise"
@@ -320,11 +324,13 @@ export function RootNavigator() {
             <Stack.Screen
               name="SetLogger"
               component={SetLoggerScreen}
-              // Native iOS nav-bar buttons add their own circular press-state
-              // highlight that we can't disable from JS. Hide the native
-              // header and render the back chevron in-screen so it matches
-              // the DayScreen date-nav chevrons exactly.
-              options={{ headerShown: false }}
+              // Native header, same as ExerciseDetail and the Settings
+              // sub-pages. This screen used to hide it and draw its own back
+              // chevron, to avoid the circular press-state highlight iOS puts
+              // on nav-bar buttons. On iOS 26 that highlight is the liquid
+              // glass back button, so the reason to avoid it is gone and the
+              // custom chevron was the odd one out.
+              options={{ title: "" }}
             />
           </>
         ) : (

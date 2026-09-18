@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -51,11 +52,14 @@ import {
   logPlannedSet,
   roundForDisplay,
   toKg,
+  topRepRecords,
+  topRepRecordsByPosition,
   useStore,
   weightKey,
 } from "@lift/core"
 import type {
   ExerciseHistoryDay,
+  TopRepRecord,
   Workout,
   WorkoutExercise,
   WorkoutSet,
@@ -63,10 +67,10 @@ import type {
 import { Button } from "../components/Button"
 import { PopupModal } from "../components/PopupModal"
 import { HoldPressable } from "../components/HoldPressable"
+import { NativeMenu, type MenuAction } from "../components/NativeMenu"
 import { NotePreview } from "../components/NotePreview"
 import { PrIcon } from "../components/PrIcon"
 import { SetList as SharedSetList } from "../components/SetList"
-import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
 import { useSettings, useWeightUnit } from "../settings/SettingsProvider"
@@ -646,6 +650,15 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // `sets` says the same thing, and a fresh screen starts false again.
   const [optimisticLogged, setOptimisticLogged] = useState(false)
 
+  // The planned-set save path has no `pendingAdd` placeholder: the row is
+  // already in `sets`, it just flips from planned to logged when the mutation
+  // commits. Holding the id lets the record card count that set as logged on
+  // the click frame, and stop counting it the moment `sets` agrees - so it is
+  // never counted twice.
+  const [optimisticPlannedId, setOptimisticPlannedId] = useState<number | null>(
+    null
+  )
+
   const [pendingAdd, setPendingAdd] = useState<{
     weight: number
     reps: number
@@ -819,18 +832,8 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // window coordinates — a padding guess is wrong the moment the safe-area
   // inset changes. Measured on press, handed to a Modal, which shares that
   // coordinate space.
-  const menuBtnRef = useRef<View | null>(null)
-  const [menuAnchor, setMenuAnchor] = useState<{ top: number; right: number } | null>(null)
-  const [menuOpen, setMenuOpen] = useState(false)
-  function openMenu() {
-    menuBtnRef.current?.measureInWindow((x, y, w, h) => {
-      setMenuAnchor({
-        top: y + h + 6,
-        right: Math.max(8, Dimensions.get("window").width - (x + w)),
-      })
-      setMenuOpen(true)
-    })
-  }
+
+
   const [exNoteOpen, setExNoteOpen] = useState(false)
   const [exNoteMode, setExNoteMode] = useState<"view" | "edit">("view")
   const [exNoteDraft, setExNoteDraft] = useState("")
@@ -851,6 +854,56 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // path that row lands right after the first set is saved, so until then the
   // header menu's note item is disabled and says why.
   const exNoteShown = (we?.id ?? -1) > 0
+
+  // The overflow menu lives in the native header beside the back button. It is
+  // a real UIMenu, so there is no anchor to measure and no fade to wait out
+  // before running the action - the menu is already gone when onSelect fires.
+  //
+  // The deps are the values the actions read. They change rarely: `exNoteShown`
+  // flips once, on the first set of the day, and the rest only on a tap.
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <NativeMenu
+          actions={[
+            {
+              id: "note",
+              title: we?.note.trim()
+                ? "Edit exercise note"
+                : "Add exercise note",
+              // Before the first set there is no workout_exercise row to hang
+              // a note on, so a note written then would be dropped silently.
+              // The subtitle says why instead of the row just vanishing.
+              subtitle: exNoteShown ? undefined : "Log a set first",
+              image: "square.and.pencil",
+              attributes: { disabled: !exNoteShown },
+            },
+            {
+              id: "lastTime",
+              title: showLastTime
+                ? "Hide Last time card"
+                : "Show Last time card",
+              image: showLastTime ? "eye.slash" : "eye",
+            },
+          ]}
+          onSelect={(id) => {
+            if (id === "note") openExerciseNote()
+            else if (id === "lastTime") {
+              api.updateSettings({ show_last_time: !showLastTime })
+            }
+          }}
+        >
+          <View style={styles.headerMenuBtn}>
+            <Ionicons
+              name="ellipsis-horizontal"
+              size={20}
+              color={theme.colors.foreground}
+            />
+          </View>
+        </NativeMenu>
+      ),
+    })
+  }, [navigation, we?.note, exNoteShown, showLastTime, openExerciseNote])
 
   // Smooth edit-mode transition. Single Animated.Value, fully native-driven
   // (scale + opacity). The "white border while editing" effect is done via
@@ -983,6 +1036,52 @@ export function SetLoggerScreen({ route, navigation }: any) {
           }),
     [swapFromHeight, barHeight, swapAnim]
   )
+
+  // Set position the next save would take, 1-based. 1 means nothing is logged
+  // for this exercise today, which is what puts the record card in "Last time"
+  // mode; 2 and up put it in position mode.
+  //
+  // Deliberately derived from `sets`, never from `history`. `history` is a memo
+  // over the snapshot, and the snapshot only moves when the store mutation
+  // commits - which on the first set of the day is held back 230ms on purpose.
+  // Reading `sets` instead lets the card swap on the click frame, alongside the
+  // new row's fade-in.
+  //
+  // The filter matches predictPrFlags and prs.ts: planned sets and sets with no
+  // weight/reps pair take no position.
+  const nextPosition = useMemo(() => {
+    let logged = 0
+    for (const s of sets) {
+      if (s.is_planned || s.weight == null || s.reps == null) continue
+      logged++
+    }
+    // `pendingAdd` outlives the real row by 240ms so the placeholder can finish
+    // its fade (see the skipFadeIds effect). Counting it unconditionally would
+    // double-count for that window, so only count it while the real row has yet
+    // to land - the same test that effect uses.
+    if (
+      pendingAdd?.baseIds &&
+      !sets.some((s) => !pendingAdd.baseIds.has(s.id))
+    ) {
+      logged++
+    }
+    // Planned-set path: count the row until `sets` reports it logged.
+    if (
+      optimisticPlannedId != null &&
+      sets.some((s) => s.id === optimisticPlannedId && s.is_planned)
+    ) {
+      logged++
+    }
+    return logged + 1
+  }, [sets, pendingAdd, optimisticPlannedId])
+
+  // Editing an existing set does not change what comes next, so the card holds
+  // still. Without this it jumps as a side effect of tapping a row, which reads
+  // as a bug.
+  const frozenPosition = useRef(nextPosition)
+  if (editingSetId == null) frozenPosition.current = nextPosition
+  const displayPosition =
+    editingSetId != null ? frozenPosition.current : nextPosition
 
   // The "Rest (sec)" field only exists while editing a set that has a rest
   // anchor. It unfolds instead of popping in, so the card's height change and
@@ -1141,6 +1240,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
           // Logging against a planned set: same row, fade weight/reps update
           // would be jarring — skip animation.
           setOptimisticLogged(true)
+          setOptimisticPlannedId(queued.id)
           logPlannedSet(queued.id, { weight: isCardio ? weight : toKg(weight, unit), reps })
         } else {
           // Optimistic placeholder: render an immediate fading-in row so the
@@ -1153,10 +1253,13 @@ export function SetLoggerScreen({ route, navigation }: any) {
             resolved && exerciseId != null
               ? predictPrFlags(exerciseId, resolved.weId, w, r)
               : { isPr: false, isPosPr: false, position: 0 }
-          // The first logged set of the day collapses the "Last time" card.
-          // Flipping this on the click frame is what starts that collapse
-          // under the finger; the card animates its own height, so there is
-          // no LayoutAnimation to configure here.
+          // The first logged set of the day switches the record card out of
+          // "Last time" mode and into position mode, which is the card's one
+          // height change per session. Flipping this on the click frame is
+          // what starts that switch under the finger; the card animates its
+          // own height, so there is no LayoutAnimation to configure here.
+          // Sets 2 and up change no height at all, so they skip the deferral
+          // below entirely.
           const willCollapseCard = !optimisticLogged && !hadLoggedSet
           setOptimisticLogged(true)
           setPendingAdd({
@@ -1179,7 +1282,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
           const wasResolved = resolved
           const pending = route.params?.pendingCreate
           // Normally one frame is enough of a head start. On the first set of
-          // the day it is not: the "Last time" card is collapsing, that is a
+          // the day it is not: the record card is switching modes, that is a
           // height animation on the JS driver, and this commit — PR recompute,
           // index rebuild, full list re-render — would stall it half way. Hold
           // it back past the collapse instead. Nothing visible waits on it:
@@ -1219,42 +1322,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
   }
 
   return (
-    <StaticSafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }}>
-      {/* In-screen back chevron — same look as the DayScreen date-nav arrows.
-       *  The native stack header is hidden for this route because iOS adds
-       *  its own circular press-state highlight that we can't override. */}
-      <View style={styles.headerRow}>
-        <Pressable
-          onPress={() => navigation.goBack()}
-          hitSlop={8}
-          style={({ pressed }) => [
-            styles.headerBackBtn,
-            { transform: [{ scale: pressed ? 0.85 : 1 }] },
-          ]}
-        >
-          <Ionicons
-            name="chevron-back"
-            size={20}
-            color={theme.colors.foreground}
-          />
-        </Pressable>
-        <Pressable
-          ref={menuBtnRef}
-          onPress={openMenu}
-          hitSlop={8}
-          unstable_pressDelay={0}
-          style={({ pressed }) => [
-            styles.headerMenuBtn,
-            pressedStyle(pressed),
-          ]}
-        >
-          <Ionicons
-            name="ellipsis-horizontal"
-            size={20}
-            color={theme.colors.foreground}
-          />
-        </Pressable>
-      </View>
+    <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
       {/* Fixed header + form so the layout doesn't reflow when sets are added.
        *  Pressable wrapper so a tap on empty form-area background dismisses
        *  the keyboard — the numeric keypad has no return key, so without
@@ -1506,7 +1574,8 @@ export function SetLoggerScreen({ route, navigation }: any) {
               days={history}
               currentDate={workout.date}
               unit={unit}
-              hasSets={sets.some((s) => !s.is_planned) || optimisticLogged}
+              nextPosition={displayPosition}
+              isWeightReps={we.exercise.kind === "weight_reps"}
               onPressDate={pushCalendarAtDate}
               onShowMore={showSummaryTab}
             />
@@ -1541,29 +1610,6 @@ export function SetLoggerScreen({ route, navigation }: any) {
           onSave={persistNote}
         />
       )}
-      <HeaderMenu
-        visible={menuOpen}
-        anchor={menuAnchor}
-        noteEnabled={exNoteShown}
-        note={we.note}
-        lastTimeOn={showLastTime}
-        onToggleLastTime={() => {
-          setMenuOpen(false)
-          // Past the fade: the card appearing or leaving under a menu that is
-          // still on screen reads as two things moving at once.
-          setTimeout(
-            () => api.updateSettings({ show_last_time: !showLastTime }),
-            MENU_FADE_MS + 40
-          )
-        }}
-        onClose={() => setMenuOpen(false)}
-        onNote={() => {
-          setMenuOpen(false)
-          // Past the fade, like the date menu: opening the sheet mid-fade
-          // puts two overlays on screen at once.
-          setTimeout(openExerciseNote, MENU_FADE_MS + 40)
-        }}
-      />
       {firstPaintDone && (
         <NoteEditorSheet
           visible={exNoteOpen}
@@ -1601,7 +1647,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
           requestAnimationFrame(() => startDelete(s.id))
         }}
       />
-    </StaticSafeAreaView>
+    </View>
   )
 }
 
@@ -1867,40 +1913,69 @@ function ExpandableNote({ note }: { note: string }) {
   )
 }
 
+/** How long the position-to-position row cross-fade runs. Short on purpose:
+ *  it lands on the same frame as the newly logged set's own fade-in, and two
+ *  slow fades at once read as the screen hesitating. */
+const POSITION_SWAP_MS = 140
+/** Row slots the position body always reserves, records or not. */
+const POSITION_ROWS = 3
+const POSITION_ROW_H = 22
+const POSITION_ROWS_H = POSITION_ROW_H * POSITION_ROWS
+
 /**
- * Best weight at each rep count, heaviest first. One row per rep count, so a
- * 5-rep best and an 8-rep best both survive; ties go to the harder set.
+ * The record rows for one set position. Always exactly POSITION_ROWS slots
+ * tall, so the box never changes height and a swap between positions does no
+ * layout work at all.
  */
-function topRepRecords(
-  days: ExerciseHistoryDay[],
-  limit: number
-): { reps: number; weightKg: number; date: string }[] {
-  const best = new Map<number, { weightKg: number; date: string }>()
-  for (const day of days) {
-    for (const s of day.sets) {
-      if (s.weight == null || s.reps == null) continue
-      const cur = best.get(s.reps)
-      // weightKey, not the raw kg: an imported 125 lb set holds 56.70 kg and a
-      // typed one 56.699, so the raw compare let the noise decide the winner
-      // and, in the sort below, jump ahead of the reps tiebreak.
-      if (!cur || weightKey(s.weight) > weightKey(cur.weightKg)) {
-        best.set(s.reps, { weightKg: s.weight, date: day.date })
-      }
-    }
-  }
-  return [...best.entries()]
-    .map(([reps, v]) => ({ reps, weightKg: v.weightKg, date: v.date }))
-    .sort(
-      (a, b) => weightKey(b.weightKg) - weightKey(a.weightKg) || b.reps - a.reps
+function PositionRows({
+  records,
+  position,
+  unit,
+}: {
+  records: TopRepRecord[]
+  position: number
+  unit: "kg" | "lb"
+}) {
+  if (records.length === 0) {
+    return (
+      <View style={styles.posEmptyBox}>
+        <Text style={styles.lastTimeEmpty}>
+          No record yet for set {position}.
+        </Text>
+      </View>
     )
-    .slice(0, limit)
+  }
+  return (
+    <>
+      {records.map((r) => (
+        <View key={r.reps} style={[styles.topRow, styles.posRow]}>
+          <Text style={styles.topWeight}>
+            {formatWeight(r.weightKg, unit)}
+            <Text style={styles.topUnit}> {unit}</Text>
+          </Text>
+          <Text style={styles.topReps}>
+            × {r.reps} {r.reps === 1 ? "rep" : "reps"}
+          </Text>
+          <Text style={styles.topDate}>{recordDate(r.date)}</Text>
+        </View>
+      ))}
+    </>
+  )
 }
 
 /**
- * "What happened before" for the tab you log from. Deliberately not the
- * Summary tab's layout — that one is a full day card with a set list and note
- * strips, and it would dwarf the form above it. Here the last session is a row
- * of chips and the records are three tight lines.
+ * "What to beat" for the tab you log from. Deliberately not the Summary tab's
+ * layout — that one is a full day card with a set list and note strips, and it
+ * would dwarf the form above it.
+ *
+ * Two modes, picked by `nextPosition` alone:
+ *
+ * - **Last time** (`nextPosition === 1`, nothing logged today). The previous
+ *   session as a row of chips, then the top weights across every set of the
+ *   exercise. This is the whole card as it was before position mode existed.
+ * - **Position** (`nextPosition >= 2`). The previous session block leaves, and
+ *   the rows become the top weights for the set position about to be logged.
+ *   After one set that is set 2, after two sets set 3, and so on.
  *
  * Renders nothing when the exercise has no weight×reps history: a cardio
  * exercise has no top weights, and a first session has no last time.
@@ -1909,7 +1984,8 @@ const LastTimePanel = memo(function LastTimePanel({
   days,
   currentDate,
   unit,
-  hasSets,
+  nextPosition,
+  isWeightReps,
   onPressDate,
   onShowMore,
 }: {
@@ -1917,9 +1993,15 @@ const LastTimePanel = memo(function LastTimePanel({
   /** The day being logged. Its own sets are already on screen above. */
   currentDate: string
   unit: "kg" | "lb"
-  /** Whether the day being logged has a set yet. Drives the default height:
-   *  the card earns its full size only while there is nothing above it. */
-  hasSets: boolean
+  /** 1-based position the next save would take. 1 means nothing is logged for
+   *  this exercise today. Comes from the screen's `sets`, never from `days`:
+   *  `days` only moves once the store mutation commits, which is too late to
+   *  start an animation on the click frame. */
+  nextPosition: number
+  /** Set positions only mean something for weight×reps exercises — prs.ts
+   *  skips every other kind, so there are no position records to show and the
+   *  card stays in last-time mode for its whole life. */
+  isWeightReps: boolean
   onPressDate?: (date: string) => void
   /** Opens the Summary tab, which carries the full record table. */
   onShowMore?: () => void
@@ -1939,60 +2021,180 @@ const LastTimePanel = memo(function LastTimePanel({
 
   // Records include today: a set logged a minute ago can be the new best, and
   // seeing that land is the point.
-  const top = useMemo(() => topRepRecords(days, 3), [days])
+  const top = useMemo(() => topRepRecords(days, POSITION_ROWS), [days])
+  // Every position in one pass, so a swap is a map lookup rather than a fresh
+  // scan of the whole history.
+  const byPosition = useMemo(
+    () => topRepRecordsByPosition(days, POSITION_ROWS),
+    [days]
+  )
 
-  // Open by default until the day has a set, then collapse to one line: the
-  // question "what did I do last time" outlives the first set, but the space
-  // it deserves does not. `null` means nobody has touched the chevron, so the
-  // card still follows the session; one tap and the choice is the user's for
-  // as long as the screen lives.
+  const hasSets = nextPosition >= 2
+  const positionMode = isWeightReps && hasSets
+
+  // `null` means nobody has touched the chevron, so the card still follows the
+  // session; one tap and the choice is the user's for as long as the screen
+  // lives. Position mode defaults open — it is the card's whole job once a set
+  // is down. With no earlier session there is nothing to collapse to in last
+  // time mode either, so that stays open for its records.
   const [manual, setManual] = useState<boolean | null>(null)
-  // With no earlier session there is nothing to collapse to — the one-line
-  // stand-in would be blank — so that card stays open for its records.
-  const open = manual ?? (!hasSets || !last)
+  const open = manual ?? (positionMode || !hasSets || !last)
 
-  const spin = useRef(new Animated.Value(open ? 1 : 0)).current
+  // Which position the rows currently show, and the one they are fading away
+  // from. Both are rendered during a swap, so no state change has to land at a
+  // precise moment for the cross-fade to look right.
+  const [shownPos, setShownPos] = useState(nextPosition)
+  const [prevPos, setPrevPos] = useState<number | null>(null)
+  const swap = useRef(new Animated.Value(1)).current
+  // The position last handled lives in a ref, not in the dep list. Reading
+  // `shownPos` here instead would re-run this effect on the very re-render it
+  // causes, and the cleanup would stop the animation it just started — leaving
+  // the rows stranded at opacity 0.
+  const handledPos = useRef(nextPosition)
+  const swapAnim = useRef<Animated.CompositeAnimation | null>(null)
   useEffect(() => {
-    Animated.timing(spin, {
-      toValue: open ? 1 : 0,
-      duration: 240,
+    const from = handledPos.current
+    if (from === nextPosition) return
+    handledPos.current = nextPosition
+    swapAnim.current?.stop()
+    // Crossing into or out of position mode is the mode switch's animation to
+    // run, not ours. Two fades over the same pixels read as a stutter.
+    if (from <= 1 || nextPosition <= 1) {
+      setShownPos(nextPosition)
+      setPrevPos(null)
+      swap.setValue(1)
+      return
+    }
+    setPrevPos(from)
+    setShownPos(nextPosition)
+    swap.setValue(0)
+    const a = Animated.timing(swap, {
+      toValue: 1,
+      duration: POSITION_SWAP_MS,
+      easing: Easing.out(Easing.quad),
+      // Native driver on purpose. This fires on the same frame as the PR
+      // recompute, the index rebuild and the list re-render, and a JS-driver
+      // animation would be stalled by all three. Because it cannot be, sets 2
+      // and up need none of the mutation deferral the first set gets.
+      useNativeDriver: true,
+    })
+    swapAnim.current = a
+    a.start(({ finished }) => {
+      // Dropping the outgoing copy late is harmless: it is already at opacity
+      // 0, so a busy JS thread cannot make this visible.
+      if (finished) setPrevPos(null)
+    })
+  }, [nextPosition, swap])
+  useEffect(() => () => swapAnim.current?.stop(), [])
+
+  // Opacity only, so both of these stay on the native driver.
+  const modeAnim = useRef(new Animated.Value(positionMode ? 1 : 0)).current
+  const openAnim = useRef(new Animated.Value(open ? 1 : 0)).current
+  useEffect(() => {
+    const a = Animated.timing(modeAnim, {
+      toValue: positionMode ? 1 : 0,
+      duration: LAST_TIME_COLLAPSE_MS,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
-    }).start()
-  }, [open, spin])
-
-  // The body is two stacked layers inside one box whose height eases between
-  // their measured heights — the same trick as the form/selection-bar swap
-  // above. LayoutAnimation was doing this job badly: on the save path the
-  // only safe config is update-only, so the chips and records vanished on the
-  // spot and just the empty box slid, which read as no animation at all.
-  const progress = useRef(new Animated.Value(open ? 1 : 0)).current
-  const [collapsedH, setCollapsedH] = useState<number | null>(null)
-  const [expandedH, setExpandedH] = useState<number | null>(null)
+    })
+    a.start()
+    return () => a.stop()
+  }, [positionMode, modeAnim])
   useEffect(() => {
-    Animated.timing(progress, {
+    const a = Animated.timing(openAnim, {
       toValue: open ? 1 : 0,
+      duration: open ? 240 : LAST_TIME_COLLAPSE_MS,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    })
+    a.start()
+    return () => a.stop()
+  }, [open, openAnim])
+
+  const lastTimeOpacity = useMemo(
+    () => Animated.multiply(Animated.subtract(1, modeAnim), openAnim),
+    [modeAnim, openAnim]
+  )
+  const collapsedOpacity = useMemo(
+    () =>
+      Animated.multiply(
+        Animated.subtract(1, modeAnim),
+        Animated.subtract(1, openAnim)
+      ),
+    [modeAnim, openAnim]
+  )
+  const positionOpacity = useMemo(
+    () => Animated.multiply(modeAnim, openAnim),
+    [modeAnim, openAnim]
+  )
+
+  // The body is three stacked layers inside one box whose height eases toward
+  // the active layer's measured height — the same trick as the form/selection
+  // bar swap above, generalised from two layers to three. LayoutAnimation was
+  // doing this job badly: on the save path the only safe config is update-only,
+  // so the chips and records vanished on the spot and just the empty box slid,
+  // which read as no animation at all.
+  //
+  // Nothing here is a hardcoded height. The position layer measures constant on
+  // its own, because its rows box reserves POSITION_ROWS slots whether or not
+  // there are records to fill them.
+  type LayerKey = "lastTime" | "position" | "collapsed"
+  const [heights, setHeights] = useState<Record<LayerKey, number | null>>({
+    lastTime: null,
+    position: null,
+    collapsed: null,
+  })
+  const measure = useCallback(
+    (key: LayerKey) => (e: LayoutChangeEvent) => {
+      const h = Math.round(e.nativeEvent.layout.height)
+      setHeights((prev) => (prev[key] === h ? prev : { ...prev, [key]: h }))
+    },
+    []
+  )
+
+  // Position mode collapsed has no stand-in line to show, so it closes to the
+  // header alone.
+  const activeKey: LayerKey | null = open
+    ? positionMode
+      ? "position"
+      : "lastTime"
+    : positionMode
+      ? null
+      : "collapsed"
+  const target = activeKey == null ? 0 : heights[activeKey]
+
+  const heightAnim = useRef(new Animated.Value(0)).current
+  const [primed, setPrimed] = useState(false)
+  const lastTarget = useRef<number | null>(null)
+  useEffect(() => {
+    if (target == null) return
+    const from = lastTarget.current
+    lastTarget.current = target
+    // First usable measurement: jump straight to it. Animating from 0 here
+    // would play a grow-in every time the screen mounts.
+    if (!primed) {
+      heightAnim.setValue(target)
+      setPrimed(true)
+      return
+    }
+    if (from === target) return
+    const a = Animated.timing(heightAnim, {
+      toValue: target,
       // Closing is quicker: the user has already read it and wants the space.
-      duration: open ? 240 : 190,
+      // The shrink case is also the mode switch, and LAST_TIME_COLLAPSE_MS is
+      // exactly what the save path defers its mutation by.
+      duration: from != null && target < from ? LAST_TIME_COLLAPSE_MS : 240,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: false, // height is a layout prop
-    }).start()
-  }, [open, progress])
-
-  const bodyHeight =
-    collapsedH != null && expandedH != null
-      ? progress.interpolate({
-          inputRange: [0, 1],
-          outputRange: [collapsedH, expandedH],
-        })
-      : // Before the first measure: clip to the collapsed layer when closed
-        // (it is absolute, so it still measures), natural height when open.
-        open
-          ? undefined
-          : ((collapsedH ?? 0) as unknown as number)
+    })
+    a.start()
+    return () => a.stop()
+  }, [target, primed, heightAnim])
 
   const toggle = useCallback(() => setManual((v) => !(v ?? open)), [open])
 
+  // The last-time guard is unchanged. Position mode adds nothing to it: a card
+  // that survives to position mode always had records to get there.
   if (!last && top.length === 0) return null
 
   const collapsedLine = last
@@ -2000,6 +2202,15 @@ const LastTimePanel = memo(function LastTimePanel({
         .map((s) => `${formatWeight(s.weight, unit)}×${s.reps}`)
         .join("   ")
     : ""
+
+  // Only the active layer sits in flow, and only while its height is unknown.
+  // That is what gives the box its height before the first measurement lands,
+  // so a screen that opens straight into position mode does not flash the
+  // last-time layer's height first. It is also the fallback if a layer somehow
+  // never reports a height: the card still shows its content at natural size
+  // rather than collapsing to nothing.
+  const inFlow = (key: LayerKey) =>
+    activeKey === key && (!primed || target == null)
 
   return (
     <View style={styles.lastTimeCard}>
@@ -2015,13 +2226,28 @@ const LastTimePanel = memo(function LastTimePanel({
             pressed && { opacity: 0.55 },
           ]}
         >
-          <Text style={styles.lastTimeLabel}>Last time</Text>
-          {last && <Text style={styles.lastTimeAgo}>{agoLabel(last.date)}</Text>}
+          <Text style={styles.lastTimeLabel}>
+            {positionMode ? "Top weights" : "Last time"}
+          </Text>
+          {/* The position number and the "ago" label share one slot: both say
+              which session the rows below belong to, and only one mode has an
+              answer at a time. The number changes while `swap` holds it at 0,
+              so the text never visibly mutates mid-fade. */}
+          {positionMode ? (
+            <Animated.Text
+              style={[styles.lastTimePos, { opacity: swap }]}
+              numberOfLines={1}
+            >
+              Set {shownPos}
+            </Animated.Text>
+          ) : (
+            last && <Text style={styles.lastTimeAgo}>{agoLabel(last.date)}</Text>
+          )}
           <Animated.View
             style={{
               transform: [
                 {
-                  rotate: spin.interpolate({
+                  rotate: openAnim.interpolate({
                     inputRange: [0, 1],
                     outputRange: ["0deg", "180deg"],
                   }),
@@ -2036,7 +2262,9 @@ const LastTimePanel = memo(function LastTimePanel({
             />
           </Animated.View>
         </Pressable>
-        {last && onPressDate && (
+        {/* The calendar shortcut opens the previous session, so it leaves with
+            the chips when position mode takes over. */}
+        {!positionMode && last && onPressDate && (
           <Pressable
             onPress={() => onPressDate(last.date)}
             hitSlop={10}
@@ -2058,24 +2286,17 @@ const LastTimePanel = memo(function LastTimePanel({
       <Animated.View
         style={[
           { overflow: "hidden" },
-          bodyHeight != null && { height: bodyHeight },
+          primed && target != null && { height: heightAnim },
         ]}
       >
-        {/* Collapsed layer. Absolute, so it measures its own height without
-            contributing to the box's natural height. */}
+        {/* Collapsed layer. The last-time stand-in: the same sets on one
+            truncated line. */}
         <Animated.View
-          onLayout={(e: LayoutChangeEvent) =>
-            setCollapsedH(Math.round(e.nativeEvent.layout.height))
-          }
+          onLayout={measure("collapsed")}
           pointerEvents="none"
           style={[
-            styles.lastTimeCollapsedLayer,
-            {
-              opacity: progress.interpolate({
-                inputRange: [0, 1],
-                outputRange: [1, 0],
-              }),
-            },
+            !inFlow("collapsed") && styles.lastTimeLayer,
+            { opacity: collapsedOpacity },
           ]}
         >
           {!!collapsedLine && (
@@ -2085,12 +2306,68 @@ const LastTimePanel = memo(function LastTimePanel({
           )}
         </Animated.View>
 
+        {/* Position layer. Stays mounted in last-time mode so its height is
+            already measured when the first set switches modes. */}
         <Animated.View
-          onLayout={(e: LayoutChangeEvent) =>
-            setExpandedH(Math.round(e.nativeEvent.layout.height))
-          }
-          pointerEvents={open ? "auto" : "none"}
-          style={{ opacity: progress, gap: theme.spacing[2] }}
+          onLayout={measure("position")}
+          pointerEvents={positionMode && open ? "auto" : "none"}
+          style={[
+            !inFlow("position") && styles.lastTimeLayer,
+            { opacity: positionOpacity, gap: theme.spacing[2] },
+          ]}
+        >
+          <View style={styles.posRowsBox}>
+            {prevPos != null && (
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.posRowsLayer,
+                  { opacity: Animated.subtract(1, swap) },
+                ]}
+              >
+                <PositionRows
+                  records={byPosition.get(prevPos) ?? []}
+                  position={prevPos}
+                  unit={unit}
+                />
+              </Animated.View>
+            )}
+            <Animated.View style={[styles.posRowsLayer, { opacity: swap }]}>
+              <PositionRows
+                records={byPosition.get(shownPos) ?? []}
+                position={shownPos}
+                unit={unit}
+              />
+            </Animated.View>
+          </View>
+          {onShowMore && (
+            <Pressable
+              onPress={onShowMore}
+              hitSlop={8}
+              unstable_pressDelay={0}
+              style={({ pressed }) => [
+                styles.lastTimeMore,
+                pressed && { opacity: 0.55 },
+              ]}
+            >
+              <Text style={styles.lastTimeMoreText}>Show more</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={13}
+                color={theme.colors.muted}
+              />
+            </Pressable>
+          )}
+        </Animated.View>
+
+        {/* Last-time layer. */}
+        <Animated.View
+          onLayout={measure("lastTime")}
+          pointerEvents={!positionMode && open ? "auto" : "none"}
+          style={[
+            !inFlow("lastTime") && styles.lastTimeLayer,
+            { opacity: lastTimeOpacity, gap: theme.spacing[2] },
+          ]}
         >
           {last ? (
             <View style={styles.lastTimeChips}>
@@ -2973,7 +3250,6 @@ export const SummaryPanel = memo(function SummaryPanel({
   const [scope, setScope] = useState<"all" | number>("all")
   const [sort, setSort] = useState<RepSort>("weight")
   const [showAllRows, setShowAllRows] = useState(false)
-  const [picker, setPicker] = useState<"scope" | "sort" | null>(null)
   // The day whose sets the record popup is showing, or null when closed.
   const [recordDay, setRecordDay] = useState<ExerciseHistoryDay | null>(null)
 
@@ -3160,12 +3436,43 @@ export const SummaryPanel = memo(function SummaryPanel({
             <PickerTrigger
               icon="layers-outline"
               label={scope === "all" ? "All sets" : `Set ${scope}`}
-              onPress={() => setPicker("scope")}
+              title="Show set"
+              actions={[
+                {
+                  id: "all",
+                  title: "All sets",
+                  subtitle: `${wrSets.length} ${wrSets.length === 1 ? "set" : "sets"}`,
+                  state: scope === "all" ? "on" : "off",
+                },
+                ...setNumbers.map((n) => {
+                  const count = wrSets.filter((s) => s.setNum === n).length
+                  return {
+                    id: String(n),
+                    title: `Set ${n}`,
+                    subtitle: `${count} ${count === 1 ? "time" : "times"}`,
+                    state: (scope === n ? "on" : "off") as "on" | "off",
+                  }
+                }),
+              ]}
+              onSelect={(id) => {
+                setScope(id === "all" ? "all" : Number(id))
+                resetRows()
+              }}
             />
             <PickerTrigger
               icon="swap-vertical-outline"
               label={sortLabel}
-              onPress={() => setPicker("sort")}
+              title="Sort by"
+              actions={REP_SORTS.map((o) => ({
+                id: o.key,
+                title: o.label,
+                subtitle: o.hint,
+                state: (sort === o.key ? "on" : "off") as "on" | "off",
+              }))}
+              onSelect={(id) => {
+                setSort(id as RepSort)
+                resetRows()
+              }}
             />
           </View>
 
@@ -3252,51 +3559,6 @@ export const SummaryPanel = memo(function SummaryPanel({
             )}
           </View>
 
-          <OptionPickerOverlay
-            visible={picker === "scope"}
-            title="Show set"
-            options={[
-              {
-                key: "all",
-                label: "All sets",
-                hint: `${wrSets.length} ${wrSets.length === 1 ? "set" : "sets"}`,
-                active: scope === "all",
-              },
-              ...setNumbers.map((n) => {
-                const count = wrSets.filter((s) => s.setNum === n).length
-                return {
-                  key: String(n),
-                  label: `Set ${n}`,
-                  hint: `${count} ${count === 1 ? "time" : "times"}`,
-                  active: scope === n,
-                }
-              }),
-            ]}
-            onClose={() => setPicker(null)}
-            onSelect={(key) => {
-              setScope(key === "all" ? "all" : Number(key))
-              resetRows()
-              setPicker(null)
-            }}
-          />
-
-          <OptionPickerOverlay
-            visible={picker === "sort"}
-            title="Sort by"
-            options={REP_SORTS.map((s) => ({
-              key: s.key,
-              label: s.label,
-              hint: s.hint,
-              active: sort === s.key,
-            }))}
-            onClose={() => setPicker(null)}
-            onSelect={(key) => {
-              setSort(key as RepSort)
-              resetRows()
-              setPicker(null)
-            }}
-          />
-
           <RecordDayPopup
             day={recordDay}
             onClose={() => setRecordDay(null)}
@@ -3308,153 +3570,6 @@ export const SummaryPanel = memo(function SummaryPanel({
   )
 })
 
-const MENU_FADE_MS = 150
-
-/**
- * The header's overflow menu. One item today — the exercise note — but it is
- * where a per-exercise action belongs now that the note prompt no longer sits
- * under the title.
- *
- * The note item is disabled until the day has a set. Before that there is no
- * workout_exercise row to hang a note on, so a note written then would be
- * dropped without telling anyone. The row says why rather than vanishing.
- */
-function HeaderMenu({
-  visible,
-  anchor,
-  noteEnabled,
-  note,
-  lastTimeOn,
-  onClose,
-  onNote,
-  onToggleLastTime,
-}: {
-  visible: boolean
-  /** Where the card's top-right corner goes, in window coordinates. Measured
-   *  from the header button on press — a fixed padding is wrong as soon as
-   *  the safe-area inset differs. */
-  anchor: { top: number; right: number } | null
-  noteEnabled: boolean
-  /** The saved note. Only its emptiness matters here — it picks Add or Edit.
-   *  The note itself reads under the exercise name. */
-  note: string
-  lastTimeOn: boolean
-  onClose: () => void
-  onNote: () => void
-  onToggleLastTime: () => void
-}) {
-  const opacity = useRef(new Animated.Value(0)).current
-  const [mounted, setMounted] = useState(visible)
-
-  useEffect(() => {
-    if (visible) {
-      setMounted(true)
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: MENU_FADE_MS,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start()
-      return
-    }
-    Animated.timing(opacity, {
-      toValue: 0,
-      duration: MENU_FADE_MS,
-      easing: Easing.linear,
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) setMounted(false)
-    })
-  }, [visible, opacity])
-
-  if (!mounted || !anchor) return null
-
-  const color = noteEnabled ? theme.colors.foreground : theme.colors.muted
-  const hasNote = !!note.trim()
-
-  return (
-    <Modal
-      transparent
-      visible
-      animationType="none"
-      statusBarTranslucent
-      onRequestClose={onClose}
-    >
-      {/* Backdrop and card are siblings, not nested — one tap dismisses. */}
-      <Animated.View
-        style={[StyleSheet.absoluteFill, styles.menuBackdrop, { opacity }]}
-      >
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-      </Animated.View>
-      {/* Grows out of the button it hangs from, the way an iOS menu does:
-          transformOrigin puts the anchor at the card's top-right corner, so
-          the scale reads as the menu unfolding rather than zooming. */}
-      <Animated.View
-        style={[
-          styles.menuCard,
-          { top: anchor.top, right: anchor.right },
-          {
-            opacity,
-            transformOrigin: "top right",
-            transform: [
-              {
-                scale: opacity.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0.85, 1],
-                }),
-              },
-            ],
-          },
-        ]}
-      >
-        <Pressable
-          onPress={noteEnabled ? onNote : undefined}
-          disabled={!noteEnabled}
-          style={({ pressed }) => [
-            styles.menuRow,
-            styles.menuRowBorder,
-            pressed && noteEnabled && styles.menuRowPressed,
-          ]}
-        >
-          <View style={styles.menuRowBody}>
-            <Text style={[styles.menuRowText, { color }]} numberOfLines={1}>
-              {hasNote ? "Edit exercise note" : "Add exercise note"}
-            </Text>
-            {!noteEnabled && (
-              <Text style={styles.menuRowHint} numberOfLines={1}>
-                Log a set first
-              </Text>
-            )}
-          </View>
-          <Ionicons name="document-text-outline" size={17} color={color} />
-        </Pressable>
-
-        <Pressable
-          onPress={onToggleLastTime}
-          style={({ pressed }) => [
-            styles.menuRow,
-            pressed && styles.menuRowPressed,
-          ]}
-        >
-          <View style={styles.menuRowBody}>
-            <Text style={styles.menuRowText} numberOfLines={1}>
-              {lastTimeOn ? "Hide Last time card" : "Show Last time card"}
-            </Text>
-          </View>
-          {/* An action row, like the note row above it — not a checkbox. A
-              checkmark that turns into an empty box asks you to work out
-              which state you are looking at; a label that names what the tap
-              does, next to an icon that shows it, does not. */}
-          <Ionicons
-            name={lastTimeOn ? "eye-off-outline" : "eye-outline"}
-            size={17}
-            color={theme.colors.foreground}
-          />
-        </Pressable>
-      </Animated.View>
-    </Modal>
-  )
-}
 
 /**
  * What a record row opens: the date it was set, and every set logged for this
@@ -3631,26 +3746,37 @@ function CollapsibleNote({ label, text }: { label: string; text: string }) {
   )
 }
 
+/**
+ * A chip that opens a system menu of choices. The chip shows the current one,
+ * and the menu marks it with the platform's own checkmark via `state: "on"`,
+ * so there is no custom active styling to keep in sync.
+ *
+ * There is no pressed state on the chip: iOS leaves a menu's anchor alone and
+ * lets the menu appearing be the feedback.
+ */
 function PickerTrigger({
   icon,
   label,
-  onPress,
+  title,
+  actions,
+  onSelect,
 }: {
   icon: keyof typeof Ionicons.glyphMap
   label: string
-  onPress: () => void
+  title: string
+  actions: MenuAction[]
+  onSelect: (id: string) => void
 }) {
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.setPickerTrigger, pressedStyle(pressed)]}
-    >
-      <Ionicons name={icon} size={13} color={theme.colors.muted} />
-      <Text style={styles.setPickerTriggerText} numberOfLines={1}>
-        {label}
-      </Text>
-      <Ionicons name="chevron-down" size={14} color={theme.colors.muted} />
-    </Pressable>
+    <NativeMenu title={title} actions={actions} onSelect={onSelect}>
+      <View style={styles.setPickerTrigger}>
+        <Ionicons name={icon} size={13} color={theme.colors.muted} />
+        <Text style={styles.setPickerTriggerText} numberOfLines={1}>
+          {label}
+        </Text>
+        <Ionicons name="chevron-down" size={14} color={theme.colors.muted} />
+      </View>
+    </NativeMenu>
   )
 }
 
@@ -3663,95 +3789,6 @@ function PickerTrigger({
 // the card are siblings (not nested), so a single tap closes/selects — nesting
 // Pressables is what previously needed a double tap.
 const PICKER_FADE_MS = 150
-interface PickerOption {
-  key: string
-  label: string
-  hint?: string
-  active: boolean
-}
-function OptionPickerOverlay({
-  visible,
-  title,
-  options,
-  onClose,
-  onSelect,
-}: {
-  visible: boolean
-  title: string
-  options: PickerOption[]
-  onClose: () => void
-  onSelect: (key: string) => void
-}) {
-  const opacity = useRef(new Animated.Value(0)).current
-  const [mounted, setMounted] = useState(visible)
-
-  useEffect(() => {
-    if (visible) {
-      setMounted(true)
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: PICKER_FADE_MS,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start()
-      return
-    }
-    Animated.timing(opacity, {
-      toValue: 0,
-      duration: PICKER_FADE_MS,
-      easing: Easing.in(Easing.cubic),
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) setMounted(false)
-    })
-  }, [visible, opacity])
-
-  if (!mounted) return null
-
-  return (
-    <Modal transparent visible animationType="none" statusBarTranslucent onRequestClose={onClose}>
-      <Animated.View style={[styles.pickerOverlay, { opacity }]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        {/* onStartShouldSetResponder absorbs taps on empty card area so they
-            don't fall through to the backdrop; option Pressables still claim
-            their own taps first. */}
-        <View style={styles.pickerCard} onStartShouldSetResponder={() => true}>
-          <Text style={styles.pickerTitle}>{title}</Text>
-          <ScrollView
-            style={styles.pickerScroll}
-            contentContainerStyle={styles.pickerScrollContent}
-            showsVerticalScrollIndicator
-          >
-            {options.map((opt) => (
-              <Pressable
-                key={opt.key}
-                onPress={() => onSelect(opt.key)}
-                style={({ pressed }) => [
-                  styles.setPickerOption,
-                  opt.active && styles.setPickerOptionActive,
-                  pressedStyle(pressed),
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.setPickerOptionText,
-                    opt.active && { color: theme.colors.primary },
-                  ]}
-                >
-                  {opt.label}
-                </Text>
-                {!!opt.hint && (
-                  <Text style={styles.setPickerOptionCount}>{opt.hint}</Text>
-                )}
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
-      </Animated.View>
-    </Modal>
-  )
-}
-
 function todayString(): string {
   const d = new Date()
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
@@ -4501,23 +4538,8 @@ function NoteEditorSheet({
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: theme.colors.background },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: theme.spacing[3],
-    paddingTop: theme.spacing[2],
-  },
-  headerBackBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  // Auto margin rather than space-between on the row, so the back chevron
-  // keeps its own left position whatever else lands in the header.
+  // Sits in the native header, opposite the back button.
   headerMenuBtn: {
-    marginLeft: "auto",
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -4527,44 +4549,6 @@ const styles = StyleSheet.create({
   // Anchored under the header at the right edge, where the button is.
   // The dim is light: an iOS menu shades what is behind it, it does not
   // black it out.
-  menuBackdrop: { backgroundColor: "rgba(0,0,0,0.25)" },
-  menuCard: {
-    position: "absolute",
-    minWidth: 240,
-    maxWidth: 300,
-    backgroundColor: theme.colors.inputBg,
-    borderRadius: theme.radius.lg,
-    borderColor: theme.colors.border,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingVertical: 4,
-    overflow: "hidden",
-    shadowColor: "#000",
-    shadowOpacity: 0.45,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 16,
-  },
-  // Label first, icon on the trailing edge — an iOS menu row, not the day
-  // screen's icon-tile list.
-  menuRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: 12,
-  },
-  menuRowBorder: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.colors.border,
-  },
-  menuRowPressed: { backgroundColor: "rgba(255,255,255,0.06)" },
-  menuRowBody: { flex: 1, gap: 1 },
-  menuRowText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: "600",
-  },
-  menuRowHint: { color: theme.colors.muted, fontSize: theme.fontSize.xs },
   exNoteRow: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -4616,14 +4600,23 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.02)",
     gap: theme.spacing[2],
   },
-  // Stacked on top of the expanded body so both measure independently. Not in
-  // flow, so the box's natural height is the expanded one.
-  lastTimeCollapsedLayer: {
+  // Body layers stack on one another so each measures independently. Only the
+  // active layer is left in flow, and only until the first measurement lands;
+  // after that the box's animated height drives everything.
+  lastTimeLayer: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
   },
+  // The one fixed height in the card. It reserves POSITION_ROWS slots whether
+  // or not a position has that many records, which is what makes every
+  // position's body the same height - so a swap from set 2 to set 3 moves no
+  // layout, only opacity.
+  posRowsBox: { height: POSITION_ROWS_H },
+  posRowsLayer: { position: "absolute", top: 0, left: 0, right: 0 },
+  posRow: { height: POSITION_ROW_H },
+  posEmptyBox: { height: POSITION_ROWS_H, justifyContent: "center" },
   lastTimeHead: {
     flexDirection: "row",
     alignItems: "center",
@@ -4656,6 +4649,14 @@ const styles = StyleSheet.create({
     marginLeft: "auto",
     color: theme.colors.muted,
     fontSize: theme.fontSize.xs,
+  },
+  // Same slot as lastTimeAgo, its own style so bolding the set number does not
+  // also bold the "5 days ago" label that shares the slot in last-time mode.
+  lastTimePos: {
+    marginLeft: "auto",
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.xs,
+    fontWeight: "800",
   },
   lastTimeCalBtn: {
     width: 26,
