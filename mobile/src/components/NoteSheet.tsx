@@ -176,7 +176,7 @@ export function NoteSheet({
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(0,0,0,0.55)",
     paddingTop: 80,
     paddingHorizontal: theme.spacing[4],

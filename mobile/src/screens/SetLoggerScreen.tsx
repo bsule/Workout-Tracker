@@ -4938,7 +4938,7 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   noteOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(0,0,0,0.55)",
     paddingTop: 80,
     paddingHorizontal: theme.spacing[4],
