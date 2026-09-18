@@ -235,7 +235,7 @@ const EX_NOTE_REVEAL_MS = 260
 // The "Last time" card's collapse. Height is a layout property, so it runs on
 // the JS driver — see the save path, which holds the store mutation back for
 // this long when the card is collapsing so the shrink has a clear thread.
-const LAST_TIME_COLLAPSE_MS = 190
+const LAST_TIME_COLLAPSE_MS = 150
 
 // Layout half of that reveal: the downward shift of everything under the
 // note row. No `create`/`delete` sections, so only views that already exist
@@ -360,11 +360,25 @@ function SetRowFade({
   children,
   leaving,
   skipFade,
+  onExited,
+  parentHandlesExit = false,
 }: {
   children: ReactNode
   leaving?: boolean
   skipFade?: boolean
+  onExited?: () => void
+  parentHandlesExit?: boolean
 }) {
+  const [measuredHeight, setMeasuredHeight] = useState<number | null>(null)
+  const collapse = useRef(new Animated.Value(1)).current
+  const exitCallback = useRef(onExited)
+  exitCallback.current = onExited
+  const exitFinished = useRef(false)
+  const finishExit = useCallback(() => {
+    if (exitFinished.current) return
+    exitFinished.current = true
+    exitCallback.current?.()
+  }, [])
   const opacity = useRef(new Animated.Value(skipFade ? 1 : 0)).current
   // Small translateY so rows visibly settle into / lift out of place
   // instead of just changing opacity in a fixed slot. Distance is kept
@@ -390,28 +404,56 @@ function SetRowFade({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   useEffect(() => {
-    if (!leaving) return
-    Animated.parallel([
+    if (!leaving || parentHandlesExit || measuredHeight == null) return
+    // Own the row's layout instead of relying on configureNext, which can
+    // be consumed by another animated card's layout pass.
+    const animation = Animated.parallel([
       Animated.timing(opacity, {
         toValue: 0,
         duration: 180,
-        easing: Easing.in(Easing.cubic),
+        easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
-      Animated.timing(translateY, {
-        toValue: -4,
-        duration: 180,
-        easing: Easing.in(Easing.cubic),
-        useNativeDriver: true,
+      Animated.timing(collapse, {
+        toValue: 0,
+        duration: 280,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: false,
       }),
-    ]).start()
-  }, [leaving, opacity, translateY])
+    ])
+    animation.start(({ finished }) => {
+      if (finished) finishExit()
+    })
+    return () => animation.stop()
+  }, [leaving, parentHandlesExit, measuredHeight, opacity, collapse, finishExit])
+  // A tab change or navigation can unmount an exiting row. Still commit
+  // its requested deletion even when the animation is no longer visible.
+  useEffect(() => () => {
+    if (leaving) finishExit()
+  }, [leaving, finishExit])
   return (
-    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
-      {children}
+    <Animated.View
+      pointerEvents={leaving ? "none" : "auto"}
+      style={leaving && !parentHandlesExit && measuredHeight != null
+        ? { height: Animated.multiply(collapse, measuredHeight), overflow: "hidden" }
+        : undefined}
+    >
+      <Animated.View
+        onLayout={(event) => {
+          if (!leaving) setMeasuredHeight(event.nativeEvent.layout.height)
+          else if (measuredHeight == null) setMeasuredHeight(event.nativeEvent.layout.height)
+        }}
+        style={[
+          leaving && !parentHandlesExit && measuredHeight != null ? { height: measuredHeight } : undefined,
+          { opacity, transform: [{ translateY }] },
+        ]}
+      >
+        {children}
+      </Animated.View>
     </Animated.View>
   )
 }
+
 type Metric = "one_rm" | "heaviest" | "avg_weight" | "per_set"
 
 const METRIC_OPTIONS: {
@@ -644,11 +686,6 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // for `skipFade` so it appears at full opacity (no double-fade flicker).
   // `baseIds` snapshots the set ids at click-time — that's how we detect the
   // new row even if a concurrent delete keeps `sets.length` unchanged.
-  // Flipped on the click frame by a save that logs a set, so the "Last time"
-  // card can start collapsing under the finger instead of waiting for the
-  // store commit two frames later. Never cleared: once the store catches up,
-  // `sets` says the same thing, and a fresh screen starts false again.
-  const [optimisticLogged, setOptimisticLogged] = useState(false)
 
   // The planned-set save path has no `pendingAdd` placeholder: the row is
   // already in `sets`, it just flips from planned to logged when the mutation
@@ -762,47 +799,42 @@ export function SetLoggerScreen({ route, navigation }: any) {
     return () => clearTimeout(t)
   }, [sets, pendingAdd])
 
-  // Fade-then-mutate for delete: the row fades to 0 on the UI thread first,
-  // and api.deleteSet only fires after the fade completes — so the user
-  // never sees the JS thread freeze before the visual response.
+  // Keep rows mounted until their height has collapsed, then commit the
+  // batch once so store recomputation cannot interrupt the visible motion.
   const [leavingIds, setLeavingIds] = useState<Set<number>>(() => new Set())
   const leavingIdsRef = useRef(leavingIds)
-  useEffect(() => {
-    leavingIdsRef.current = leavingIds
-  }, [leavingIds])
+  const deleteCompletions = useRef(new Map<number, () => void>())
+  const finishRowDelete = useCallback((id: number) => {
+    deleteCompletions.current.get(id)?.()
+  }, [])
   function startDelete(id: number) {
     startDeleteMany([id])
   }
 
-  function startDeleteMany(ids: number[]) {
+  function startDeleteMany(requestedIds: number[]) {
+    const ids = [...new Set(requestedIds)].filter((id) => !leavingIdsRef.current.has(id))
     if (ids.length === 0) return
     if (editingSetId != null && ids.includes(editingSetId)) cancelEdit()
-    setLeavingIds((prev) => {
-      const n = new Set(prev)
-      for (const id of ids) n.add(id)
-      return n
-    })
-    // 180ms matches the SetRowFade leaving fade so the LayoutAnimation
-    // collapse fires the moment the rows reach opacity 0 — not earlier
-    // (would visibly cut a half-faded row) and not noticeably later.
-    setTimeout(() => {
-      animateNext()
-      // One index rebuild and one re-render for the whole batch. Deleting
-      // N sets one call at a time recomputes PRs, rebuilds indexes and
-      // re-renders N times back to back, which locks the UI for the length
-      // of the burst — the freeze on a multi-set delete.
-      batchMutations(() => {
-        for (const id of ids) api.deleteSet(id)
-      })
-      setLeavingIds((prev) => {
-        const n = new Set(prev)
-        let changed = false
-        for (const id of ids) {
-          if (n.delete(id)) changed = true
+    const remaining = new Set(ids)
+    for (const id of ids) {
+      deleteCompletions.current.set(id, () => {
+        if (!remaining.delete(id) || remaining.size > 0) return
+        batchMutations(() => {
+          for (const deletedId of ids) api.deleteSet(deletedId)
+        })
+        const next = new Set(leavingIdsRef.current)
+        for (const deletedId of ids) {
+          next.delete(deletedId)
+          deleteCompletions.current.delete(deletedId)
         }
-        return changed ? n : prev
+        leavingIdsRef.current = next
+        setLeavingIds(next)
       })
-    }, 180)
+    }
+    const next = new Set(leavingIdsRef.current)
+    for (const id of ids) next.add(id)
+    leavingIdsRef.current = next
+    setLeavingIds(next)
   }
 
   // Note editor sheet state. Triggered by the "Note" swipe action on a row.
@@ -1053,6 +1085,14 @@ export function SetLoggerScreen({ route, navigation }: any) {
     let logged = 0
     for (const s of sets) {
       if (s.is_planned || s.weight == null || s.reps == null) continue
+      // A set mid-delete is functionally gone: the row is fading and the
+      // api.deleteSet call is queued behind that fade. Counting it would hold
+      // the card on the old position until the mutation lands 180ms later, so
+      // the card would move *after* the row had vanished, and its height
+      // animation would start on the same frame as the delete's PR recompute
+      // and index rebuild. Dropping it here moves the card with the fade
+      // instead, and leaves the heavy commit a clear thread afterwards.
+      if (leavingIds.has(s.id)) continue
       logged++
     }
     // `pendingAdd` outlives the real row by 240ms so the placeholder can finish
@@ -1073,7 +1113,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
       logged++
     }
     return logged + 1
-  }, [sets, pendingAdd, optimisticPlannedId])
+  }, [sets, pendingAdd, optimisticPlannedId, leavingIds])
 
   // Editing an existing set does not change what comes next, so the card holds
   // still. Without this it jumps as a side effect of tapping a row, which reads
@@ -1158,9 +1198,6 @@ export function SetLoggerScreen({ route, navigation }: any) {
   function save() {
     Keyboard.dismiss()
     setError(null)
-    // Whether the day already had a logged set before this save. Authoring a
-    // planned workout does not count: those are targets, not a session.
-    const hadLoggedSet = sets.some((s) => !s.is_planned)
     if (reps <= 0) {
       setError(isCardio ? "Set a level of at least 1." : "Add at least 1 rep to log this set.")
       return
@@ -1239,7 +1276,6 @@ export function SetLoggerScreen({ route, navigation }: any) {
         if (queued) {
           // Logging against a planned set: same row, fade weight/reps update
           // would be jarring — skip animation.
-          setOptimisticLogged(true)
           setOptimisticPlannedId(queued.id)
           logPlannedSet(queued.id, { weight: isCardio ? weight : toKg(weight, unit), reps })
         } else {
@@ -1253,15 +1289,21 @@ export function SetLoggerScreen({ route, navigation }: any) {
             resolved && exerciseId != null
               ? predictPrFlags(exerciseId, resolved.weId, w, r)
               : { isPr: false, isPosPr: false, position: 0 }
-          // The first logged set of the day switches the record card out of
-          // "Last time" mode and into position mode, which is the card's one
-          // height change per session. Flipping this on the click frame is
-          // what starts that switch under the finger; the card animates its
-          // own height, so there is no LayoutAnimation to configure here.
-          // Sets 2 and up change no height at all, so they skip the deferral
-          // below entirely.
-          const willCollapseCard = !optimisticLogged && !hadLoggedSet
-          setOptimisticLogged(true)
+          // The record card may change height on this save, and its height
+          // animation runs on the JS driver, so the store commit - PR
+          // recompute, index rebuild, full list re-render - is held back past
+          // it whenever the card is on screen. Nothing visible waits: the
+          // placeholder row is already up from the click frame.
+          //
+          // This used to fire only on the first set, because that was the
+          // card's one height change per session. It no longer is. Since the
+          // rows box sizes itself to the record count, any swap between
+          // positions with different counts moves the card, and the swap into
+          // a position with no record is the biggest of those. Gating on the
+          // first set alone left every later resize to collide with the
+          // commit and snap. A deferral on a save that turns out not to move
+          // the card costs ~190ms of store latency and nothing on screen.
+          const cardMayResize = showLastTime
           setPendingAdd({
             weight: w,
             reps: r,
@@ -1281,9 +1323,9 @@ export function SetLoggerScreen({ route, navigation }: any) {
           // invisible.
           const wasResolved = resolved
           const pending = route.params?.pendingCreate
-          // Normally one frame is enough of a head start. On the first set of
-          // the day it is not: the record card is switching modes, that is a
-          // height animation on the JS driver, and this commit — PR recompute,
+          // Without the record card, one frame is enough of a head start.
+          // With it, it is not: the card may be animating its height on the
+          // JS driver, and this commit — PR recompute,
           // index rebuild, full list re-render — would stall it half way. Hold
           // it back past the collapse instead. Nothing visible waits on it:
           // the placeholder row is already on screen from the click frame.
@@ -1309,7 +1351,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
             setResolved(ids)
             api.addSet(ids.weId, { weight: w, reps: r })
           }
-          if (willCollapseCard) {
+          if (cardMayResize) {
             setTimeout(runMutation, LAST_TIME_COLLAPSE_MS + 40)
           } else {
             requestAnimationFrame(runMutation)
@@ -1557,6 +1599,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
               selectedIds={selectedIds}
               pendingAdd={pendingAdd}
               leavingIds={leavingIds}
+              onDeleteExited={finishRowDelete}
               skipFadeIds={skipFadeIds}
               onLongPress={(s) => {
                 if (s.is_planned) return
@@ -1919,8 +1962,11 @@ function ExpandableNote({ note }: { note: string }) {
 const POSITION_SWAP_MS = 140
 /** Row slots the position body always reserves, records or not. */
 const POSITION_ROWS = 3
+/** Line height of the header's right-hand slot texts. Explicit, because the
+ *  slot stacks them with a negative margin of exactly this much. */
+const SLOT_LINE_H = 14
+const CAL_BTN_W = 26
 const POSITION_ROW_H = 22
-const POSITION_ROWS_H = POSITION_ROW_H * POSITION_ROWS
 
 /**
  * The record rows for one set position. Always exactly POSITION_ROWS slots
@@ -1938,11 +1984,9 @@ function PositionRows({
 }) {
   if (records.length === 0) {
     return (
-      <View style={styles.posEmptyBox}>
-        <Text style={styles.lastTimeEmpty}>
-          No record yet for set {position}.
-        </Text>
-      </View>
+      <Text style={[styles.lastTimeEmpty, styles.posEmptyLine]}>
+        No record yet for set {position}.
+      </Text>
     )
   }
   return (
@@ -2019,14 +2063,31 @@ const LastTimePanel = memo(function LastTimePanel({
     return null
   }, [days, currentDate])
 
-  // Records include today: a set logged a minute ago can be the new best, and
-  // seeing that land is the point.
-  const top = useMemo(() => topRepRecords(days, POSITION_ROWS), [days])
+  // Both record sets are built from every day EXCEPT the one being logged.
+  //
+  // In steady state that changes nothing on screen. The last-time layer only
+  // shows while the day has no logged set, so today contributes nothing to it.
+  // Position mode always shows the position *after* the last one logged, which
+  // today has not filled. Today's own sets are on screen in the list above
+  // either way.
+  //
+  // What it removes is drift. Deleting a set fades the row immediately but
+  // runs api.deleteSet 180ms later, so for those frames the records still hold
+  // a set that is on its way out. When the mutation landed, the layer
+  // re-measured shorter and the card's height animation retargeted mid-flight.
+  // That is the glitch on delete, and on the add that followed it. Excluding
+  // today makes both record sets identical before and after the commit, so the
+  // measured height never moves and the animation runs once.
+  const priorDays = useMemo(
+    () => days.filter((d) => d.date !== currentDate),
+    [days, currentDate]
+  )
+  const top = useMemo(() => topRepRecords(priorDays, POSITION_ROWS), [priorDays])
   // Every position in one pass, so a swap is a map lookup rather than a fresh
   // scan of the whole history.
   const byPosition = useMemo(
-    () => topRepRecordsByPosition(days, POSITION_ROWS),
-    [days]
+    () => topRepRecordsByPosition(priorDays, POSITION_ROWS),
+    [priorDays]
   )
 
   const hasSets = nextPosition >= 2
@@ -2087,23 +2148,67 @@ const LastTimePanel = memo(function LastTimePanel({
   }, [nextPosition, swap])
   useEffect(() => () => swapAnim.current?.stop(), [])
 
+  // `shownPos` is written from an effect, so it lags by one commit. For a
+  // cross-fade that is fine: both copies are mounted and the fade begins when
+  // the state lands. For the mode switch it is not, because the body's height
+  // target is measured off the position layer. A lagging position meant the
+  // card began collapsing toward the OLD position's height and retargeted a
+  // frame later - one movement, then a second one correcting it. That was
+  // invisible while every position reserved three slots and only showed up
+  // once the empty state got shorter.
+  //
+  // So the lag is kept for the one case that needs it, and skipped otherwise.
+  const crossFading = shownPos > 1 && nextPosition > 1
+  const displayPos = crossFading ? shownPos : nextPosition
+
+  // The rows box is as tall as the rows it holds, one slot per record, with a
+  // floor of one slot for the "no record yet" line. Reserving three slots
+  // whatever a position held was what left dead space under a position with
+  // one record.
+  //
+  // Height is read off `nextPosition`, NOT `displayPos`. Content can lag by a
+  // commit, because during a cross-fade both copies are mounted and the fade
+  // only has to start when the state lands. Height cannot: the card has to
+  // begin moving on the frame the set is logged, or it starts toward the old
+  // height and corrects itself a frame later. That second movement is what
+  // made the swap into an empty position look wrong - `displayPos` fixed it
+  // for the mode switch and left it in place for every position-to-position
+  // swap, which is exactly how an empty position is reached.
+  const positionLayerH =
+    Math.max(
+      1,
+      Math.min((byPosition.get(nextPosition) ?? []).length, POSITION_ROWS)
+    ) * POSITION_ROW_H
+
   // Opacity only, so both of these stay on the native driver.
   const modeAnim = useRef(new Animated.Value(positionMode ? 1 : 0)).current
   const openAnim = useRef(new Animated.Value(open ? 1 : 0)).current
+  // modeLayout is modeAnim's JS-driver twin, for the one layout prop the
+  // header animates (the calendar button's width). A single Animated.Value
+  // cannot serve both drivers, so it is two values on one clock.
+  const modeLayout = useRef(new Animated.Value(positionMode ? 1 : 0)).current
   useEffect(() => {
-    const a = Animated.timing(modeAnim, {
-      toValue: positionMode ? 1 : 0,
-      duration: LAST_TIME_COLLAPSE_MS,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    })
+    const a = Animated.parallel([
+      Animated.timing(modeAnim, {
+        toValue: positionMode ? 1 : 0,
+        duration: LAST_TIME_COLLAPSE_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(modeLayout, {
+        toValue: positionMode ? 1 : 0,
+        duration: LAST_TIME_COLLAPSE_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      }),
+    ])
     a.start()
     return () => a.stop()
-  }, [positionMode, modeAnim])
+  }, [positionMode, modeAnim, modeLayout])
   useEffect(() => {
     const a = Animated.timing(openAnim, {
       toValue: open ? 1 : 0,
-      duration: open ? 240 : LAST_TIME_COLLAPSE_MS,
+      duration: LAST_TIME_COLLAPSE_MS,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     })
@@ -2127,6 +2232,10 @@ const LastTimePanel = memo(function LastTimePanel({
     () => Animated.multiply(modeAnim, openAnim),
     [modeAnim, openAnim]
   )
+  // Inverses for the header, which cross-fades its own pieces on the same
+  // values.
+  const modeOff = useMemo(() => Animated.subtract(1, modeAnim), [modeAnim])
+  const swapOff = useMemo(() => Animated.subtract(1, swap), [swap])
 
   // The body is three stacked layers inside one box whose height eases toward
   // the active layer's measured height — the same trick as the form/selection
@@ -2161,7 +2270,18 @@ const LastTimePanel = memo(function LastTimePanel({
     : positionMode
       ? null
       : "collapsed"
-  const target = activeKey == null ? 0 : heights[activeKey]
+  // The position layer's height is computed, not measured: the layer holds the
+  // rows box and nothing else, and that box's height follows directly from the
+  // record count above. A measured height arrives from `onLayout`, a commit
+  // behind the render that changed the content, which is the same one-frame
+  // lag described there. The other two layers hold variable content - chips, a
+  // note line, a rule - so they are still measured.
+  const target =
+    activeKey == null
+      ? 0
+      : activeKey === "position"
+        ? positionLayerH
+        : heights[activeKey]
 
   const heightAnim = useRef(new Animated.Value(0)).current
   const [primed, setPrimed] = useState(false)
@@ -2180,10 +2300,13 @@ const LastTimePanel = memo(function LastTimePanel({
     if (from === target) return
     const a = Animated.timing(heightAnim, {
       toValue: target,
-      // Closing is quicker: the user has already read it and wants the space.
-      // The shrink case is also the mode switch, and LAST_TIME_COLLAPSE_MS is
-      // exactly what the save path defers its mutation by.
-      duration: from != null && target < from ? LAST_TIME_COLLAPSE_MS : 240,
+      // One duration in both directions, and the same one the opacity
+      // animations use. Growing used to take 240ms while the layers faded over
+      // 190ms, so the chips finished appearing 50ms before the card finished
+      // opening and spent that time cramped against the clip. It is also the
+      // value the save path defers its mutation by, so the first set's switch
+      // still gets a clear thread.
+      duration: LAST_TIME_COLLAPSE_MS,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: false, // height is a layout prop
     })
@@ -2196,6 +2319,7 @@ const LastTimePanel = memo(function LastTimePanel({
   // The last-time guard is unchanged. Position mode adds nothing to it: a card
   // that survives to position mode always had records to get there.
   if (!last && top.length === 0) return null
+
 
   const collapsedLine = last
     ? last.sets
@@ -2226,23 +2350,75 @@ const LastTimePanel = memo(function LastTimePanel({
             pressed && { opacity: 0.55 },
           ]}
         >
-          <Text style={styles.lastTimeLabel}>
-            {positionMode ? "Top weights" : "Last time"}
-          </Text>
+          {/* Both mode labels are always mounted and cross-fade on modeAnim,
+              the same native-driver value the body layers use, so the header
+              changes on the body's clock instead of cutting a frame ahead of
+              it. The longer one sits in flow and sets the width; the other is
+              stacked on top of it. */}
+          <View>
+            <Animated.Text
+              style={[styles.lastTimeLabel, { opacity: modeAnim }]}
+            >
+              Top weights
+            </Animated.Text>
+            <Animated.Text
+              style={[
+                styles.lastTimeLabel,
+                styles.lastTimeStackLeft,
+                { opacity: modeOff },
+              ]}
+            >
+              Last time
+            </Animated.Text>
+          </View>
           {/* The position number and the "ago" label share one slot: both say
               which session the rows below belong to, and only one mode has an
-              answer at a time. The number changes while `swap` holds it at 0,
-              so the text never visibly mutates mid-fade. */}
-          {positionMode ? (
-            <Animated.Text
-              style={[styles.lastTimePos, { opacity: swap }]}
-              numberOfLines={1}
+              answer at a time. Same treatment: both mounted, cross-faded on
+              modeAnim. Within position mode the number cross-fades between
+              two copies on `swap`, exactly like the rows below it, rather
+              than cutting to nothing and fading back in. */}
+          {/* Every piece here is in flow, and the later ones are pulled up by
+              one line height so they overlap the first. That is deliberate:
+              an absolutely positioned Text is clipped to its parent's width,
+              and the slot's width was being set by "Set N" alone - so a
+              "4 days ago" label pinned to its right edge came out as "4…".
+              In flow, the slot is as wide as its widest child, and all of
+              them are right-aligned within it. */}
+          <View style={styles.lastTimeSlot}>
+            {last && (
+              <Animated.Text
+                style={[styles.lastTimeAgo, { opacity: modeOff }]}
+                numberOfLines={1}
+              >
+                {agoLabel(last.date)}
+              </Animated.Text>
+            )}
+            <Animated.View
+              style={[
+                { opacity: modeAnim, alignItems: "flex-end" },
+                last && styles.lastTimeOverlap,
+              ]}
             >
-              Set {shownPos}
-            </Animated.Text>
-          ) : (
-            last && <Text style={styles.lastTimeAgo}>{agoLabel(last.date)}</Text>
-          )}
+              <Animated.Text
+                style={[styles.lastTimePos, { opacity: swap }]}
+                numberOfLines={1}
+              >
+                Set {displayPos}
+              </Animated.Text>
+              {prevPos != null && (
+                <Animated.Text
+                  style={[
+                    styles.lastTimePos,
+                    styles.lastTimeOverlap,
+                    { opacity: swapOff },
+                  ]}
+                  numberOfLines={1}
+                >
+                  Set {prevPos}
+                </Animated.Text>
+              )}
+            </Animated.View>
+          </View>
           <Animated.View
             style={{
               transform: [
@@ -2262,24 +2438,52 @@ const LastTimePanel = memo(function LastTimePanel({
             />
           </Animated.View>
         </Pressable>
-        {/* The calendar shortcut opens the previous session, so it leaves with
-            the chips when position mode takes over. */}
-        {!positionMode && last && onPressDate && (
-          <Pressable
-            onPress={() => onPressDate(last.date)}
-            hitSlop={10}
-            unstable_pressDelay={0}
-            style={({ pressed }) => [
-              styles.lastTimeCalBtn,
-              pressedStyle(pressed),
-            ]}
+        {/* The calendar shortcut opens the previous session, so it goes with
+            the chips when position mode takes over. It fades rather than
+            unmounting, and keeps its width while faded, so the chevron beside
+            it does not jump sideways on the switch. */}
+        {last && onPressDate && (
+          <Animated.View
+            // Every animated prop on this one view is JS-driven, opacity
+            // included. Width and margin are layout props and cannot ride the
+            // native driver; and a view cannot mix drivers - once a native
+            // animation touches it, React Native moves all of its animated
+            // props native and the JS-driven one throws at .start(). So the
+            // opacity here comes from modeLayout too, not modeAnim. It is
+            // the same value on the same clock, only the driver differs.
+            style={{
+              opacity: modeLayout.interpolate({
+                inputRange: [0, 1],
+                outputRange: [1, 0],
+              }),
+              overflow: "hidden",
+              width: modeLayout.interpolate({
+                inputRange: [0, 1],
+                outputRange: [CAL_BTN_W, 0],
+              }),
+              marginLeft: modeLayout.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0, -theme.spacing[2]],
+              }),
+            }}
+            pointerEvents={positionMode ? "none" : "auto"}
           >
-            <Ionicons
-              name="calendar-outline"
-              size={15}
-              color={theme.colors.muted}
-            />
-          </Pressable>
+            <Pressable
+              onPress={() => onPressDate(last.date)}
+              hitSlop={10}
+              unstable_pressDelay={0}
+              style={({ pressed }) => [
+                styles.lastTimeCalBtn,
+                pressedStyle(pressed),
+              ]}
+            >
+              <Ionicons
+                name="calendar-outline"
+                size={15}
+                color={theme.colors.muted}
+              />
+            </Pressable>
+          </Animated.View>
         )}
       </View>
 
@@ -2309,14 +2513,13 @@ const LastTimePanel = memo(function LastTimePanel({
         {/* Position layer. Stays mounted in last-time mode so its height is
             already measured when the first set switches modes. */}
         <Animated.View
-          onLayout={measure("position")}
           pointerEvents={positionMode && open ? "auto" : "none"}
           style={[
             !inFlow("position") && styles.lastTimeLayer,
             { opacity: positionOpacity, gap: theme.spacing[2] },
           ]}
         >
-          <View style={styles.posRowsBox}>
+          <View style={{ height: positionLayerH }}>
             {prevPos != null && (
               <Animated.View
                 pointerEvents="none"
@@ -2334,30 +2537,12 @@ const LastTimePanel = memo(function LastTimePanel({
             )}
             <Animated.View style={[styles.posRowsLayer, { opacity: swap }]}>
               <PositionRows
-                records={byPosition.get(shownPos) ?? []}
-                position={shownPos}
+                records={byPosition.get(displayPos) ?? []}
+                position={displayPos}
                 unit={unit}
               />
             </Animated.View>
           </View>
-          {onShowMore && (
-            <Pressable
-              onPress={onShowMore}
-              hitSlop={8}
-              unstable_pressDelay={0}
-              style={({ pressed }) => [
-                styles.lastTimeMore,
-                pressed && { opacity: 0.55 },
-              ]}
-            >
-              <Text style={styles.lastTimeMoreText}>Show more</Text>
-              <Ionicons
-                name="chevron-forward"
-                size={13}
-                color={theme.colors.muted}
-              />
-            </Pressable>
-          )}
         </Animated.View>
 
         {/* Last-time layer. */}
@@ -2403,28 +2588,41 @@ const LastTimePanel = memo(function LastTimePanel({
                   <Text style={styles.topDate}>{recordDate(r.date)}</Text>
                 </View>
               ))}
-              {onShowMore && (
-                <Pressable
-                  onPress={onShowMore}
-                  hitSlop={8}
-                  unstable_pressDelay={0}
-                  style={({ pressed }) => [
-                    styles.lastTimeMore,
-                    pressed && { opacity: 0.55 },
-                  ]}
-                >
-                  <Text style={styles.lastTimeMoreText}>Show more</Text>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={13}
-                    color={theme.colors.muted}
-                  />
-                </Pressable>
-              )}
             </>
           )}
         </Animated.View>
       </Animated.View>
+
+      {/* One "Show more", outside the animated body and below it.
+       *
+       *  It used to live inside each layer, which meant two of them existed at
+       *  once, at different heights, cross-fading during the mode switch. Both
+       *  carry a hairline top border, so the eye read the line as jumping up
+       *  the card rather than moving. One element in flow under the body has
+       *  nothing to cross-fade against: it simply rides up as the body's
+       *  animated height shrinks, on the same clock.
+       *
+       *  It now stays visible while the card is collapsed. That is the
+       *  trade: hiding it would need either a mount/unmount mid-animation
+       *  (another jump) or a second height animation of its own. */}
+      {onShowMore && (
+        <Pressable
+          onPress={onShowMore}
+          hitSlop={8}
+          unstable_pressDelay={0}
+          style={({ pressed }) => [
+            styles.lastTimeMore,
+            pressed && { opacity: 0.55 },
+          ]}
+        >
+          <Text style={styles.lastTimeMoreText}>Show more</Text>
+          <Ionicons
+            name="chevron-forward"
+            size={13}
+            color={theme.colors.muted}
+          />
+        </Pressable>
+      )}
     </View>
   )
 })
@@ -3898,6 +4096,80 @@ function NumericField({
   )
 }
 
+// Removing the final rows replaces the whole list, including its border and
+// timer. Measure both states so the replacement never passes through zero.
+function SetListEmptyTransition({
+  empty,
+  emptyContent,
+  onEmptyShown,
+  children,
+}: {
+  empty: boolean
+  emptyContent: ReactNode
+  onEmptyShown: () => void
+  children: ReactNode
+}) {
+  const progress = useRef(new Animated.Value(empty ? 1 : 0)).current
+  const [listHeight, setListHeight] = useState(0)
+  const [emptyHeight, setEmptyHeight] = useState(0)
+  const onComplete = useRef(onEmptyShown)
+  onComplete.current = onEmptyShown
+  useEffect(() => {
+    if (!empty) {
+      progress.setValue(0)
+      return
+    }
+    if (!emptyHeight) return
+    const animation = Animated.timing(progress, {
+      toValue: 1,
+      duration: 280,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: false,
+    })
+    animation.start(({ finished }) => {
+      if (finished) onComplete.current()
+    })
+    return () => animation.stop()
+  }, [empty, emptyHeight, progress])
+
+  return (
+    <Animated.View style={empty && emptyHeight > 0 ? {
+      height: progress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [listHeight || emptyHeight, emptyHeight],
+      }),
+      overflow: "hidden",
+    } : undefined}>
+      <Animated.View
+        pointerEvents={empty ? "none" : "auto"}
+        accessibilityElementsHidden={empty}
+        importantForAccessibility={empty ? "no-hide-descendants" : "auto"}
+        onLayout={(event) => {
+          if (!empty) setListHeight(event.nativeEvent.layout.height)
+        }}
+        style={[
+          empty ? { position: "absolute", top: 0, left: 0, right: 0 } : undefined,
+          { opacity: progress.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) },
+        ]}
+      >
+        {children}
+      </Animated.View>
+      <Animated.View
+        pointerEvents="none"
+        accessibilityElementsHidden={!empty}
+        importantForAccessibility={empty ? "auto" : "no-hide-descendants"}
+        onLayout={(event) => setEmptyHeight(event.nativeEvent.layout.height)}
+        style={{ position: "absolute", top: 0, left: 0, right: 0, opacity: progress }}
+      >
+        {emptyContent}
+      </Animated.View>
+    </Animated.View>
+  )
+}
+
+// Three 36px buttons, two 8px gaps, and 8px padding on each side.
+const SET_ACTIONS_WIDTH = 140
+
 function SetList({
   sets,
   unit,
@@ -3910,6 +4182,7 @@ function SetList({
   selectedIds,
   pendingAdd,
   leavingIds,
+  onDeleteExited,
   skipFadeIds,
   onLongPress,
   onSelectToggle,
@@ -3938,6 +4211,7 @@ function SetList({
     position: number
   } | null
   leavingIds: Set<number>
+  onDeleteExited: (id: number) => void
   skipFadeIds: Set<number>
   onLongPress: (s: WorkoutSet) => void
   onSelectToggle: (id: number) => void
@@ -3963,26 +4237,20 @@ function SetList({
     }
   }
 
-  if (!sets.length && !pendingAdd) {
-    // Even with nothing logged here, keep the ticker visible when there's a
-    // logged set elsewhere in this workout — bench → pushdowns shouldn't
-    // reset the user's rest clock until they actually log on pushdowns.
-    const emptyAnchorMs = prevWorkoutLastSetIso
-      ? Date.parse(prevWorkoutLastSetIso)
-      : NaN
-    return (
-      <View>
-        <View style={[styles.card, { borderStyle: "dashed", alignItems: "center" }]}>
-          <Text style={{ color: theme.colors.muted, fontSize: theme.fontSize.sm }}>
-            No sets logged yet. Log your first set above.
-          </Text>
-        </View>
-        {showTimeSinceLastSet && Number.isFinite(emptyAnchorMs) && (
-          <TimeSinceLastSet anchorMs={emptyAnchorMs} />
-        )}
+  const emptying = !pendingAdd && sets.every((set) => leavingIds.has(set.id))
+  const emptyAnchorMs = prevWorkoutLastSetIso ? Date.parse(prevWorkoutLastSetIso) : NaN
+  const emptyContent = (
+    <View>
+      <View style={[styles.card, { borderStyle: "dashed", alignItems: "center" }]}>
+        <Text style={{ color: theme.colors.muted, fontSize: theme.fontSize.sm }}>
+          No sets logged yet. Log your first set above.
+        </Text>
       </View>
-    )
-  }
+      {showTimeSinceLastSet && Number.isFinite(emptyAnchorMs) && (
+        <TimeSinceLastSet anchorMs={emptyAnchorMs} />
+      )}
+    </View>
+  )
 // Per-row rest labels. Anchor on the most recent prior *logged* set:
   // planned rows have synthetic created_at and shouldn't anchor real rest.
   // Set 1's rest comes from the last set of the previous workout.
@@ -4008,7 +4276,16 @@ function SetList({
   const showPlaceholder = pendingAdd != null
 
   return (
-    <View style={styles.setListCard}>
+    <SetListEmptyTransition
+      empty={emptying}
+      emptyContent={emptyContent}
+      onEmptyShown={() => {
+        for (const set of sets) {
+          if (leavingIds.has(set.id)) onDeleteExited(set.id)
+        }
+      }}
+    >
+    {(sets.length > 0 || pendingAdd) && <View style={styles.setListCard}>
       {sets.map((s, i) => {
         // Hide the new real row only while the placeholder is still showing.
         // Once `realArrivedBeforeCleanup` is true (placeholder dropped),
@@ -4146,13 +4423,13 @@ function SetList({
         // those have their own Hit/Skip flow above).
         if (s.is_planned)
           return (
-            <SetRowFade key={s.id} leaving={leaving} skipFade={skipFade}>
+            <SetRowFade key={s.id} leaving={leaving} parentHandlesExit={emptying} skipFade={skipFade} onExited={() => onDeleteExited(s.id)}>
               <View>{body}</View>
             </SetRowFade>
           )
 
         return (
-          <SetRowFade key={s.id} leaving={leaving} skipFade={skipFade}>
+          <SetRowFade key={s.id} leaving={leaving} parentHandlesExit={emptying} skipFade={skipFade} onExited={() => onDeleteExited(s.id)}>
           <Swipeable
             ref={(ref) => {
               swipeableRefs.current.set(s.id, ref)
@@ -4167,25 +4444,12 @@ function SetList({
             // natively animatable, so there's no JS/native mixing on the
             // same node.
             useNativeAnimations={true}
-            // OVERSHOOT PROFILE — the row tracks the finger 1:1 and
-            // the release spring is allowed to overshoot the open/
-            // closed target slightly before settling. Tuned together:
-            //   - friction=1: 1:1 finger tracking
-            //   - overshootFriction=6: dampens the rubber-band when
-            //     dragging past the action width — without it, drag
-            //     past 140px feels rubbery in a bad way
-            //   - bounciness=8 + speed=14: snappy spring with a small
-            //     natural bounce on settle (~250ms total). Stays in
-            //     the bounciness/speed family — RN throws if a config
-            //     mixes that with tension/friction or stiffness.
-            //   - overshootClamping=false: lets the spring actually
-            //     oscillate (this is the whole point of the overshoot
-            //     profile — clamping=true would freeze it at target)
+            // Require a horizontal gesture before taking it from the scroll
+            // view, then settle based on half the actual action-tray width.
             friction={1.4}
-            rightThreshold={10}
-            dragOffsetFromRightEdge={5}
-            activeOffsetX={[-5, 5]}
-            failOffsetY={[-30, 30]}
+            rightThreshold={SET_ACTIONS_WIDTH / 2}
+            activeOffsetX={[-12, 12]}
+            failOffsetY={[-12, 12]}
             overshootLeft={false}
             overshootRight={false}
             animationOptions={{
@@ -4201,50 +4465,27 @@ function SetList({
                 openSwipeableRef.current = null
               }
             }}
-            // "One-open-at-a-time" close, fired from three callbacks
-            // so the old row closes as early as the legacy Swipeable
-            // will let us. The ref-set in `onSwipeableWillOpen` is
-            // critical — it tracks the row as "open" the moment its
-            // open-spring starts, not when it settles. Without that,
-            // a second swipe started during the first row's in-flight
-            // open-spring sees a null ref and can't close it.
-            //   - onSwipeableOpenStartDrag: drag begins on a closed
-            //     row — earliest signal, runs the close in parallel
-            //     with the new gesture
-            //   - onSwipeableWillOpen: gesture committed past the
-            //     threshold; spring is starting. Mark this row open
-            //     NOW so it's closeable even mid-spring.
-            //   - onSwipeableOpen: spring settled (fallback)
+            // Claim the open row when its spring starts. A completion
+            // callback from an older swipe must not close a newer gesture.
             onSwipeableOpenStartDrag={() => closeOtherOpenRow(s.id)}
             onSwipeableWillOpen={() => {
               closeOtherOpenRow(s.id)
               openSwipeableRef.current =
                 swipeableRefs.current.get(s.id) ?? null
             }}
-            onSwipeableOpen={() => {
-              closeOtherOpenRow(s.id)
-              openSwipeableRef.current =
-                swipeableRefs.current.get(s.id) ?? null
-            }}
             renderRightActions={(progress, dragX) => {
-              // Three 36-wide circular buttons + 8px gaps + 8px padding
-              // = 140 total reveal width. The buttons sit on a transparent
-              // track so they read as row tools rather than three solid
-              // stoplight blocks.
+              // Keep the tray's movement tied to the row's translated
+              // position, including the release spring.
               const translateX = dragX.interpolate({
-                inputRange: [-140, 0],
-                outputRange: [0, 140],
+                inputRange: [-SET_ACTIONS_WIDTH, 0],
+                outputRange: [0, SET_ACTIONS_WIDTH],
                 extrapolate: "clamp",
               })
-              // Combine translateX + opacity on a single Animated.View
-              // wrapping all three buttons. Going from 4 native-animated
-              // layers (parent + 3 per-button) to 1 means the compositor
-              // does one GPU operation per frame instead of four — the
-              // single biggest source of swipe judder on Android, where
-              // each Animated layer is a separate composition target.
+              // Reveal throughout the drag instead of flashing to full
+              // opacity in the first quarter of the swipe.
               const groupOpacity = progress.interpolate({
-                inputRange: [0, 0.05, 0.25, 1],
-                outputRange: [0, 0, 1, 1],
+                inputRange: [0, 0.8, 1],
+                outputRange: [0, 1, 1],
                 extrapolate: "clamp" as const,
               })
               return (
@@ -4390,7 +4631,8 @@ function SetList({
         if (anchorMs == null) return null
         return <TimeSinceLastSet anchorMs={anchorMs} />
       })()}
-    </View>
+    </View>}
+    </SetListEmptyTransition>
   )
 }
 
@@ -4613,10 +4855,15 @@ const styles = StyleSheet.create({
   // or not a position has that many records, which is what makes every
   // position's body the same height - so a swap from set 2 to set 3 moves no
   // layout, only opacity.
-  posRowsBox: { height: POSITION_ROWS_H },
+  // Deliberately NOT clipped. During a swap into the empty state the box is
+  // already sized for the incoming one-line copy, so the outgoing three rows
+  // overflow it. Clipping here cut them to one line on the first frame, before
+  // the card had moved at all, which read as the rows being chopped off. Left
+  // to overflow, they are instead revealed away by the card body's own
+  // animated height, which is clipped and is the thing actually in motion.
   posRowsLayer: { position: "absolute", top: 0, left: 0, right: 0 },
   posRow: { height: POSITION_ROW_H },
-  posEmptyBox: { height: POSITION_ROWS_H, justifyContent: "center" },
+  posEmptyLine: { height: POSITION_ROW_H, lineHeight: POSITION_ROW_H },
   lastTimeHead: {
     flexDirection: "row",
     alignItems: "center",
@@ -4645,21 +4892,32 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   // Pushed right by auto margin so the calendar button keeps the far edge.
-  lastTimeAgo: {
+  // Holds the ago label and the set number, stacked; the set number is in
+  // flow and sets the slot's width, the ago label is pinned to its right edge
+  // and may extend left into the row's slack.
+  lastTimeSlot: {
     marginLeft: "auto",
+    alignItems: "flex-end",
+  },
+  lastTimeStackLeft: { position: "absolute", top: 0, left: 0 },
+  // Pulls a stacked line up over the one before it. Needs the explicit
+  // lineHeight on the two texts below, or the overlap would not be exact.
+  lastTimeOverlap: { marginTop: -SLOT_LINE_H },
+  lastTimeAgo: {
     color: theme.colors.muted,
     fontSize: theme.fontSize.xs,
+    lineHeight: SLOT_LINE_H,
   },
-  // Same slot as lastTimeAgo, its own style so bolding the set number does not
-  // also bold the "5 days ago" label that shares the slot in last-time mode.
+  // Its own style so bolding the set number does not also bold the "5 days
+  // ago" label that shares the slot in last-time mode.
   lastTimePos: {
-    marginLeft: "auto",
     color: theme.colors.foreground,
     fontSize: theme.fontSize.xs,
+    lineHeight: SLOT_LINE_H,
     fontWeight: "800",
   },
   lastTimeCalBtn: {
-    width: 26,
+    width: CAL_BTN_W,
     height: 26,
     borderRadius: 13,
     alignItems: "center",
@@ -4886,6 +5144,7 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   setSwipeActions: {
+    width: SET_ACTIONS_WIDTH,
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "stretch",
