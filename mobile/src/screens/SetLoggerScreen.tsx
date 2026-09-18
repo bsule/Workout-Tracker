@@ -33,6 +33,7 @@ import Svg, { Circle, G, Line as SvgLine, Path as SvgPath, Text as SvgText } fro
 // react-native-reanimated native init at app boot — which is currently
 // throwing "Exception in HostFunction" inside Expo Go on this device.
 import { Swipeable } from "react-native-gesture-handler"
+import { SwipeHold } from "../animation/SwipeHold"
 import {
   addExerciseToWorkout,
   batchMutations,
@@ -292,9 +293,6 @@ const FORM_PLACEHOLDER_STYLE = {
 //
 // `leaving`: when true, fades the row to 0 (used for delete-then-mutate so
 //   the user sees the fade *before* the heavy mutation/commit blocks JS).
-// `skipFade`: mounts at full opacity instead of fading in. Used when a real
-//   row is replacing an optimistic placeholder — the placeholder already
-//   showed the fade, so the real row should appear seamlessly.
 function IndexCol({
   display,
   isPr,
@@ -356,16 +354,33 @@ function IndexCol({
   )
 }
 
+// TEMPORARY swipe-freeze diagnostics. Remove after the investigation.
+const SWIPE_DBG = __DEV__
+const dbgT0 = Date.now()
+function dbg(msg: string) {
+  if (!SWIPE_DBG) return
+  console.log(`[swipe-dbg] +${Date.now() - dbgT0}ms ${msg}`)
+}
+
+// A handler with a fixed identity that always calls the latest closure.
+// The ref is written during render, which this file already relies on for
+// SetRowFade's exit callback.
+function useStableCallback<A extends unknown[], R>(
+  fn: (...args: A) => R
+): (...args: A) => R {
+  const latest = useRef(fn)
+  latest.current = fn
+  return useCallback((...args: A) => latest.current(...args), [])
+}
+
 function SetRowFade({
   children,
   leaving,
-  skipFade,
   onExited,
   parentHandlesExit = false,
 }: {
   children: ReactNode
   leaving?: boolean
-  skipFade?: boolean
   onExited?: () => void
   parentHandlesExit?: boolean
 }) {
@@ -377,15 +392,15 @@ function SetRowFade({
   const finishExit = useCallback(() => {
     if (exitFinished.current) return
     exitFinished.current = true
+    dbg("row collapse done")
     exitCallback.current?.()
   }, [])
-  const opacity = useRef(new Animated.Value(skipFade ? 1 : 0)).current
+  const opacity = useRef(new Animated.Value(0)).current
   // Small translateY so rows visibly settle into / lift out of place
   // instead of just changing opacity in a fixed slot. Distance is kept
   // tiny (6px) so it reads as polish, not a slide.
-  const translateY = useRef(new Animated.Value(skipFade ? 0 : 6)).current
+  const translateY = useRef(new Animated.Value(6)).current
   useEffect(() => {
-    if (skipFade) return
     Animated.parallel([
       Animated.timing(opacity, {
         toValue: 1,
@@ -400,11 +415,12 @@ function SetRowFade({
         useNativeDriver: true,
       }),
     ]).start()
-    // Only run on mount — skipFade is captured at mount via useRef's initial.
+    // Mount only: the fade-in belongs to the row's first frame.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   useEffect(() => {
     if (!leaving || parentHandlesExit || measuredHeight == null) return
+    dbg("row collapse start (JS-driven height)")
     // Own the row's layout instead of relying on configureNext, which can
     // be consumed by another animated card's layout pass.
     const animation = Animated.parallel([
@@ -453,7 +469,6 @@ function SetRowFade({
     </Animated.View>
   )
 }
-
 type Metric = "one_rm" | "heaviest" | "avg_weight" | "per_set"
 
 const METRIC_OPTIONS: {
@@ -681,11 +696,12 @@ export function SetLoggerScreen({ route, navigation }: any) {
 
   // Optimistic add: a placeholder row that mounts (and starts its fade-in)
   // *before* api.addSet runs, so the user sees feedback on the same frame as
-  // the Save click instead of waiting for the heavy mutation/commit. When
-  // the real row lands, we drop the placeholder and mark the new set's id
-  // for `skipFade` so it appears at full opacity (no double-fade flicker).
-  // `baseIds` snapshots the set ids at click-time — that's how we detect the
-  // new row even if a concurrent delete keeps `sets.length` unchanged.
+  // the Save click instead of waiting for the heavy mutation/commit. SetList
+  // renders the placeholder as a real SetRow and, once the real row lands,
+  // renders that row under the placeholder's key, so the instance and its
+  // fade-in carry on and nothing swaps. `baseIds` snapshots the set ids at
+  // click time, which is how the new row is detected even if a concurrent
+  // delete keeps `sets.length` unchanged.
 
   // The planned-set save path has no `pendingAdd` placeholder: the row is
   // already in `sets`, it just flips from planned to logged when the mutation
@@ -705,11 +721,41 @@ export function SetLoggerScreen({ route, navigation }: any) {
     isPr: boolean
     isPosPr: boolean
     position: number
+    planned: boolean
   } | null>(null)
   const pendingAddRef = useRef(pendingAdd)
   useEffect(() => {
     pendingAddRef.current = pendingAdd
   }, [pendingAdd])
+
+  // The delete commit and the re-render behind it block JS. A swipe on
+  // another row that releases inside that window sits frozen mid-swipe until
+  // JS is free, so the commit waits while any row is being dragged.
+  const swipeHold = useRef(new SwipeHold()).current
+  useEffect(() => {
+    swipeHold.activate()
+    return () => swipeHold.dispose()
+  }, [swipeHold])
+  // TEMPORARY: JS thread stall monitor and per-render timer.
+  const dbgRenderStart = Date.now()
+  useLayoutEffect(() => {
+    const ms = Date.now() - dbgRenderStart
+    if (ms > 8) dbg(`screen render+commit ${ms}ms`)
+  })
+  useEffect(() => {
+    if (!SWIPE_DBG) return
+    let last = Date.now()
+    let raf = 0
+    const tick = () => {
+      const now = Date.now()
+      const gap = now - last
+      if (gap > 40) dbg(`JS stall ${gap}ms`)
+      last = now
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [])
 
   // On leave, if the user never logged a set on this exercise, drop the
   // empty WE so it doesn't litter the day's view as a ghost "Add first set"
@@ -720,6 +766,8 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // workout (no gym, no started_at, not planned), delete the workout too.
   useEffect(() => {
     const unsub = navigation.addListener("beforeRemove", () => {
+      // Deletes still held for a swipe must land before the checks below.
+      swipeHold.flush()
       if (pendingAddRef.current) return
       const w = getWorkoutQ(workoutId)
       if (!w) return
@@ -747,7 +795,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
       }
     })
     return unsub
-  }, [navigation, workoutId, weId])
+  }, [navigation, workoutId, weId, swipeHold])
 
   // Stable identity so HistoryDayCard's `onPressDate` prop doesn't change on
   // unrelated parent re-renders, keeping the memoized day cards from
@@ -778,25 +826,13 @@ export function SetLoggerScreen({ route, navigation }: any) {
     [navigation]
   )
 
-  const [skipFadeIds, setSkipFadeIds] = useState<Set<number>>(() => new Set())
+  // Drop the placeholder as soon as the real row lands. SetList already
+  // renders the real row under the placeholder's key, so this is state
+  // cleanup only: the row instance and its fade-in are not touched.
   useEffect(() => {
-    if (!pendingAdd || !pendingAdd.baseIds) return
+    if (!pendingAdd) return
     const baseIds = pendingAdd.baseIds
-    const newSet = sets.find((s) => !baseIds.has(s.id))
-    if (!newSet) return
-    setSkipFadeIds((prev) => {
-      const n = new Set(prev)
-      n.add(newSet.id)
-      return n
-    })
-    // Hold the placeholder visible until its fade-in fully completes
-    // (~220ms) before dropping it. If we cleared `pendingAdd` the moment
-    // the real row arrived (often <50ms in), the placeholder unmounts
-    // mid-fade and the real row pops in at full opacity — a visible jump
-    // from partial opacity to 1. Waiting out the fade means the swap
-    // happens at opacity 1 on both sides, so it's invisible.
-    const t = setTimeout(() => setPendingAdd(null), 240)
-    return () => clearTimeout(t)
+    if (sets.some((s) => !baseIds.has(s.id))) setPendingAdd(null)
   }, [sets, pendingAdd])
 
   // Keep rows mounted until their height has collapsed, then commit the
@@ -814,21 +850,31 @@ export function SetLoggerScreen({ route, navigation }: any) {
   function startDeleteMany(requestedIds: number[]) {
     const ids = [...new Set(requestedIds)].filter((id) => !leavingIdsRef.current.has(id))
     if (ids.length === 0) return
+    dbg(`delete tap ids=${ids.join(",")}`)
     if (editingSetId != null && ids.includes(editingSetId)) cancelEdit()
     const remaining = new Set(ids)
     for (const id of ids) {
       deleteCompletions.current.set(id, () => {
         if (!remaining.delete(id) || remaining.size > 0) return
-        batchMutations(() => {
-          for (const deletedId of ids) api.deleteSet(deletedId)
+        if (swipeHold.busy) dbg(`commit held, swipe in flight ids=${ids.join(",")}`)
+        swipeHold.run(() => {
+          // Prune the ref only. The store emit below re-renders the screen
+          // once with the rows gone from `sets`; a setLeavingIds here would
+          // land on a second React lane and render the whole screen again.
+          // A stale id left in the state matches no rendered row, and the
+          // state catches up from the ref on the next delete.
+          const next = new Set(leavingIdsRef.current)
+          for (const deletedId of ids) {
+            next.delete(deletedId)
+            deleteCompletions.current.delete(deletedId)
+          }
+          leavingIdsRef.current = next
+          const c0 = Date.now()
+          batchMutations(() => {
+            for (const deletedId of ids) api.deleteSet(deletedId)
+          })
+          dbg(`store commit ${Date.now() - c0}ms ids=${ids.join(",")}`)
         })
-        const next = new Set(leavingIdsRef.current)
-        for (const deletedId of ids) {
-          next.delete(deletedId)
-          deleteCompletions.current.delete(deletedId)
-        }
-        leavingIdsRef.current = next
-        setLeavingIds(next)
       })
     }
     const next = new Set(leavingIdsRef.current)
@@ -1095,10 +1141,8 @@ export function SetLoggerScreen({ route, navigation }: any) {
       if (leavingIds.has(s.id)) continue
       logged++
     }
-    // `pendingAdd` outlives the real row by 240ms so the placeholder can finish
-    // its fade (see the skipFadeIds effect). Counting it unconditionally would
-    // double-count for that window, so only count it while the real row has yet
-    // to land - the same test that effect uses.
+    // `pendingAdd` clears one render after the real row lands. Count it only
+    // while the real row has yet to land, so that render never double-counts.
     if (
       pendingAdd?.baseIds &&
       !sets.some((s) => !pendingAdd.baseIds.has(s.id))
@@ -1153,15 +1197,27 @@ export function SetLoggerScreen({ route, navigation }: any) {
   }
 
   function toggleSelected(id: number) {
-    const next = selectedIds.includes(id)
-      ? selectedIds.filter((x) => x !== id)
-      : [...selectedIds, id]
-    setSelectedIds(next)
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    )
   }
 
   function clearSelection() {
     setSelectedIds([])
   }
+
+  // Row callbacks with a fixed identity. SetList and SetRow are memoized, so
+  // a fresh closure per render would re-render every row on every keystroke
+  // in the form and on every store commit.
+  const onRowLongPress = useStableCallback((s: WorkoutSet) => {
+    if (s.is_planned) return
+    if (!selectedIds.includes(s.id)) toggleSelected(s.id)
+  })
+  const onRowSelectToggle = useStableCallback(toggleSelected)
+  const onRowPlannedTap = useStableCallback((s: WorkoutSet) => setActivePlannedSet(s))
+  const onRowEdit = useStableCallback(startEdit)
+  const onRowAddNote = useStableCallback(openNoteEditor)
+  const onRowDelete = useStableCallback((s: WorkoutSet) => startDelete(s.id))
 
   function confirmDeleteSelected() {
     if (selectedIds.length === 0) return
@@ -1267,6 +1323,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
           isPr: false,
           isPosPr: false,
           position: 0,
+          planned: true,
         })
         requestAnimationFrame(() => {
           api.addPlannedSet(weId, { weight: w, reps: r })
@@ -1313,6 +1370,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
             isPr: pr.isPr,
             isPosPr: pr.isPosPr,
             position: pr.position,
+            planned: false,
           })
           // Capture resolved at click time. If still null, this is the
           // first save on a brand-new workout/exercise — lazy-create the
@@ -1600,16 +1658,13 @@ export function SetLoggerScreen({ route, navigation }: any) {
               pendingAdd={pendingAdd}
               leavingIds={leavingIds}
               onDeleteExited={finishRowDelete}
-              skipFadeIds={skipFadeIds}
-              onLongPress={(s) => {
-                if (s.is_planned) return
-                if (!selectedIds.includes(s.id)) toggleSelected(s.id)
-              }}
-              onSelectToggle={toggleSelected}
-              onPlannedTap={(s) => setActivePlannedSet(s)}
-              onEdit={startEdit}
-              onAddNote={openNoteEditor}
-              onDelete={(s) => startDelete(s.id)}
+              swipeHold={swipeHold}
+              onLongPress={onRowLongPress}
+              onSelectToggle={onRowSelectToggle}
+              onPlannedTap={onRowPlannedTap}
+              onEdit={onRowEdit}
+              onAddNote={onRowAddNote}
+              onDelete={onRowDelete}
             />
           )}
           {tab === "workout" && firstPaintDone && showLastTime && (
@@ -4170,7 +4225,356 @@ function SetListEmptyTransition({
 // Three 36px buttons, two 8px gaps, and 8px padding on each side.
 const SET_ACTIONS_WIDTH = 140
 
-function SetList({
+// Compare only what a row renders. `getWorkoutQ` rebuilds every view object
+// on each commit and `recomputePrs` spreads every candidate row, so identity
+// never matches across commits; a field compare is what lets an untouched row
+// skip its render (and its Swipeable's) when a sibling is added or deleted.
+function sameSet(a: WorkoutSet, b: WorkoutSet): boolean {
+  return (
+    a.id === b.id &&
+    a.weight === b.weight &&
+    a.reps === b.reps &&
+    a.is_pr === b.is_pr &&
+    a.was_pr === b.was_pr &&
+    a.is_position_pr === b.is_position_pr &&
+    a.was_position_pr === b.was_position_pr &&
+    a.note === b.note &&
+    a.is_planned === b.is_planned &&
+    a.created_at === b.created_at
+  )
+}
+
+// Open-row bookkeeping shared by every row: each row's Swipeable, and the one
+// that is currently open so a sibling can close it. Plain mutable refs, no
+// state, so a swipe never re-renders the list.
+interface SwipeRegistry {
+  refs: Map<number, Swipeable | null>
+  open: Swipeable | null
+}
+
+type SetRowProps = {
+  s: WorkoutSet
+  index: number
+  isLast: boolean
+  // The optimistic row: no swipe, no press, until the store has the set.
+  pending: boolean
+  isSelected: boolean
+  selectionMode: boolean
+  leaving: boolean
+  emptying: boolean
+  restLabel: string | null
+  unit: "kg" | "lb"
+  isCardio: boolean
+  showOneRm: boolean
+  showPositionPrs: boolean
+  registry: SwipeRegistry
+  swipeHold: SwipeHold
+  onLongPress: (s: WorkoutSet) => void
+  onSelectToggle: (id: number) => void
+  onPlannedTap: (s: WorkoutSet) => void
+  onEdit: (s: WorkoutSet) => void
+  onAddNote: (s: WorkoutSet) => void
+  onDelete: (s: WorkoutSet) => void
+  onDeleteExited: (id: number) => void
+}
+
+function setRowPropsEqual(prev: SetRowProps, next: SetRowProps): boolean {
+  for (const key of Object.keys(next) as (keyof SetRowProps)[]) {
+    if (key === "s") continue
+    if (!Object.is(prev[key], next[key])) return false
+  }
+  return sameSet(prev.s, next.s)
+}
+
+// One set row: the pressable body, and for logged sets the Swipeable with
+// its action tray. Memoized so a store commit re-renders only the rows whose
+// data or position changed; every callback it receives is identity-stable.
+const SetRow = memo(function SetRow({
+  s,
+  index,
+  isLast,
+  pending,
+  isSelected,
+  selectionMode,
+  leaving,
+  emptying,
+  restLabel,
+  unit,
+  isCardio,
+  showOneRm,
+  showPositionPrs,
+  registry,
+  swipeHold,
+  onLongPress,
+  onSelectToggle,
+  onPlannedTap,
+  onEdit,
+  onAddNote,
+  onDelete,
+  onDeleteExited,
+}: SetRowProps) {
+  const onExited = useCallback(() => onDeleteExited(s.id), [onDeleteExited, s.id])
+
+  const oneRm = !s.is_planned ? estimateOneRm(s.weight, s.reps) : 0
+  const isPr = !!s.is_pr
+  const wasPr = !s.is_pr && !!s.was_pr
+  const isPosPr = !s.is_pr && !s.was_pr && !!s.is_position_pr
+  const wasPosPr =
+    !s.is_pr && !s.was_pr && !s.is_position_pr && !!s.was_position_pr
+
+  const body = (
+    <HoldPressable
+      // undefined (not a no-op) for planned rows: HoldPressable only
+      // runs the ramp when onLongPress is set, and a planned row
+      // holding to select nothing shouldn't promise an action.
+      onLongPress={s.is_planned || pending ? undefined : () => onLongPress(s)}
+      // No shrink: this row is flush edge-to-edge in the list, not a
+      // standalone card, so scaling it down would pull its background
+      // in from the sides and expose the card behind it.
+      holdScale={1}
+      // Matches the delay this row used before it had a ramp.
+      holdDelay={250}
+      onPress={() => {
+        if (pending) return
+        if (s.is_planned) {
+          onPlannedTap(s)
+          return
+        }
+        if (selectionMode) onSelectToggle(s.id)
+      }}
+      // Cache the row's content as a hardware-backed texture so
+      // the Swipeable's drag transform is a cheap GPU translate
+      // of a pre-rendered bitmap, not a per-frame re-paint of
+      // the Pressable + ~6 Text nodes underneath. This is the
+      // single biggest fix for "low fps feel" during swipe on
+      // Android — without it, every dragX update re-rasterizes
+      // the whole row's text layout, which can't keep up at 60fps.
+      // collapsable=false ensures Android doesn't optimize this
+      // intermediate view away, which would defeat the cache.
+      collapsable={false}
+      renderToHardwareTextureAndroid
+      shouldRasterizeIOS
+      // Static, not an animated overlay. This row caches itself as a
+      // bitmap (see the rasterisation note above), and an animated child
+      // inside a cached layer renders stale - the highlight showed the
+      // previous state, or vanished, until something forced a re-raster.
+      // A style change is part of the layer's content, so it re-rasters
+      // correctly.
+      style={[
+        styles.setRow,
+        !isLast && styles.setRowDivider,
+        isSelected && styles.setRowSelected,
+        s.is_planned && styles.setRowPlanned,
+      ]}
+    >
+      <View style={styles.setRowContent}>
+        <View style={{ width: 28, alignItems: "flex-start" }}>
+          {!s.is_planned && (isPr || wasPr) ? (
+            <PrIcon historical={wasPr} />
+          ) : !s.is_planned && showPositionPrs && (isPosPr || wasPosPr) ? (
+            <PrIcon variant="position" position={index + 1} historical={wasPosPr} />
+          ) : null}
+        </View>
+        <IndexCol
+          display={isSelected ? "✓" : index + 1}
+          isPr={isPr}
+          restLabel={restLabel}
+        />
+        <Text
+          style={[styles.setWeight, s.is_planned && styles.dimText]}
+        >
+          {isCardio
+            ? s.weight ?? "—"
+            : formatWeight(s.weight, unit)}{" "}
+          <Text style={styles.setUnit}>{isCardio ? "min" : unit}</Text>
+        </Text>
+        <Text
+          style={[styles.setReps, s.is_planned && styles.dimText]}
+        >
+          {isCardio ? `Lvl ${s.reps ?? "—"}` : s.reps ?? "—"}
+        </Text>
+        {!isCardio && !s.is_planned && showOneRm && oneRm > 0 ? (
+          <Text style={styles.oneRm}>
+            {formatWeight(oneRm, unit)} 1RM
+          </Text>
+        ) : s.is_planned ? (
+          <Text style={[styles.oneRm, { fontStyle: "italic" }]}>
+            planned
+          </Text>
+        ) : null}
+      </View>
+
+      {!s.is_planned && !!s.note && (
+        <View style={styles.setNoteLine}>
+          <Ionicons
+            name="document-text-outline"
+            size={11}
+            color={theme.colors.muted}
+          />
+          <Text style={styles.setNoteText}>{s.note}</Text>
+        </View>
+      )}
+
+    </HoldPressable>
+  )
+
+  // Swipe-to-delete only for logged sets (not planned targets, since
+  // those have their own Hit/Skip flow above).
+  if (s.is_planned)
+    return (
+      <SetRowFade leaving={leaving} parentHandlesExit={emptying} onExited={onExited}>
+        <View>{body}</View>
+      </SetRowFade>
+    )
+
+  // Imperative close (no state, no re-renders), fired from this row's
+  // open-related callbacks. Whichever fires first does the close; later
+  // calls are no-ops because `registry.open` is null.
+  function closeOtherOpenRow() {
+    const current = registry.refs.get(s.id) ?? null
+    if (registry.open && registry.open !== current) {
+      registry.open.close()
+      registry.open = null
+    }
+  }
+  function closeThen(action: () => void) {
+    const current = registry.refs.get(s.id) ?? null
+    current?.close()
+    if (registry.open === current) registry.open = null
+    action()
+  }
+
+  return (
+    <SetRowFade leaving={leaving} parentHandlesExit={emptying} onExited={onExited}>
+      <Swipeable
+        ref={(ref) => {
+          registry.refs.set(s.id, ref)
+        }}
+        enabled={!selectionMode && !pending}
+        // Native-driven animations so the row tracks the finger on the
+        // UI thread. With JS driving, fast flicks outrun React's commit
+        // cycle and the row stutters / progress never settles at 1
+        // (so the action icons never fully fade in). Our renderRight-
+        // Actions only animates translateX + opacity — both are
+        // natively animatable, so there's no JS/native mixing on the
+        // same node.
+        useNativeAnimations={true}
+        // Require a horizontal gesture before taking it from the scroll
+        // view, then settle based on half the actual action-tray width.
+        friction={1.4}
+        rightThreshold={SET_ACTIONS_WIDTH / 2}
+        activeOffsetX={[-12, 12]}
+        failOffsetY={[-12, 12]}
+        overshootLeft={false}
+        overshootRight={false}
+        animationOptions={{
+          overshootClamping: true,
+          bounciness: 0,
+          speed: 14,
+        }}
+        containerStyle={styles.setSwipeContainer}
+        childrenContainerStyle={styles.setSwipeChild}
+        onSwipeableWillClose={() => {
+          dbg(`release (close) id=${s.id}`)
+          swipeHold.end(s.id)
+          const current = registry.refs.get(s.id) ?? null
+          if (registry.open === current) registry.open = null
+        }}
+        // Claim the open row when its spring starts. A completion
+        // callback from an older swipe must not close a newer gesture.
+        onSwipeableOpenStartDrag={() => {
+          dbg(`drag start id=${s.id}`)
+          swipeHold.begin(s.id)
+          closeOtherOpenRow()
+        }}
+        onSwipeableCloseStartDrag={() => swipeHold.begin(s.id)}
+        onSwipeableWillOpen={() => {
+          dbg(`release (open) id=${s.id}`)
+          swipeHold.end(s.id)
+          closeOtherOpenRow()
+          registry.open = registry.refs.get(s.id) ?? null
+        }}
+        renderRightActions={(progress, dragX) => {
+          // Keep the tray's movement tied to the row's translated
+          // position, including the release spring.
+          const translateX = dragX.interpolate({
+            inputRange: [-SET_ACTIONS_WIDTH, 0],
+            outputRange: [0, SET_ACTIONS_WIDTH],
+            extrapolate: "clamp",
+          })
+          // Reveal throughout the drag instead of flashing to full
+          // opacity in the first quarter of the swipe.
+          const groupOpacity = progress.interpolate({
+            inputRange: [0, 0.8, 1],
+            outputRange: [0, 1, 1],
+            extrapolate: "clamp" as const,
+          })
+          return (
+            <Animated.View
+              style={[
+                styles.setSwipeActions,
+                { transform: [{ translateX }], opacity: groupOpacity },
+              ]}
+            >
+              <Pressable
+                onPress={() => closeThen(() => onEdit(s))}
+                style={({ pressed }) => [
+                  styles.swipeAction,
+                  styles.swipeActionEdit,
+                  pressed && styles.swipeActionPressed,
+                ]}
+                hitSlop={4}
+              >
+                <Ionicons
+                  name="pencil"
+                  size={18}
+                  color={theme.colors.primary}
+                />
+              </Pressable>
+              <Pressable
+                onPress={() => closeThen(() => onAddNote(s))}
+                style={({ pressed }) => [
+                  styles.swipeAction,
+                  styles.swipeActionNote,
+                  pressed && styles.swipeActionPressed,
+                ]}
+                hitSlop={4}
+              >
+                <Ionicons
+                  name="document-text-outline"
+                  size={18}
+                  color={theme.colors.foreground}
+                />
+              </Pressable>
+              <Pressable
+                onPress={() => closeThen(() => onDelete(s))}
+                style={({ pressed }) => [
+                  styles.swipeAction,
+                  styles.swipeActionDelete,
+                  pressed && styles.swipeActionPressed,
+                ]}
+                hitSlop={4}
+              >
+                <Ionicons
+                  name="trash-outline"
+                  size={18}
+                  color={theme.colors.destructive}
+                />
+              </Pressable>
+            </Animated.View>
+          )
+        }}
+      >
+        {body}
+      </Swipeable>
+    </SetRowFade>
+  )
+}, setRowPropsEqual)
+
+// Memoized: the parent re-renders on every keystroke in the form and on every
+// store commit. With stable callbacks only `sets`, the selection, and the
+// leaving/skip-fade sets can change this component's props.
+const SetList = memo(function SetList({
   sets,
   unit,
   isCardio,
@@ -4183,7 +4587,7 @@ function SetList({
   pendingAdd,
   leavingIds,
   onDeleteExited,
-  skipFadeIds,
+  swipeHold,
   onLongPress,
   onSelectToggle,
   onPlannedTap,
@@ -4209,10 +4613,11 @@ function SetList({
     isPr: boolean
     isPosPr: boolean
     position: number
+    planned: boolean
   } | null
   leavingIds: Set<number>
   onDeleteExited: (id: number) => void
-  skipFadeIds: Set<number>
+  swipeHold: SwipeHold
   onLongPress: (s: WorkoutSet) => void
   onSelectToggle: (id: number) => void
   onPlannedTap: (s: WorkoutSet) => void
@@ -4221,21 +4626,9 @@ function SetList({
   onDelete: (s: WorkoutSet) => void
 }) {
   const selectionMode = selectedIds.length > 0
-  const openSwipeableRef = useRef<Swipeable | null>(null)
-  const swipeableRefs = useRef(new Map<number, Swipeable | null>())
-  // Imperative close (no state, no re-renders) — fired from each
-  // Swipeable's open-related callbacks. Whichever fires first does the
-  // close; subsequent calls are no-ops because the ref is null.
-  function closeOtherOpenRow(currentId: number) {
-    const current = swipeableRefs.current.get(currentId) ?? null
-    if (
-      openSwipeableRef.current &&
-      openSwipeableRef.current !== current
-    ) {
-      openSwipeableRef.current.close()
-      openSwipeableRef.current = null
-    }
-  }
+  const registry = useRef<SwipeRegistry>({ refs: new Map(), open: null }).current
+  // A row that unmounts mid-drag never dispatches its release.
+  useEffect(() => () => swipeHold.releaseAll(), [swipeHold])
 
   const emptying = !pendingAdd && sets.every((set) => leavingIds.has(set.id))
   const emptyAnchorMs = prevWorkoutLastSetIso ? Date.parse(prevWorkoutLastSetIso) : NaN
@@ -4251,13 +4644,47 @@ function SetList({
       )}
     </View>
   )
-// Per-row rest labels. Anchor on the most recent prior *logged* set:
+  // The optimistic row is a real SetRow fed a synthetic set, so it is pixel
+  // identical to the row the store will produce: same index column, rest
+  // label, divider, and star. Once the real row lands it renders under the
+  // placeholder's key, so React updates that instance in place: no swap, no
+  // remount, and the fade-in that began on the click frame runs on.
+  const landedId = pendingAdd
+    ? sets.find((s) => !pendingAdd.baseIds.has(s.id))?.id ?? null
+    : null
+  const keyOverrides = useRef(new Map<number, string>()).current
+  if (pendingAdd && landedId != null) {
+    keyOverrides.set(landedId, `pending-${pendingAdd.key}`)
+  }
+  const placeholder: WorkoutSet | null =
+    pendingAdd && landedId == null
+      ? {
+          id: -1,
+          weight: pendingAdd.weight,
+          reps: pendingAdd.reps,
+          distance_m: null,
+          distance_unit_display: "",
+          time_seconds: null,
+          is_pr: pendingAdd.isPr,
+          was_pr: false,
+          is_position_pr: pendingAdd.isPosPr,
+          was_position_pr: false,
+          note: "",
+          order: sets.length,
+          is_planned: pendingAdd.planned,
+          // addSet stamps "now"; the click time is within a frame of it.
+          created_at: new Date(pendingAdd.key).toISOString(),
+        }
+      : null
+  const rows = placeholder ? [...sets, placeholder] : sets
+
+  // Per-row rest labels. Anchor on the most recent prior *logged* set:
   // planned rows have synthetic created_at and shouldn't anchor real rest.
   // Set 1's rest comes from the last set of the previous workout.
   const restLabels: (string | null)[] = []
   {
     let lastRealIso: string | null = prevWorkoutLastSetIso
-    for (const s of sets) {
+    for (const s of rows) {
       if (s.is_planned) {
         restLabels.push(null)
       } else {
@@ -4266,14 +4693,6 @@ function SetList({
       }
     }
   }
-
-  // Keep the placeholder visible the entire time `pendingAdd` is set —
-  // including the held-open window (~240ms) after the real row arrives.
-  // The parent delays `setPendingAdd(null)` until the placeholder's
-  // fade-in is complete, so when the placeholder finally unmounts here
-  // it's at full opacity, and the real row appears at full opacity via
-  // `skipFade` — no jump.
-  const showPlaceholder = pendingAdd != null
 
   return (
     <SetListEmptyTransition
@@ -4285,325 +4704,40 @@ function SetList({
         }
       }}
     >
-    {(sets.length > 0 || pendingAdd) && <View style={styles.setListCard}>
-      {sets.map((s, i) => {
-        // Hide the new real row only while the placeholder is still showing.
-        // Once `realArrivedBeforeCleanup` is true (placeholder dropped),
-        // we let the new row render — with `skipFade` so it appears at full
-        // opacity rather than fading in over the placeholder's exit.
-        const isNewlyAdded =
-          pendingAdd != null &&
-          pendingAdd.baseIds != null &&
-          !pendingAdd.baseIds.has(s.id)
-        if (showPlaceholder && isNewlyAdded) return null
-
-        function closeThen(action: () => void) {
-          const current = swipeableRefs.current.get(s.id) ?? null
-          current?.close()
-          if (openSwipeableRef.current === current) {
-            openSwipeableRef.current = null
-          }
-          action()
-        }
-
-        const oneRm = !s.is_planned ? estimateOneRm(s.weight, s.reps) : 0
-        const isSelected = selectedIds.includes(s.id)
-        const isPr = !!s.is_pr
-        const wasPr = !s.is_pr && !!s.was_pr
-        const isPosPr = !s.is_pr && !s.was_pr && !!s.is_position_pr
-        const wasPosPr =
-          !s.is_pr && !s.was_pr && !s.is_position_pr && !!s.was_position_pr
-        const isLast = i === sets.length - 1
-        const leaving = leavingIds?.has(s.id) ?? false
-        // `isNewlyAdded` (computed above) means the placeholder was just
-        // swapped out for this row — mount it at full opacity instead of
-        // fading in, since the placeholder already showed the user the
-        // row's content. After this render, the useEffect will mirror this
-        // into `skipFadeIds` for subsequent renders.
-        const skipFade = (skipFadeIds?.has(s.id) ?? false) || isNewlyAdded
-
-        const body = (
-          <HoldPressable
-            // undefined (not a no-op) for planned rows: HoldPressable only
-            // runs the ramp when onLongPress is set, and a planned row
-            // holding to select nothing shouldn't promise an action.
-            onLongPress={s.is_planned ? undefined : () => onLongPress(s)}
-            // No shrink: this row is flush edge-to-edge in the list, not a
-            // standalone card, so scaling it down would pull its background
-            // in from the sides and expose the card behind it.
-            holdScale={1}
-            // Matches the delay this row used before it had a ramp.
-            holdDelay={250}
-            onPress={() => {
-              if (s.is_planned) {
-                onPlannedTap(s)
-                return
-              }
-              if (selectionMode) onSelectToggle(s.id)
-            }}
-            // Cache the row's content as a hardware-backed texture so
-            // the Swipeable's drag transform is a cheap GPU translate
-            // of a pre-rendered bitmap, not a per-frame re-paint of
-            // the Pressable + ~6 Text nodes underneath. This is the
-            // single biggest fix for "low fps feel" during swipe on
-            // Android — without it, every dragX update re-rasterizes
-            // the whole row's text layout, which can't keep up at 60fps.
-            // collapsable=false ensures Android doesn't optimize this
-            // intermediate view away, which would defeat the cache.
-            collapsable={false}
-            renderToHardwareTextureAndroid
-            shouldRasterizeIOS
-            // Static, not an animated overlay. This row caches itself as a
-            // bitmap (see the rasterisation note above), and an animated child
-            // inside a cached layer renders stale - the highlight showed the
-            // previous state, or vanished, until something forced a re-raster.
-            // A style change is part of the layer's content, so it re-rasters
-            // correctly.
-            style={[
-              styles.setRow,
-              !isLast && styles.setRowDivider,
-              isSelected && styles.setRowSelected,
-              s.is_planned && styles.setRowPlanned,
-            ]}
-          >
-            <View style={styles.setRowContent}>
-              <View style={{ width: 28, alignItems: "flex-start" }}>
-                {!s.is_planned && (isPr || wasPr) ? (
-                  <PrIcon historical={wasPr} />
-                ) : !s.is_planned && showPositionPrs && (isPosPr || wasPosPr) ? (
-                  <PrIcon variant="position" position={i + 1} historical={wasPosPr} />
-                ) : null}
-              </View>
-              <IndexCol
-                display={isSelected ? "✓" : i + 1}
-                isPr={isPr}
-                restLabel={
-                  showRestTime && !s.is_planned ? restLabels[i] : null
-                }
-              />
-              <Text
-                style={[styles.setWeight, s.is_planned && styles.dimText]}
-              >
-                {isCardio
-                  ? s.weight ?? "—"
-                  : formatWeight(s.weight, unit)}{" "}
-                <Text style={styles.setUnit}>{isCardio ? "min" : unit}</Text>
-              </Text>
-              <Text
-                style={[styles.setReps, s.is_planned && styles.dimText]}
-              >
-                {isCardio ? `Lvl ${s.reps ?? "—"}` : s.reps ?? "—"}
-              </Text>
-              {!isCardio && !s.is_planned && showOneRm && oneRm > 0 ? (
-                <Text style={styles.oneRm}>
-                  {formatWeight(oneRm, unit)} 1RM
-                </Text>
-              ) : s.is_planned ? (
-                <Text style={[styles.oneRm, { fontStyle: "italic" }]}>
-                  planned
-                </Text>
-              ) : null}
-            </View>
-
-            {!s.is_planned && !!s.note && (
-              <View style={styles.setNoteLine}>
-                <Ionicons
-                  name="document-text-outline"
-                  size={11}
-                  color={theme.colors.muted}
-                />
-                <Text style={styles.setNoteText}>{s.note}</Text>
-              </View>
-            )}
-
-          </HoldPressable>
-        )
-
-        // Swipe-to-delete only for logged sets (not planned targets, since
-        // those have their own Hit/Skip flow above).
-        if (s.is_planned)
-          return (
-            <SetRowFade key={s.id} leaving={leaving} parentHandlesExit={emptying} skipFade={skipFade} onExited={() => onDeleteExited(s.id)}>
-              <View>{body}</View>
-            </SetRowFade>
-          )
-
+    {rows.length > 0 && <View style={styles.setListCard}>
+      {rows.map((s, i) => {
+        const pending = s.id === -1
+        const key = pending && pendingAdd
+          ? `pending-${pendingAdd.key}`
+          : keyOverrides.get(s.id) ?? String(s.id)
         return (
-          <SetRowFade key={s.id} leaving={leaving} parentHandlesExit={emptying} skipFade={skipFade} onExited={() => onDeleteExited(s.id)}>
-          <Swipeable
-            ref={(ref) => {
-              swipeableRefs.current.set(s.id, ref)
-            }}
-            key={s.id}
-            enabled={!selectionMode}
-            // Native-driven animations so the row tracks the finger on the
-            // UI thread. With JS driving, fast flicks outrun React's commit
-            // cycle and the row stutters / progress never settles at 1
-            // (so the action icons never fully fade in). Our renderRight-
-            // Actions only animates translateX + opacity — both are
-            // natively animatable, so there's no JS/native mixing on the
-            // same node.
-            useNativeAnimations={true}
-            // Require a horizontal gesture before taking it from the scroll
-            // view, then settle based on half the actual action-tray width.
-            friction={1.4}
-            rightThreshold={SET_ACTIONS_WIDTH / 2}
-            activeOffsetX={[-12, 12]}
-            failOffsetY={[-12, 12]}
-            overshootLeft={false}
-            overshootRight={false}
-            animationOptions={{
-              overshootClamping: true,
-              bounciness: 0,
-              speed: 14,
-            }}
-            containerStyle={styles.setSwipeContainer}
-            childrenContainerStyle={styles.setSwipeChild}
-            onSwipeableWillClose={() => {
-              const current = swipeableRefs.current.get(s.id) ?? null
-              if (openSwipeableRef.current === current) {
-                openSwipeableRef.current = null
-              }
-            }}
-            // Claim the open row when its spring starts. A completion
-            // callback from an older swipe must not close a newer gesture.
-            onSwipeableOpenStartDrag={() => closeOtherOpenRow(s.id)}
-            onSwipeableWillOpen={() => {
-              closeOtherOpenRow(s.id)
-              openSwipeableRef.current =
-                swipeableRefs.current.get(s.id) ?? null
-            }}
-            renderRightActions={(progress, dragX) => {
-              // Keep the tray's movement tied to the row's translated
-              // position, including the release spring.
-              const translateX = dragX.interpolate({
-                inputRange: [-SET_ACTIONS_WIDTH, 0],
-                outputRange: [0, SET_ACTIONS_WIDTH],
-                extrapolate: "clamp",
-              })
-              // Reveal throughout the drag instead of flashing to full
-              // opacity in the first quarter of the swipe.
-              const groupOpacity = progress.interpolate({
-                inputRange: [0, 0.8, 1],
-                outputRange: [0, 1, 1],
-                extrapolate: "clamp" as const,
-              })
-              return (
-                <Animated.View
-                  style={[
-                    styles.setSwipeActions,
-                    { transform: [{ translateX }], opacity: groupOpacity },
-                  ]}
-                >
-                  <Pressable
-                    onPress={() => closeThen(() => onEdit(s))}
-                    style={({ pressed }) => [
-                      styles.swipeAction,
-                      styles.swipeActionEdit,
-                      pressed && styles.swipeActionPressed,
-                    ]}
-                    hitSlop={4}
-                  >
-                    <Ionicons
-                      name="pencil"
-                      size={18}
-                      color={theme.colors.primary}
-                    />
-                  </Pressable>
-                  <Pressable
-                    onPress={() => closeThen(() => onAddNote(s))}
-                    style={({ pressed }) => [
-                      styles.swipeAction,
-                      styles.swipeActionNote,
-                      pressed && styles.swipeActionPressed,
-                    ]}
-                    hitSlop={4}
-                  >
-                    <Ionicons
-                      name="document-text-outline"
-                      size={18}
-                      color={theme.colors.foreground}
-                    />
-                  </Pressable>
-                  <Pressable
-                    onPress={() => closeThen(() => onDelete(s))}
-                    style={({ pressed }) => [
-                      styles.swipeAction,
-                      styles.swipeActionDelete,
-                      pressed && styles.swipeActionPressed,
-                    ]}
-                    hitSlop={4}
-                  >
-                    <Ionicons
-                      name="trash-outline"
-                      size={18}
-                      color={theme.colors.destructive}
-                    />
-                  </Pressable>
-                </Animated.View>
-              )
-            }}
-          >
-            {body}
-          </Swipeable>
-          </SetRowFade>
+          <SetRow
+            key={key}
+            s={s}
+            index={i}
+            isLast={i === rows.length - 1}
+            pending={pending}
+            isSelected={selectedIds.includes(s.id)}
+            selectionMode={selectionMode}
+            leaving={leavingIds.has(s.id)}
+            emptying={emptying}
+            restLabel={showRestTime && !s.is_planned ? restLabels[i] : null}
+            unit={unit}
+            isCardio={isCardio}
+            showOneRm={showOneRm}
+            showPositionPrs={showPositionPrs}
+            registry={registry}
+            swipeHold={swipeHold}
+            onLongPress={onLongPress}
+            onSelectToggle={onSelectToggle}
+            onPlannedTap={onPlannedTap}
+            onEdit={onEdit}
+            onAddNote={onAddNote}
+            onDelete={onDelete}
+            onDeleteExited={onDeleteExited}
+          />
         )
       })}
-      {showPlaceholder && pendingAdd && (() => {
-        // Prefer the click-time PR prediction so the gold star renders on
-        // the same frame as the placeholder. Once the real row arrives, use
-        // its authoritative flags. The historical/silver variant is
-        // intentionally skipped — silver means "this used to be a PR and
-        // was beaten", which can't apply to a set being added right now.
-        const newRow = pendingAdd.baseIds
-          ? sets.find((s) => !pendingAdd.baseIds.has(s.id) && !s.is_planned)
-          : null
-        const phIsPr = newRow ? !!newRow.is_pr : pendingAdd.isPr
-        const phIsPosPr = newRow
-          ? !newRow.is_pr && !!newRow.is_position_pr
-          : !pendingAdd.isPr && pendingAdd.isPosPr
-        return (
-        <SetRowFade key={`pending-${pendingAdd.key}`}>
-          <Pressable style={styles.setRow} disabled>
-            <View style={styles.setRowContent}>
-              <View style={{ width: 28, alignItems: "flex-start" }}>
-                {phIsPr ? (
-                  <PrIcon />
-                ) : showPositionPrs && phIsPosPr ? (
-                  <PrIcon
-                    variant="position"
-                    position={pendingAdd.baseLen + 1}
-                  />
-                ) : null}
-              </View>
-              <View style={styles.setIndexCol}>
-                <Text style={[styles.setIndex, phIsPr && { color: "#e0c050" }]}>
-                  {pendingAdd.baseLen + 1}
-                </Text>
-              </View>
-              <Text style={styles.setWeight}>
-                {isCardio
-                  ? pendingAdd.weight
-                  : formatWeight(pendingAdd.weight, unit)}{" "}
-                <Text style={styles.setUnit}>{isCardio ? "min" : unit}</Text>
-              </Text>
-              <Text style={styles.setReps}>
-                {isCardio ? `Lvl ${pendingAdd.reps}` : pendingAdd.reps}
-              </Text>
-              {!isCardio && showOneRm && (
-                <Text style={styles.oneRm}>
-                  {formatWeight(
-                    estimateOneRm(pendingAdd.weight, pendingAdd.reps),
-                    unit
-                  )}{" "}
-                  1RM
-                </Text>
-              )}
-            </View>
-          </Pressable>
-        </SetRowFade>
-        )
-      })()}
       {showTimeSinceLastSet && (() => {
         // Anchor the rest-timer to whichever is most recent: a pending-add
         // (user just clicked Save and the real row hasn't landed yet — its
@@ -4634,7 +4768,7 @@ function SetList({
     </View>}
     </SetListEmptyTransition>
   )
-}
+})
 
 // Plain Animated.View overlay for editing a set's note. We stopped using
 // react-native-modal here because its keyboard handling caused the modal
