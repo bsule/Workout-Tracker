@@ -9,7 +9,13 @@ import {
   View,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
-import { localApi as api, useStore } from "@lift/core"
+import {
+  hasCloudConflict,
+  loadSyncClock,
+  localApi as api,
+  subscribeSyncClock,
+  useStore,
+} from "@lift/core"
 import type { AIProviderId } from "@lift/core"
 import { useAuth } from "../auth/AuthProvider"
 import { ApiError } from "../auth/api"
@@ -36,6 +42,14 @@ export function SettingsScreen({ navigation }: any) {
   // Read once on mount; the toggle prompts for restart so we don't need
   // a reactive subscription here.
   const [themeMode, setThemeMode] = useState<ThemeMode>(currentMode())
+
+  // A refused push shows a dot here, because the automatic sync that hit it
+  // runs in the background and the choice lives on the Import / Export screen.
+  const [cloudConflict, setCloudConflict] = useState(() => hasCloudConflict())
+  useEffect(() => {
+    void loadSyncClock().then(() => setCloudConflict(hasCloudConflict()))
+    return subscribeSyncClock(() => setCloudConflict(hasCloudConflict()))
+  }, [])
 
   const [recomputeBusy, setRecomputeBusy] = useState(false)
   const [recomputeStatus, setRecomputeStatus] = useState<
@@ -397,11 +411,14 @@ export function SettingsScreen({ navigation }: any) {
         >
           <View style={styles.row}>
             <Text style={styles.rowLabel}>Import / Export</Text>
-            <Ionicons
-              name="chevron-forward"
-              size={18}
-              color={theme.colors.muted}
-            />
+            <View style={styles.rowRight}>
+              {cloudConflict && <View style={styles.conflictDot} />}
+              <Ionicons
+                name="chevron-forward"
+                size={18}
+                color={theme.colors.muted}
+              />
+            </View>
           </View>
         </Pressable>
 
@@ -612,6 +629,13 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   rowLabel: { color: theme.colors.muted, fontSize: theme.fontSize.sm },
   rowValue: { color: theme.colors.foreground, fontSize: theme.fontSize.base, fontWeight: "600" },
+  rowRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  conflictDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: theme.colors.destructive,
+  },
   rowValueGroup: {
     flexDirection: "row",
     alignItems: "center",

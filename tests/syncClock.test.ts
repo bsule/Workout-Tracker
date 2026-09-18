@@ -14,8 +14,14 @@ import {
   CloudflareTransport,
   formatLastSynced,
   getLastSyncedAt,
+  getSyncClock,
+  hasCloudConflict,
   loadSyncClock,
+  markCloudNewer,
+  markCloudNewerPrompted,
   markSynced,
+  requestCloudNewerPrompt,
+  shouldPromptCloudNewer,
   subscribeSyncClock,
   sync as syncModule,
   type SyncClockStore,
@@ -59,6 +65,13 @@ function mockFetch(handler: () => Response | Promise<Response>) {
 
 const QUOTA = { used: 1, limit: 5, remaining: 4, resets_at: "2026-01-02T00:00:00Z" }
 
+function stalePush(etag: string | null) {
+  return new Response(
+    JSON.stringify({ detail: "Snapshot has changed remotely", etag, quota: QUOTA }),
+    { status: 412, headers: { "Content-Type": "application/json" } }
+  )
+}
+
 function okPush() {
   return new Response(JSON.stringify({ etag: "etag-1", quota: QUOTA }), {
     status: 200,
@@ -92,23 +105,32 @@ afterEach(() => {
 describe("syncClock", () => {
   it("reads null when the device has never synced", async () => {
     configureSyncClock(memoryClock())
-    expect(await loadSyncClock()).toBeNull()
+    expect((await loadSyncClock()).lastSyncedAt).toBeNull()
     expect(getLastSyncedAt()).toBeNull()
   })
 
-  it("loads a stored timestamp and then answers from memory", async () => {
-    const store = memoryClock("1700000000000")
+  it("loads a stored record and then answers from memory", async () => {
+    const store = memoryClock(
+      JSON.stringify({ lastSyncedAt: 1700000000000 })
+    )
     const spy = vi.spyOn(store, "get")
     configureSyncClock(store)
-    expect(await loadSyncClock()).toBe(1700000000000)
-    expect(await loadSyncClock()).toBe(1700000000000)
+    expect((await loadSyncClock()).lastSyncedAt).toBe(1700000000000)
+    expect((await loadSyncClock()).lastSyncedAt).toBe(1700000000000)
     // Cheap to call on every app open: storage is read once per session.
     expect(spy).toHaveBeenCalledTimes(1)
   })
 
+  it("reads the bare timestamp written before the conflict fields existed", async () => {
+    configureSyncClock(memoryClock("1700000000000"))
+    const clock = await loadSyncClock()
+    expect(clock.lastSyncedAt).toBe(1700000000000)
+    expect(clock.cloudNewerAt).toBeNull()
+  })
+
   it("treats unparseable storage as never synced", async () => {
     configureSyncClock(memoryClock("not-a-number"))
-    expect(await loadSyncClock()).toBeNull()
+    expect((await loadSyncClock()).lastSyncedAt).toBeNull()
   })
 
   it("survives a storage that throws", async () => {
@@ -123,7 +145,7 @@ describe("syncClock", () => {
         throw new Error("private mode")
       },
     })
-    expect(await loadSyncClock()).toBeNull()
+    expect((await loadSyncClock()).lastSyncedAt).toBeNull()
     expect(() => markSynced(1234)).not.toThrow()
     expect(getLastSyncedAt()).toBe(1234)
   })
@@ -136,12 +158,14 @@ describe("syncClock", () => {
     markSynced(1700000000000)
     off()
     expect(getLastSyncedAt()).toBe(1700000000000)
-    expect(store.value()).toBe("1700000000000")
+    expect(JSON.parse(store.value() ?? "null")).toMatchObject({
+      lastSyncedAt: 1700000000000,
+    })
     expect(seen).toEqual([1700000000000])
   })
 
   it("clearSyncClock forgets the value on logout", async () => {
-    const store = memoryClock("1700000000000")
+    const store = memoryClock(JSON.stringify({ lastSyncedAt: 1700000000000 }))
     configureSyncClock(store)
     await loadSyncClock()
     clearSyncClock()
@@ -280,7 +304,7 @@ describe("maybeAutoSync", () => {
     const first = await autoSync.maybeAutoSync()
     expect(first.kind).toBe("failed")
     // The clock never moved, so the sync is still due...
-    expect(await loadSyncClock()).toBe(Number(stale))
+    expect((await loadSyncClock()).lastSyncedAt).toBe(Number(stale))
     expect(store.value()).toBe(stale)
     // ...but the retry cooldown keeps the app off the network.
     const second = await autoSync.maybeAutoSync()
@@ -293,11 +317,29 @@ describe("maybeAutoSync", () => {
     const stale = String(Date.now() - 5 * DAY)
     configureSyncClock(memoryClock(stale))
     configureTransport()
-    mockFetch(() => new Response(null, { status: 412 }))
+    mockFetch(() => stalePush("cloud-v2"))
     const r = await autoSync.maybeAutoSync()
     expect(r).toEqual({ kind: "stale" })
     // Still due: the user resolves the conflict from the Sync screen.
     expect(getLastSyncedAt()).toBe(Number(stale))
+    expect(getSyncClock().cloudNewerEtag).toBe("cloud-v2")
+  })
+
+  it("stops pushing while a conflict is unresolved", async () => {
+    loadSnapshot(snapshotWithData())
+    configureSyncClock(memoryClock(String(Date.now() - 5 * DAY)))
+    configureTransport()
+    let attempts = 0
+    mockFetch(() => {
+      attempts++
+      return stalePush("cloud-v2")
+    })
+    expect((await autoSync.maybeAutoSync()).kind).toBe("stale")
+    autoSync._resetAutoSyncState() // ignore the retry cooldown
+    const second = await autoSync.maybeAutoSync()
+    expect(second).toEqual({ kind: "skipped", reason: "cloud-newer" })
+    // A retry could only fail the same way, so it never reaches the network.
+    expect(attempts).toBe(1)
   })
 
   it("an over-quota response fails quietly", async () => {
@@ -313,5 +355,137 @@ describe("maybeAutoSync", () => {
     )
     const r = await autoSync.maybeAutoSync()
     expect(r.kind).toBe("failed")
+  })
+})
+
+describe("the cloud-is-newer prompt", () => {
+  beforeEach(() => {
+    loadSnapshot(snapshotWithData())
+    configureSyncClock(memoryClock(String(Date.now() - 5 * DAY)))
+    configureTransport()
+  })
+
+  it("asks once per cloud version, and not again for the same one", async () => {
+    mockFetch(() => stalePush("cloud-v2"))
+    await autoSync.maybeAutoSync()
+    expect(hasCloudConflict()).toBe(true)
+    expect(shouldPromptCloudNewer()).toBe(true)
+
+    markCloudNewerPrompted()
+    expect(shouldPromptCloudNewer()).toBe(false)
+    // Still in conflict, so the quiet marker stays.
+    expect(hasCloudConflict()).toBe(true)
+
+    // Another refused push against the same cloud version must stay quiet.
+    autoSync._resetAutoSyncState()
+    markCloudNewer("cloud-v2")
+    expect(shouldPromptCloudNewer()).toBe(false)
+  })
+
+  it("asks again when the cloud changes to a new version", async () => {
+    mockFetch(() => stalePush("cloud-v2"))
+    await autoSync.maybeAutoSync()
+    markCloudNewerPrompted()
+    expect(shouldPromptCloudNewer()).toBe(false)
+
+    // A third device pushed again: new information, so speak up.
+    markCloudNewer("cloud-v3")
+    expect(shouldPromptCloudNewer()).toBe(true)
+  })
+
+  it("asks once when the server reports no etag", async () => {
+    mockFetch(() => stalePush(null))
+    await autoSync.maybeAutoSync()
+    expect(shouldPromptCloudNewer()).toBe(true)
+    markCloudNewerPrompted()
+    expect(shouldPromptCloudNewer()).toBe(false)
+    markCloudNewer(null)
+    expect(shouldPromptCloudNewer()).toBe(false)
+  })
+
+  it("a manual sync records the conflict too", async () => {
+    mockFetch(() => stalePush("cloud-v2"))
+    const result = await autoSync.syncNow()
+    expect(result).toEqual({ kind: "stale", remoteEtag: "cloud-v2" })
+    expect(shouldPromptCloudNewer()).toBe(true)
+  })
+
+  it("resolving clears the conflict and the prompt", async () => {
+    mockFetch(() => stalePush("cloud-v2"))
+    await autoSync.maybeAutoSync()
+    markCloudNewerPrompted()
+
+    mockFetch(okPush)
+    autoSync._resetAutoSyncState()
+    await autoSync.forcePush().catch(() => {})
+    expect(hasCloudConflict()).toBe(false)
+    expect(shouldPromptCloudNewer()).toBe(false)
+    expect(getSyncClock().lastSyncedAt).not.toBeNull()
+  })
+
+  it("survives a restart: the record is on disk", async () => {
+    const store = memoryClock(String(Date.now() - 5 * DAY))
+    configureSyncClock(store)
+    mockFetch(() => stalePush("cloud-v2"))
+    await autoSync.maybeAutoSync()
+    markCloudNewerPrompted()
+
+    // Re-configure with the same backing value, as a fresh process would.
+    const restarted = memoryClock(store.value())
+    configureSyncClock(restarted)
+    await loadSyncClock()
+    expect(hasCloudConflict()).toBe(true)
+    expect(shouldPromptCloudNewer()).toBe(false)
+  })
+})
+
+describe("an explicit Sync now always answers", () => {
+  beforeEach(() => {
+    loadSnapshot(snapshotWithData())
+    configureSyncClock(memoryClock(String(Date.now() - 5 * DAY)))
+    configureTransport()
+  })
+
+  it("re-opens the prompt the user already dismissed", async () => {
+    mockFetch(() => stalePush("cloud-v2"))
+    await autoSync.maybeAutoSync()
+    markCloudNewerPrompted()
+    expect(shouldPromptCloudNewer()).toBe(false)
+
+    // The user presses Sync now. The server refuses again, and a silent
+    // refusal would look like a dead button.
+    const result = await autoSync.syncNow()
+    expect(result.kind).toBe("stale")
+    requestCloudNewerPrompt()
+    expect(shouldPromptCloudNewer()).toBe(true)
+  })
+
+  it("the re-opened prompt still closes for good once shown", async () => {
+    mockFetch(() => stalePush("cloud-v2"))
+    await autoSync.syncNow()
+    requestCloudNewerPrompt()
+    markCloudNewerPrompted()
+    expect(shouldPromptCloudNewer()).toBe(false)
+    // A background check afterwards stays quiet.
+    autoSync._resetAutoSyncState()
+    await autoSync.maybeAutoSync()
+    expect(shouldPromptCloudNewer()).toBe(false)
+  })
+
+  it("does nothing when there is no conflict to show", async () => {
+    mockFetch(okPush)
+    await autoSync.syncNow()
+    requestCloudNewerPrompt()
+    expect(shouldPromptCloudNewer()).toBe(false)
+  })
+
+  it("a request does not survive a resolve", async () => {
+    mockFetch(() => stalePush("cloud-v2"))
+    await autoSync.syncNow()
+    requestCloudNewerPrompt()
+    mockFetch(okPush)
+    await autoSync.forcePush()
+    expect(shouldPromptCloudNewer()).toBe(false)
+    expect(hasCloudConflict()).toBe(false)
   })
 })

@@ -14,13 +14,15 @@ import * as Sharing from "expo-sharing"
 import {
   autoSync,
   formatLastSynced,
-  getLastSyncedAt,
+  getSyncClock,
   loadSyncClock,
+  requestCloudNewerPrompt,
   subscribeSyncClock,
   SyncQuotaExceededError,
   useStore,
   type Quota,
   type RemotePreview,
+  type SyncClockSnapshot,
 } from "@lift/core"
 import { buildJson, timestampedExportName } from "@lift/core/export"
 import { writeFitnotesDbToCache } from "../exports/fitnotesDb"
@@ -453,9 +455,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
     | { kind: "ok" | "info"; msg: string }
     | null
   >(null)
-  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(() =>
-    getLastSyncedAt()
-  )
+  const [clock, setClock] = useState<SyncClockSnapshot>(() => getSyncClock())
 
   useEffect(() => {
     if (!user) return
@@ -465,8 +465,8 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
   // One clock for every sync path: the button below, and the 3-day check that
   // runs when the app opens. Subscribing keeps the label right either way.
   useEffect(() => {
-    void loadSyncClock().then(setLastSyncedAt)
-    return subscribeSyncClock(() => setLastSyncedAt(getLastSyncedAt()))
+    void loadSyncClock().then(setClock)
+    return subscribeSyncClock(() => setClock(getSyncClock()))
   }, [])
 
   if (!user) {
@@ -490,8 +490,13 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
       await new Promise((r) => setTimeout(r, 0))
       const result = await autoSync.syncNow()
       if (result.kind === "stale") {
+        // syncNow() recorded the conflict. CloudConflictPrompt owns the alert,
+        // so this screen opens none of its own — two alerts raced before. The
+        // "ask once" rule covers background checks, not a button press, so ask
+        // it to open even if the user already saw it for this cloud version.
         setBusy(null)
-        promptStaleResolution()
+        setStatus({ kind: "info", msg: "Cloud has newer data. Pick one below." })
+        requestCloudNewerPrompt()
         return
       }
       setStatus({ kind: "ok", msg: "Synced." })
@@ -507,23 +512,6 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
     } finally {
       setBusy((b) => (b === "sync" ? null : b))
     }
-  }
-
-  function promptStaleResolution() {
-    Alert.alert(
-      "Cloud is newer",
-      "Your cloud backup has changes that aren't on this device. Pull cloud down (replaces local) or overwrite cloud with this device's data?",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Get cloud", onPress: () => void pullCloudOverLocal() },
-        {
-          text: "Overwrite cloud",
-          style: "destructive",
-          onPress: () => void overwriteCloud(),
-        },
-      ],
-      { cancelable: true }
-    )
   }
 
   async function pullCloudOverLocal() {
@@ -542,6 +530,22 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
     } finally {
       setBusy(null)
     }
+  }
+
+  function confirmOverwriteCloud() {
+    Alert.alert(
+      "Overwrite the cloud copy?",
+      "The cloud's newer changes will be gone. This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Overwrite",
+          style: "destructive",
+          onPress: () => void overwriteCloud(),
+        },
+      ],
+      { cancelable: true }
+    )
   }
 
   async function overwriteCloud() {
@@ -628,7 +632,30 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
             ? "Loading quota…"
             : `${quota.remaining} of ${quota.limit} syncs left today`}
         </Text>
-        <Text style={styles.help}>{formatLastSynced(lastSyncedAt)}</Text>
+        <Text style={styles.help}>{formatLastSynced(clock.lastSyncedAt)}</Text>
+        {clock.cloudNewerAt !== null && (
+          <>
+            <Text style={[styles.help, { color: theme.colors.destructive }]}>
+              Cloud has newer data from another device. Automatic sync is paused
+              until you pick one.
+            </Text>
+            <View style={styles.actionsRow}>
+              <Button
+                label={busy === "pull-stale" ? "Getting…" : "Get cloud"}
+                onPress={() => void pullCloudOverLocal()}
+                disabled={busy != null}
+                style={{ flex: 1 }}
+              />
+              <Button
+                label={busy === "force-push" ? "Overwriting…" : "Overwrite cloud"}
+                variant="destructive"
+                onPress={confirmOverwriteCloud}
+                disabled={busy != null}
+                style={{ flex: 1 }}
+              />
+            </View>
+          </>
+        )}
       </View>
 
       <View style={styles.actionsRow}>

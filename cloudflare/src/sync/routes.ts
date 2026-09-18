@@ -122,8 +122,19 @@ sync.put("/snapshot", async (c) => {
   )
 
   if (!result) {
+    // Report which version the client lost to. Clients key their "cloud is
+    // newer" prompt on this etag so they ask once per distinct cloud version
+    // instead of on every refused push. head() is a metadata read, so it
+    // costs no bandwidth, and a failure here must not change the outcome.
+    const current = await c.env.SNAPSHOTS.head(objectKey(userId)).catch(
+      () => null
+    )
     return c.json(
-      { detail: "Snapshot has changed remotely; pull and retry.", quota: before },
+      {
+        detail: "Snapshot has changed remotely; pull and retry.",
+        etag: current?.etag ?? null,
+        quota: before,
+      },
       412
     )
   }
