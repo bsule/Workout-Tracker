@@ -70,6 +70,9 @@ import { PopupModal } from "../components/PopupModal"
 import { HoldPressable } from "../components/HoldPressable"
 import { NativeMenu, type MenuAction } from "../components/NativeMenu"
 import { NotePreview } from "../components/NotePreview"
+import { NoteReveal, NOTE_SHIFT_ANIM } from "../components/NoteReveal"
+import { sameHistory } from "../store/sameHistory"
+import { useStableValue } from "../hooks/useStableValue"
 import { PrIcon } from "../components/PrIcon"
 import { SetList as SharedSetList } from "../components/SetList"
 import { pressedStyle } from "../theme/pressable"
@@ -373,6 +376,254 @@ function useStableCallback<A extends unknown[], R>(
   return useCallback((...args: A) => latest.current(...args), [])
 }
 
+// Exercise name, category, and the optional note row. Memoized: the parent
+// re-renders on every store commit and keystroke, and this block's inputs
+// only change when the user renames or annotates the exercise.
+const ExerciseHeader = memo(function ExerciseHeader({
+  name,
+  category,
+  note,
+  onOpenNote,
+}: {
+  name: string
+  category: string
+  note: string
+  onOpenNote: () => void
+}) {
+  return (
+    <View style={styles.titleWrap}>
+      <Text style={styles.exerciseName}>{name}</Text>
+      <Text style={styles.exerciseMeta}>{category}</Text>
+      {/* Only when there is something to read. Writing the first one is
+          the header menu's job: a standing "Add a note" prompt under
+          every exercise name was more chrome than the screen carried. */}
+      <NoteReveal note={note}>
+        <Pressable onPress={onOpenNote} hitSlop={8} style={styles.exNoteRow}>
+          <Ionicons
+            name="document-text-outline"
+            size={12}
+            color={theme.colors.muted}
+          />
+          {/* The wrapper takes the row's remaining width. exNoteText must
+              NOT: it is applied per line inside NotePreview's column,
+              where flex:1 makes every line stretch instead of stacking. */}
+          <View style={styles.exNoteBody}>
+            <NotePreview note={note} style={styles.exNoteText} />
+          </View>
+        </Pressable>
+      </NoteReveal>
+      {/* Hidden for the pendingCreate stub, whose id is -1: there is no
+       *  workout_exercise row yet, so a note written here would be
+       *  dropped without telling the user. The stub is replaced within a
+       *  frame or two of the real row landing. */}
+    </View>
+  )
+})
+
+// The form <-> selection-bar swap. Memoized: on a store commit nothing here
+// changes, and reconciling two animated layers, three NumericFields, and
+// two PhaseButtons was a large share of the post-commit render. Every
+// Animated value is a ref the parent owns; every handler is identity-stable.
+const LogSetPanel = memo(function LogSetPanel({
+  swapAnim,
+  swapHeight,
+  editAnim,
+  restReveal,
+  restShown,
+  fieldHeight,
+  selectionMode,
+  selectedCount,
+  isCardio,
+  unit,
+  step,
+  weight,
+  reps,
+  restSec,
+  editing,
+  showRestTime,
+  error,
+  onBarLayout,
+  onFormLayout,
+  onFieldLayout,
+  onChangeWeight,
+  onChangeReps,
+  onChangeRest,
+  onSave,
+  onClearOrCancel,
+  onClearSelection,
+  onDeleteSelected,
+}: {
+  swapAnim: Animated.Value
+  swapHeight: Animated.AnimatedInterpolation<number> | null
+  editAnim: Animated.Value
+  restReveal: Animated.Value
+  restShown: boolean
+  fieldHeight: number
+  selectionMode: boolean
+  selectedCount: number
+  isCardio: boolean
+  unit: "kg" | "lb"
+  step: number
+  weight: number
+  reps: number
+  restSec: number
+  editing: boolean
+  showRestTime: boolean
+  error: string | null
+  onBarLayout: (e: LayoutChangeEvent) => void
+  onFormLayout: (e: LayoutChangeEvent) => void
+  onFieldLayout: (e: LayoutChangeEvent) => void
+  onChangeWeight: (v: number) => void
+  onChangeReps: (v: number) => void
+  onChangeRest: (v: number) => void
+  onSave: () => void
+  onClearOrCancel: () => void
+  onClearSelection: () => void
+  onDeleteSelected: () => void
+}) {
+  // The form side of this wrapper's height comes from the form's own
+  // measured height (see onFormLayout in the parent), not a constant, so
+  // entering edit mode grows the card instead of clipping its buttons. Both
+  // layers stay mounted the whole time, absolutely positioned on top of each
+  // other, and cross-fade via swapAnim: only their opacity and this
+  // wrapper's height ever change, so nothing below this card re-lays out.
+  return (
+    <Animated.View
+      style={[
+        { overflow: "hidden" },
+        swapHeight != null && { height: swapHeight },
+      ]}
+    >
+      <Animated.View
+        onLayout={onBarLayout}
+        pointerEvents={selectionMode ? "auto" : "none"}
+        style={[
+          styles.card,
+          styles.selectionBar,
+          styles.swapLayer,
+          { opacity: swapAnim, zIndex: selectionMode ? 2 : 1 },
+        ]}
+      >
+        <Pressable
+          onPress={onClearSelection}
+          hitSlop={12}
+          style={styles.selectionCancelBtn}
+        >
+          <Ionicons name="close" size={22} color={theme.colors.foreground} />
+        </Pressable>
+        <Text style={styles.selectionCount}>{selectedCount} selected</Text>
+        <Pressable
+          onPress={onDeleteSelected}
+          style={({ pressed }) => [
+            styles.selectionDeleteBtn,
+            pressed && { opacity: 0.85 },
+          ]}
+        >
+          <Ionicons
+            name="trash-outline"
+            size={16}
+            color={theme.colors.destructive}
+          />
+          <Text style={styles.selectionDeleteText}>Delete</Text>
+        </Pressable>
+      </Animated.View>
+
+      <Animated.View
+        onLayout={onFormLayout}
+        pointerEvents={selectionMode ? "none" : "auto"}
+        style={[
+          styles.card,
+          {
+            opacity: swapAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [1, 0],
+            }),
+            zIndex: selectionMode ? 1 : 2,
+          },
+        ]}
+      >
+        {/* Absolute overlay that fades a white border in/out. Using
+         *  opacity (native-supported) keeps everything on the native
+         *  driver, avoiding the JS/native mixing error. */}
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.cardEditBorder, { opacity: editAnim }]}
+        />
+        <NumericField
+          label={
+            isCardio
+              ? editing ? "Time (editing)" : "Time"
+              : editing ? "Weight (editing)" : "Weight"
+          }
+          unit={isCardio ? "min" : unit}
+          value={weight}
+          step={isCardio ? 1 : step}
+          min={0}
+          onChange={onChangeWeight}
+          allowDecimal
+        />
+        <View onLayout={onFieldLayout}>
+          <NumericField
+            label={isCardio ? "Level" : "Reps"}
+            value={reps}
+            step={1}
+            min={0}
+            onChange={onChangeReps}
+          />
+        </View>
+        {showRestTime && (
+          // Stays mounted and collapses to height 0 rather than
+          // unmounting, so entering and leaving edit mode animates. The
+          // negative margin cancels the card's `gap` while the row is
+          // collapsed, so a hidden row adds nothing to the card.
+          // fieldHeight comes from the Reps field (see the parent).
+          <Animated.View
+            pointerEvents={restShown ? "auto" : "none"}
+            style={{
+              overflow: "hidden",
+              opacity: restReveal,
+              height: restReveal.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0, fieldHeight || FIELD_H_FALLBACK],
+              }),
+              marginTop: restReveal.interpolate({
+                inputRange: [0, 1],
+                outputRange: [-CARD_GAP, 0],
+              }),
+            }}
+          >
+            <NumericField
+              label="Rest (sec)"
+              value={restSec}
+              step={5}
+              min={0}
+              onChange={onChangeRest}
+            />
+          </Animated.View>
+        )}
+        {error && <Text style={styles.error}>{error}</Text>}
+        <View style={{ flexDirection: "row", gap: 12 }}>
+          <PhaseButton
+            defaultLabel="Save"
+            altLabel="Update"
+            phase={editAnim}
+            onPress={onSave}
+            style={{ flex: 1 }}
+          />
+          <PhaseButton
+            defaultLabel="Clear"
+            altLabel="Cancel"
+            phase={editAnim}
+            variant="secondary"
+            onPress={onClearOrCancel}
+            style={{ flex: 1 }}
+          />
+        </View>
+      </Animated.View>
+    </Animated.View>
+  )
+})
+
 function SetRowFade({
   children,
   leaving,
@@ -616,10 +867,14 @@ export function SetLoggerScreen({ route, navigation }: any) {
     // nothing for the query — only later commits do, and none at all when
     // the card is switched off.
     (tab === "workout" && firstPaintDone && showLastTime)
-  const history: ExerciseHistoryDay[] = useMemo(() => {
+  const rawHistory: ExerciseHistoryDay[] = useMemo(() => {
     if (exerciseId == null || !needsHistory) return EMPTY_HISTORY
     return getExerciseHistoryQ(exerciseId)
   }, [snapshot, exerciseId, needsHistory])
+  // Identity-stable while the content is unchanged, so LastTimePanel,
+  // GraphPanel, and SummaryPanel skip their render on commits that did not
+  // touch this exercise's history (a set edit elsewhere, a note, a sync).
+  const history = useStableValue(rawHistory, sameHistory)
 
   // Latest non-planned set timestamp from any *other* exercise in the current
   // workout. Used for both the per-row rest labels (gated by showRestTime) and
@@ -901,6 +1156,10 @@ export function SetLoggerScreen({ route, navigation }: any) {
     if (!noteEditingSet) return
     const id = noteEditingSet.id
     const note = noteDraft.trim()
+    // The row grows or shrinks by the note line's height. This animates that,
+    // and the shift of every row below it; the note line's own fade-in is
+    // NoteReveal's (see NOTE_SHIFT_ANIM on why `create` is left out).
+    LayoutAnimation.configureNext(NOTE_SHIFT_ANIM)
     api.updateSet(id, { note }).catch(() => {})
   }
 
@@ -925,6 +1184,8 @@ export function SetLoggerScreen({ route, navigation }: any) {
   }
   function persistExerciseNote() {
     if (!we) return
+    // Grows the header, which pushes the form and the set list down.
+    LayoutAnimation.configureNext(NOTE_SHIFT_ANIM)
     setExerciseNote(we.id, exNoteDraft)
   }
 
@@ -1218,6 +1479,25 @@ export function SetLoggerScreen({ route, navigation }: any) {
   const onRowEdit = useStableCallback(startEdit)
   const onRowAddNote = useStableCallback(openNoteEditor)
   const onRowDelete = useStableCallback((s: WorkoutSet) => startDelete(s.id))
+  const onOpenExerciseNote = useStableCallback(openExerciseNote)
+  // LogSetPanel is memoized; these keep its callback props identity-stable.
+  const onSave = useStableCallback(save)
+  const onClearOrCancel = useStableCallback(() => {
+    if (editingSetId != null) {
+      cancelEdit()
+    } else {
+      setWeight(0)
+      setReps(0)
+      setError(null)
+    }
+  })
+  const onClearSelection = useStableCallback(clearSelection)
+  const onDeleteSelected = useStableCallback(confirmDeleteSelected)
+  const onBarLayout = useStableCallback((e: LayoutChangeEvent) =>
+    setBarHeight(e.nativeEvent.layout.height)
+  )
+  const onFormLayoutStable = useStableCallback(onFormLayout)
+  const onFieldLayoutStable = useStableCallback(onFieldLayout)
 
   function confirmDeleteSelected() {
     if (selectedIds.length === 0) return
@@ -1428,36 +1708,12 @@ export function SetLoggerScreen({ route, navigation }: any) {
        *  the keyboard — the numeric keypad has no return key, so without
        *  this the user has to drag the list to dismiss. */}
       <Pressable style={styles.fixedTop} onPress={() => Keyboard.dismiss()}>
-        <View style={styles.titleWrap}>
-          <Text style={styles.exerciseName}>{we.exercise.name}</Text>
-          <Text style={styles.exerciseMeta}>{we.exercise.category}</Text>
-          {/* Only when there is something to read. Writing the first one is
-              the header menu's job — a standing "Add a note" prompt under
-              every exercise name was more chrome than the screen carried. */}
-          {!!we.note.trim() && (
-            <Pressable
-              onPress={openExerciseNote}
-              hitSlop={8}
-              style={styles.exNoteRow}
-            >
-              <Ionicons
-                name="document-text-outline"
-                size={12}
-                color={theme.colors.muted}
-              />
-              {/* The wrapper takes the row's remaining width. exNoteText must
-                  NOT: it is applied per line inside NotePreview's column,
-                  where flex:1 makes every line stretch instead of stacking. */}
-              <View style={styles.exNoteBody}>
-                <NotePreview note={we.note} style={styles.exNoteText} />
-              </View>
-            </Pressable>
-          )}
-          {/* Hidden for the pendingCreate stub, whose id is -1: there is no
-           *  workout_exercise row yet, so a note written here would be
-           *  dropped without telling the user. The stub is replaced within a
-           *  frame or two of the real row landing. */}
-        </View>
+        <ExerciseHeader
+          name={we.exercise.name}
+          category={we.exercise.category}
+          note={we.note}
+          onOpenNote={onOpenExerciseNote}
+        />
 
         {tab === "workout" && !firstPaintDone && (
           // First-frame placeholder. Reserves the form's vertical space so the
@@ -1471,161 +1727,35 @@ export function SetLoggerScreen({ route, navigation }: any) {
           <View style={[styles.card, FORM_PLACEHOLDER_STYLE]} />
         )}
         {tab === "workout" && firstPaintDone && (
-          // The form <-> selection-bar swap: this wrapper's height animates
-          // from the form's height down to the bar's (and back), so the set
-          // list below visibly slides up to meet the bar and back down when
-          // the selection clears. Both layers stay mounted the whole time,
-          // absolutely positioned on top of each other, and cross-fade via
-          // swapAnim - only their opacity and this wrapper's height ever
-          // change, so nothing below this card re-lays out. The form side of
-          // the height comes from the form's own measured height (see
-          // onFormLayout), not a constant, so entering edit mode grows the
-          // card instead of clipping its buttons.
-          <Animated.View
-            style={[
-              { overflow: "hidden" },
-              swapHeight != null && { height: swapHeight },
-            ]}
-          >
-            <Animated.View
-              onLayout={(e: LayoutChangeEvent) =>
-                setBarHeight(e.nativeEvent.layout.height)
-              }
-              pointerEvents={selectionMode ? "auto" : "none"}
-              style={[
-                styles.card,
-                styles.selectionBar,
-                styles.swapLayer,
-                { opacity: swapAnim, zIndex: selectionMode ? 2 : 1 },
-              ]}
-            >
-              <Pressable
-                onPress={clearSelection}
-                hitSlop={12}
-                style={styles.selectionCancelBtn}
-              >
-                <Ionicons name="close" size={22} color={theme.colors.foreground} />
-              </Pressable>
-              <Text style={styles.selectionCount}>
-                {selectedIds.length} selected
-              </Text>
-              <Pressable
-                onPress={confirmDeleteSelected}
-                style={({ pressed }) => [
-                  styles.selectionDeleteBtn,
-                  pressed && { opacity: 0.85 },
-                ]}
-              >
-                <Ionicons
-                  name="trash-outline"
-                  size={16}
-                  color={theme.colors.destructive}
-                />
-                <Text style={styles.selectionDeleteText}>Delete</Text>
-              </Pressable>
-            </Animated.View>
-
-            <Animated.View
-              onLayout={onFormLayout}
-              pointerEvents={selectionMode ? "none" : "auto"}
-              style={[
-                styles.card,
-                {
-                  opacity: swapAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [1, 0],
-                  }),
-                  zIndex: selectionMode ? 1 : 2,
-                },
-              ]}
-            >
-              {/* Absolute overlay that fades a white border in/out. Using
-               *  opacity (native-supported) keeps everything on the native
-               *  driver, avoiding the JS/native mixing error. */}
-              <Animated.View
-                pointerEvents="none"
-                style={[styles.cardEditBorder, { opacity: editAnim }]}
-              />
-              <NumericField
-                label={
-                  isCardio
-                    ? editingSetId != null ? "Time (editing)" : "Time"
-                    : editingSetId != null ? "Weight (editing)" : "Weight"
-                }
-                unit={isCardio ? "min" : unit}
-                value={weight}
-                step={isCardio ? 1 : step}
-                min={0}
-                onChange={setWeight}
-                allowDecimal
-              />
-              <View onLayout={onFieldLayout}>
-                <NumericField
-                  label={isCardio ? "Level" : "Reps"}
-                  value={reps}
-                  step={1}
-                  min={0}
-                  onChange={setReps}
-                />
-              </View>
-              {showRestTime && (
-                // Stays mounted and collapses to height 0 rather than
-                // unmounting, so entering and leaving edit mode animates. The
-                // negative margin cancels the card's `gap` while the row is
-                // collapsed, so a hidden row adds nothing to the card.
-                // fieldHeight comes from the Reps field - see its declaration.
-                <Animated.View
-                  pointerEvents={restShown ? "auto" : "none"}
-                  style={{
-                    overflow: "hidden",
-                    opacity: restReveal,
-                    height: restReveal.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0, fieldHeight || FIELD_H_FALLBACK],
-                    }),
-                    marginTop: restReveal.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-CARD_GAP, 0],
-                    }),
-                  }}
-                >
-                  <NumericField
-                    label="Rest (sec)"
-                    value={restSec}
-                    step={5}
-                    min={0}
-                    onChange={setRestSec}
-                  />
-                </Animated.View>
-              )}
-              {error && <Text style={styles.error}>{error}</Text>}
-              <View style={{ flexDirection: "row", gap: 12 }}>
-                <PhaseButton
-                  defaultLabel="Save"
-                  altLabel="Update"
-                  phase={editAnim}
-                  onPress={save}
-                  style={{ flex: 1 }}
-                />
-                <PhaseButton
-                  defaultLabel="Clear"
-                  altLabel="Cancel"
-                  phase={editAnim}
-                  variant="secondary"
-                  onPress={() => {
-                    if (editingSetId != null) {
-                      cancelEdit()
-                    } else {
-                      setWeight(0)
-                      setReps(0)
-                      setError(null)
-                    }
-                  }}
-                  style={{ flex: 1 }}
-                />
-              </View>
-            </Animated.View>
-          </Animated.View>
+          <LogSetPanel
+            swapAnim={swapAnim}
+            swapHeight={swapHeight}
+            editAnim={editAnim}
+            restReveal={restReveal}
+            restShown={restShown}
+            fieldHeight={fieldHeight}
+            selectionMode={selectionMode}
+            selectedCount={selectedIds.length}
+            isCardio={isCardio}
+            unit={unit}
+            step={step}
+            weight={weight}
+            reps={reps}
+            restSec={restSec}
+            editing={editingSetId != null}
+            showRestTime={showRestTime}
+            error={error}
+            onBarLayout={onBarLayout}
+            onFormLayout={onFormLayoutStable}
+            onFieldLayout={onFieldLayoutStable}
+            onChangeWeight={setWeight}
+            onChangeReps={setReps}
+            onChangeRest={setRestSec}
+            onSave={onSave}
+            onClearOrCancel={onClearOrCancel}
+            onClearSelection={onClearSelection}
+            onDeleteSelected={onDeleteSelected}
+          />
         )}
       </Pressable>
 
@@ -1903,7 +2033,8 @@ function PhaseButton({
   )
 }
 
-function SubTabBar({ tab, onChange }: { tab: SubTab; onChange: (t: SubTab) => void }) {
+// Memoized: its only inputs are the active tab and the (stable) setter.
+const SubTabBar = memo(function SubTabBar({ tab, onChange }: { tab: SubTab; onChange: (t: SubTab) => void }) {
   const items: { key: SubTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
     { key: "workout", label: "Workout", icon: "barbell-outline" },
     { key: "history", label: "History", icon: "list-outline" },
@@ -1942,7 +2073,7 @@ function SubTabBar({ tab, onChange }: { tab: SubTab; onChange: (t: SubTab) => vo
       })}
     </View>
   )
-}
+})
 
 /**
  * The note on a read-only day card. Collapsed it is NotePreview's two lines;
@@ -4404,15 +4535,17 @@ const SetRow = memo(function SetRow({
         ) : null}
       </View>
 
-      {!s.is_planned && !!s.note && (
-        <View style={styles.setNoteLine}>
-          <Ionicons
-            name="document-text-outline"
-            size={11}
-            color={theme.colors.muted}
-          />
-          <Text style={styles.setNoteText}>{s.note}</Text>
-        </View>
+      {!s.is_planned && (
+        <NoteReveal note={s.note}>
+          <View style={styles.setNoteLine}>
+            <Ionicons
+              name="document-text-outline"
+              size={11}
+              color={theme.colors.muted}
+            />
+            <Text style={styles.setNoteText}>{s.note}</Text>
+          </View>
+        </NoteReveal>
       )}
 
     </HoldPressable>
