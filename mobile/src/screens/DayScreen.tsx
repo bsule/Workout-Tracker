@@ -11,6 +11,7 @@ import {
   Easing,
   FlatList,
   Keyboard,
+  LayoutAnimation,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
@@ -49,6 +50,7 @@ import { HoldPressable } from "../components/HoldPressable"
 import { NativeMenu, type MenuAction } from "../components/NativeMenu"
 import { NavArrowButton } from "../components/NavArrowButton"
 import { NotePreview } from "../components/NotePreview"
+import { NoteReveal, NOTE_SHIFT_ANIM } from "../components/NoteReveal"
 import { NoteSheet } from "../components/NoteSheet"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
@@ -356,6 +358,9 @@ export function DayScreen({ navigation, route }: any) {
         onEdit={() => setNoteSheetMode("edit")}
         onClose={() => setNoteSheetOpen(false)}
         onSave={() => {
+          // The summary card grows or shrinks by the note's height. This
+          // animates that shift; the note line's own fade-in is NoteReveal's.
+          LayoutAnimation.configureNext(NOTE_SHIFT_ANIM)
           if (noteKind === "day") {
             setDayNote(date, noteDraft)
             return
@@ -846,7 +851,7 @@ function SummaryStrip({
           {started && <SummaryMeta label="Started" value={started} />}
           {finished && <SummaryMeta label="End" value={finished} />}
           {duration && <SummaryMeta label="Duration" value={duration} />}
-          {!!note && (
+          <NoteReveal note={note} style={styles.summaryNoteReveal}>
             <Pressable
               onPress={onOpenNotes}
               unstable_pressDelay={0}
@@ -861,8 +866,8 @@ function SummaryStrip({
               <Text style={styles.summaryMetaLabel}>Day note</Text>
               <NotePreview note={note} style={styles.summaryNoteLine} />
             </Pressable>
-          )}
-          {!!workoutNote.trim() && (
+          </NoteReveal>
+          <NoteReveal note={workoutNote} style={styles.summaryNoteReveal}>
             <Pressable
               onPress={onOpenWorkoutNotes}
               unstable_pressDelay={0}
@@ -877,7 +882,7 @@ function SummaryStrip({
               <Text style={styles.summaryMetaLabel}>Workout note</Text>
               <NotePreview note={workoutNote} style={styles.summaryNoteLine} />
             </Pressable>
-          )}
+          </NoteReveal>
         </View>
         {workout && (
           <Pressable
@@ -1379,6 +1384,9 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
   },
   summaryMetaValue: { color: theme.colors.foreground, fontSize: theme.fontSize.xs, fontWeight: "600" },
+  // NoteReveal's wrapper sits between summaryMetaRow and the hit area, so it
+  // carries the shrink the hit area used to apply on its own.
+  summaryNoteReveal: { flexShrink: 1 },
   summaryNoteHit: {
     gap: 4,
     borderRadius: theme.radius.md,
