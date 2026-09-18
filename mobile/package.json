@@ -17,7 +17,8 @@
     "ipa": "node scripts/download-ipa.mjs",
     "ipa:pick": "node scripts/download-ipa.mjs --pick",
     "ipa:gh": "node scripts/github-ipa.mjs",
-    "apk:gh": "node scripts/github-apk.mjs"
+    "apk:gh": "node scripts/github-apk.mjs",
+    "icons": "node scripts/build-icon.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

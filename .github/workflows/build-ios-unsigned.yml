@@ -18,7 +18,10 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    # macos-15 tops out at Xcode 16.4, which ships Swift 6.1. Since the Expo
+    # 57 upgrade a native dependency needs Swift tools 6.2, so the build fails
+    # there at package resolution. macos-26 carries Xcode 26.x, which has it.
+    runs-on: macos-26
     timeout-minutes: 60
     defaults:
       run:
@@ -28,12 +31,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16
+      # Newest available rather than a pinned major: a pin is what broke this
+      # build when a dependency started requiring a newer Swift toolchain.
+      # The list is printed so a future toolchain failure names its own cause.
+      - name: Select newest Xcode
         run: |
-          XCODE=$(ls /Applications | grep -E '^Xcode_16' | sort -V | tail -n 1)
-          if [ -z "$XCODE" ]; then echo "No Xcode 16 found"; ls /Applications | grep Xcode; exit 1; fi
+          ls /Applications | grep -E '^Xcode' || true
+          XCODE=$(ls /Applications | grep -E '^Xcode_[0-9]' | sort -V | tail -n 1)
+          if [ -z "$XCODE" ]; then echo "No versioned Xcode found"; exit 1; fi
           sudo xcode-select -s "/Applications/$XCODE/Contents/Developer"
           xcodebuild -version
+          swift --version
 
       - name: Setup Node
         uses: actions/setup-node@v4
