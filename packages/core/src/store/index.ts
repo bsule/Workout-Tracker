@@ -37,11 +37,13 @@ export {
   getDayNoteQ,
 } from "./queries"
 export {
+  addSet,
   startPlannedWorkout,
   finishWorkout,
   logPlannedSet,
   recomputeAllPrs,
   deleteWorkout,
+  deleteSets,
   createWorkout,
   addExerciseToWorkout,
   setDayNote,

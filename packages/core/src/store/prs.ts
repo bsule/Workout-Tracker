@@ -51,10 +51,12 @@ export function recomputePrsForExercise(
   // A set is PR iff no *other* set dominates it — past or future. Once a
   // later set beats it the gold star moves; the dethroned set keeps was_pr
   // (sticky) and renders as the muted "historical PR" star.
+  const workoutsById = new Map(snap.workouts.map((w) => [w.id, w]))
+  const exercisesById = new Map(snap.workout_exercises.map((we) => [we.id, we]))
   const weToDate = new Map<number, string>()
   for (const we of snap.workout_exercises) {
     if (!weIds.has(we.id)) continue
-    const w = snap.workouts.find((w) => w.id === we.workout_id)
+    const w = workoutsById.get(we.workout_id)
     if (w) weToDate.set(we.id, w.date)
   }
   const candidates = snap.sets.filter(
@@ -66,8 +68,7 @@ export function recomputePrsForExercise(
   ) as Array<SetRow & { weight: number; reps: number }>
   const dateOf = (s: SetRow) => weToDate.get(s.workout_exercise_id) ?? ""
   const weOrderOf = (s: SetRow) =>
-    snap.workout_exercises.find((we) => we.id === s.workout_exercise_id)
-      ?.order ?? 0
+    exercisesById.get(s.workout_exercise_id)?.order ?? 0
   const ts = (s: SetRow) => Date.parse(s.created_at) || 0
   const isPriorTo = (o: SetRow, s: SetRow) => {
     const od = dateOf(o)
@@ -105,21 +106,18 @@ export function recomputePrsForExercise(
     pool: Cand[]
   ): { current: Set<number>; historical: Set<number> } => {
     const current = new Set<number>()
-    for (const s of pool) {
-      let dominated = false
-      for (const o of pool) {
-        if (o.id === s.id) continue
-        if (dominates(o, s)) {
-          dominated = true
-          break
-        }
-        // Exact tie — earliest wins.
-        if (sameEffort(o, s) && isPriorTo(o, s)) {
-          dominated = true
-          break
-        }
-      }
-      if (!dominated) current.add(s.id)
+    // Heaviest first, then most reps, with the earliest exact tie first.
+    // Every preceding row can dominate this row iff it has at least as
+    // many reps. One running maximum replaces the all-pairs comparison.
+    const orderedByEffort = pool.slice().sort((a, b) =>
+      weightKey(b.weight) - weightKey(a.weight) ||
+      b.reps - a.reps ||
+      (isPriorTo(a, b) ? -1 : isPriorTo(b, a) ? 1 : 0)
+    )
+    let maxReps = -Infinity
+    for (const s of orderedByEffort) {
+      if (s.reps > maxReps) current.add(s.id)
+      maxReps = Math.max(maxReps, s.reps)
     }
     const historical = new Set<number>()
     if (opts.deriveHistorical) {

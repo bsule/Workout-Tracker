@@ -67,3 +67,37 @@ describe("buildIndexes", () => {
     expect(ix.workoutsByMonth.size).toBe(0)
   })
 })
+
+it("reuses unchanged tables while replacing a set index without mutating old indexes", () => {
+  const snap = sampleSnapshot()
+  const before = buildIndexes(snap)
+  const next = { ...snap, sets: snap.sets.slice(1) }
+  const after = buildIndexes(next)
+  expect(after.exerciseById).toBe(before.exerciseById)
+  expect(after.workoutsByMonth).toBe(before.workoutsByMonth)
+  expect(after.workoutExercisesByWorkout).toBe(before.workoutExercisesByWorkout)
+  expect(after.dayNoteByDate).toBe(before.dayNoteByDate)
+  expect(after.setsByWorkoutExercise).not.toBe(before.setsByWorkoutExercise)
+  expect(after.setsByWorkoutExercise.get(10)?.map((s) => s.id)).toEqual([1001])
+  expect(before.setsByWorkoutExercise.get(10)).toHaveLength(2)
+})
+
+it("invalidates changed workout, exercise and note tables", () => {
+  const snap = sampleSnapshot()
+  const before = buildIndexes(snap)
+  const next = {
+    ...snap,
+    workouts: [workout(9, "2026-03-01")],
+    exercises: [exercise(102, "Row")],
+    workout_exercises: [we(15, 9, 102)],
+    day_notes: [{ date: "2026-03-01", text: "Updated" }],
+  }
+  const after = buildIndexes(next)
+  expect(after.workoutsByMonth.has("2026-01")).toBe(false)
+  expect(after.workoutById.has(9)).toBe(true)
+  expect(after.exerciseById.has(100)).toBe(false)
+  expect(after.exerciseById.has(102)).toBe(true)
+  expect(after.weById.has(15)).toBe(true)
+  expect(after.dayNoteByDate.get("2026-03-01")?.text).toBe("Updated")
+  expect(after.setsByWorkoutExercise).toBe(before.setsByWorkoutExercise)
+})
