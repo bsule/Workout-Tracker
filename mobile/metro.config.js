@@ -39,22 +39,22 @@ config.resolver.assetExts = [
 const NODE_BUILTIN_STUB = path.resolve(projectRoot, "node-builtin-stub.js")
 
 // Force every `react` (and `react/*`) import to resolve to mobile's single copy
-// — the version react-native's renderer is built against (19.1.0 for RN 0.81).
-// npm workspaces hoist `react-native` to the repo root, where it would otherwise
-// load the root's react (pinned to 19.2.4 by the web app) while mobile app code
-// loads mobile/node_modules/react (19.1.0). Two React instances at runtime throw
+// — the version react-native's renderer is built against (19.2.3 for RN 0.86).
+// npm workspaces hoist packages to the repo root, where code would otherwise
+// load the root's react (pinned by the web app) while mobile app code loads
+// mobile/node_modules/react. Two React instances at runtime throw
 // "Incompatible React versions: ... the React and React Native renderer". By
 // anchoring resolution at mobile's react, react-native and app code share one
-// instance. mobile's react pin differs from the web app's, so this nested copy
-// always exists.
+// instance. mobile's react pin (Expo's SDK pin) differs from the web app's, so
+// this nested copy always exists.
 const reactAnchor = path.resolve(projectRoot, "node_modules/react/index.js")
 
 // `scheduler` is part of React's runtime and must match the react version
-// react-native's renderer uses. react 19.1.0 requires scheduler ^0.26.0, but the
-// web app's react 19.2.4 pulls scheduler 0.27.0 to the repo root — which does NOT
-// satisfy ^0.26.0. react-native nests the correct 0.26.0 under itself, so anchor
-// scheduler resolution at react-native's directory (resolved dynamically so it
-// survives future hoisting changes). Falls back to mobile's react if that fails.
+// react-native's renderer uses. The web app's react pulls a different scheduler
+// to the repo root, which need not satisfy the range mobile's react requires.
+// react-native nests the correct one under itself, so anchor scheduler
+// resolution at react-native's directory (resolved dynamically so it survives
+// future hoisting changes). Falls back to mobile's react if that fails.
 let schedulerAnchor = reactAnchor
 try {
   const rnDir = path.dirname(require.resolve("react-native/package.json", { paths: [projectRoot] }))

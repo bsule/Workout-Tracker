@@ -4,7 +4,15 @@
     {
       "name": "expo",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "start", "--workspace", "lift-mobile"],
+      "runtimeArgs": [
+        "run",
+        "start",
+        "--workspace",
+        "lift-mobile",
+        "--",
+        "--go",
+        "--clear"
+      ],
       "port": 8081
     }
   ]

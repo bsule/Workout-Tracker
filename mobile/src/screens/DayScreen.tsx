@@ -1486,7 +1486,7 @@ const styles = StyleSheet.create({
   },
   dateText: { color: theme.colors.foreground, fontSize: theme.fontSize.md, fontWeight: "700" },
   dateMenuOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(0,0,0,0.5)",
     paddingTop: theme.spacing[2],
     paddingHorizontal: theme.spacing[4],
@@ -1799,7 +1799,7 @@ const styles = StyleSheet.create({
     textAlign: "right",
   },
   exerciseCardSelected: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderColor: theme.colors.foreground,
     borderWidth: 1,
     borderRadius: theme.radius.lg - 1,
@@ -1846,7 +1846,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   gymOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(0,0,0,0.55)",
     paddingTop: 80,
     paddingHorizontal: theme.spacing[4],

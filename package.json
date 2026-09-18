@@ -20,5 +20,8 @@
   "devDependencies": {
     "concurrently": "^9.1.0",
     "vitest": "^3.0.5"
+  },
+  "overrides": {
+    "react-native-worklets": "0.10.1"
   }
 }
