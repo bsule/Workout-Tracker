@@ -52,6 +52,7 @@ import {
   roundForDisplay,
   toKg,
   useStore,
+  weightKey,
 } from "@lift/core"
 import type {
   ExerciseHistoryDay,
@@ -96,6 +97,9 @@ function predictPrFlags(
   }
   const position = loggedInTarget + 1
   let isPosPr = true
+  // Compare on weightKey, matching prs.ts — the saved flag and this preview
+  // must agree, and raw kg floats from an import differ from typed ones.
+  const key = weightKey(weight)
   for (const we of wes) {
     const arr = (indexes.setsByWorkoutExercise.get(we.id) ?? [])
       .slice()
@@ -105,10 +109,11 @@ function predictPrFlags(
       if (s.is_planned) continue
       if (s.weight == null || s.reps == null) continue
       posIdx++
+      const sKey = weightKey(s.weight)
       const dominates =
-        (s.weight > weight && s.reps >= reps) ||
-        (s.weight === weight && s.reps > reps) ||
-        (s.weight === weight && s.reps === reps)
+        (sKey > key && s.reps >= reps) ||
+        (sKey === key && s.reps > reps) ||
+        (sKey === key && s.reps === reps)
       if (dominates) {
         isPr = false
         if (posIdx === position) isPosPr = false
@@ -1875,14 +1880,19 @@ function topRepRecords(
     for (const s of day.sets) {
       if (s.weight == null || s.reps == null) continue
       const cur = best.get(s.reps)
-      if (!cur || s.weight > cur.weightKg) {
+      // weightKey, not the raw kg: an imported 125 lb set holds 56.70 kg and a
+      // typed one 56.699, so the raw compare let the noise decide the winner
+      // and, in the sort below, jump ahead of the reps tiebreak.
+      if (!cur || weightKey(s.weight) > weightKey(cur.weightKg)) {
         best.set(s.reps, { weightKg: s.weight, date: day.date })
       }
     }
   }
   return [...best.entries()]
     .map(([reps, v]) => ({ reps, weightKg: v.weightKg, date: v.date }))
-    .sort((a, b) => b.weightKg - a.weightKg || b.reps - a.reps)
+    .sort(
+      (a, b) => weightKey(b.weightKg) - weightKey(a.weightKg) || b.reps - a.reps
+    )
     .slice(0, limit)
 }
 
@@ -3016,7 +3026,7 @@ export const SummaryPanel = memo(function SummaryPanel({
         continue
       }
       cur.count += 1
-      if (s.weightKg > cur.weightKg) {
+      if (weightKey(s.weightKg) > weightKey(cur.weightKg)) {
         cur.weightKg = s.weightKg
         cur.date = s.date
       }
@@ -3032,13 +3042,20 @@ export const SummaryPanel = memo(function SummaryPanel({
     // `metric` is what the bar measures — always the active sort, so the bar
     // lengths and the row order tell the same story. "Recent" has no useful
     // magnitude, so it falls back to weight.
+    // Weight is measured as weightKey so equal-looking weights really tie and
+    // the reps tiebreak below gets to decide. `share` is a ratio against
+    // maxMetric, so the x100 scale cancels out and the bars are unaffected.
     const metric = (r: (typeof rows)[number]) =>
-      sort === "reps" ? r.reps : sort === "oneRm" ? r.oneRmKg : r.weightKg
+      sort === "reps"
+        ? r.reps
+        : sort === "oneRm"
+          ? r.oneRmKg
+          : weightKey(r.weightKg)
 
     rows.sort((a, b) => {
       if (sort === "recent") {
         if (a.date !== b.date) return a.date < b.date ? 1 : -1
-        return b.weightKg - a.weightKg
+        return weightKey(b.weightKg) - weightKey(a.weightKg)
       }
       const diff = metric(b) - metric(a)
       // Ties break on the harder set: more reps at the same weight.

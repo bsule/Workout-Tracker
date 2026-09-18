@@ -20,6 +20,10 @@ import { clearApiKey, getApiKey, setApiKey } from "@/lib/ai/keys"
 import type { AIProviderId } from "@lift/core"
 import {
   autoSync,
+  formatLastSynced,
+  getLastSyncedAt,
+  loadSyncClock,
+  subscribeSyncClock,
   SyncQuotaExceededError,
   type Quota,
   type RemotePreview,
@@ -275,12 +279,22 @@ function CloudSyncSection() {
   const [status, setStatus] = useState<{ kind: "ok" | "error" | "info"; msg: string } | null>(null)
   const [stale, setStale] = useState(false)
   const [preview, setPreview] = useState<RemotePreview | null>(null)
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(() =>
+    getLastSyncedAt()
+  )
 
   useEffect(() => {
     autoSync
       .fetchQuota()
       .then(setQuota)
       .catch(() => {})
+  }, [])
+
+  // One clock for every sync path: the button here, and the 3-day check that
+  // runs on app open. Subscribing keeps the label right either way.
+  useEffect(() => {
+    void loadSyncClock().then(setLastSyncedAt)
+    return subscribeSyncClock(() => setLastSyncedAt(getLastSyncedAt()))
   }, [])
 
   async function sync() {
@@ -443,6 +457,10 @@ function CloudSyncSection() {
             : `${remaining} of ${limit} syncs left today${resetsAt ? ` · resets ${resetsAt}` : ""}`}
         </span>
       </div>
+
+      <p className="mt-2 text-xs text-muted-foreground">
+        {formatLastSynced(lastSyncedAt)}
+      </p>
 
       {preview && (
         <div className="mt-3 rounded-md border border-white/10 bg-white/[.03] p-3">

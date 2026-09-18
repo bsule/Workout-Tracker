@@ -122,6 +122,10 @@ function migrate(snap: Snapshot): ParseResult {
       })),
     }
   }
+  // v7 -> v8 has no shape change, so there is no branch for it. PR comparison
+  // moved to units.ts's weightKey, which makes every flag computed under the
+  // old raw-float rule stale; `migrated` is already true for the bump, and
+  // persist.ts:hydrate() runs recomputeAllPrs() whenever it is.
   return {
     snapshot: { ...s, schema_version: SCHEMA_VERSION },
     migrated,

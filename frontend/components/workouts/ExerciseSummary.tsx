@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { ChevronDown, ScrollText, X } from "lucide-react"
 import type { ExerciseHistoryDay, HistorySet } from "@/types"
 import { cn, parseLocalDate } from "@/lib/utils"
-import { formatWeight } from "@/lib/units"
+import { formatWeight, weightKey } from "@/lib/units"
 import { estimateOneRm, getDayNoteQ, getWorkoutByDateQ } from "@/lib/store"
 import { useWeightUnit } from "@/components/settings/SettingsProvider"
 import { Dropdown } from "@/components/ui/Dropdown"
@@ -399,7 +399,10 @@ function rowsPerRep(sets: Dated[], sort: RepSort) {
       continue
     }
     cur.count += 1
-    if (a.set.weight > cur.weightKg) {
+    // weightKey, not the raw kg: an imported set and a typed one can hold kg
+    // floats that differ in the third decimal while displaying the same
+    // number, and the raw compare let that noise pick the winner.
+    if (weightKey(a.set.weight) > weightKey(cur.weightKg)) {
       cur.weightKg = a.set.weight
       cur.date = a.date
     }
@@ -412,13 +415,20 @@ function rowsPerRep(sets: Dated[], sort: RepSort) {
     oneRmKg: estimateOneRm(v.weightKg, reps),
   }))
 
+  // Weight is measured as weightKey so equal-looking weights really tie and the
+  // reps tiebreak below gets to decide. `share` is a ratio against maxMetric,
+  // so the x100 scale cancels out and the bars are unaffected.
   const metric = (r: (typeof rows)[number]) =>
-    sort === "reps" ? r.reps : sort === "oneRm" ? r.oneRmKg : r.weightKg
+    sort === "reps"
+      ? r.reps
+      : sort === "oneRm"
+        ? r.oneRmKg
+        : weightKey(r.weightKg)
 
   rows.sort((a, b) => {
     if (sort === "recent") {
       if (a.date !== b.date) return a.date < b.date ? 1 : -1
-      return b.weightKg - a.weightKg
+      return weightKey(b.weightKg) - weightKey(a.weightKg)
     }
     const diff = metric(b) - metric(a)
     // Ties break on the harder set: more reps at the same weight.

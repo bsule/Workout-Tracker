@@ -16,7 +16,17 @@ import {
   setToken,
 } from "@/lib/api"
 import type { User } from "@/types"
-import { CloudflareTransport, sync as syncModule } from "@lift/core"
+import {
+  CloudflareTransport,
+  clearSyncClock,
+  configureSyncClock,
+  sync as syncModule,
+} from "@lift/core"
+import {
+  readStoredEtag,
+  webSyncClockStore,
+  writeStoredEtag,
+} from "@/lib/syncStorage"
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8787/api"
@@ -24,7 +34,13 @@ const API_BASE =
 const syncTransport = new CloudflareTransport({
   apiBase: API_BASE,
   getToken,
+  onEtagChange: writeStoredEtag,
 })
+
+/** Point the core's sync clock at localStorage. Idempotent. */
+function installSyncClock() {
+  configureSyncClock(webSyncClockStore)
+}
 
 interface AuthState {
   user: User | null
@@ -57,6 +73,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!getToken()) return
+    installSyncClock()
+    // Restore the etag from the last session so the first push after a reload
+    // doesn't look like a conflict.
+    const savedEtag = readStoredEtag()
+    if (savedEtag) syncTransport.setEtag(savedEtag)
     syncModule.configureSync(syncTransport)
     api
       .me()
@@ -84,6 +105,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(res.user)
       setCachedUser(res.user)
       syncTransport.setEtag(null)
+      // setEtag only notifies on a change, so clear storage directly in case
+      // the transport already held null while a stale etag sat on disk.
+      writeStoredEtag(null)
+      installSyncClock()
+      clearSyncClock()
       syncModule.configureSync(syncTransport)
     },
     []
@@ -96,6 +122,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(res.user)
       setCachedUser(res.user)
       syncTransport.setEtag(null)
+      // setEtag only notifies on a change, so clear storage directly in case
+      // the transport already held null while a stale etag sat on disk.
+      writeStoredEtag(null)
+      installSyncClock()
+      clearSyncClock()
       syncModule.configureSync(syncTransport)
     },
     []
@@ -111,6 +142,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null)
     setCachedUser(null)
     syncTransport.setEtag(null)
+    writeStoredEtag(null)
+    clearSyncClock()
+    configureSyncClock(null)
     syncModule.configureSync(null)
   }, [])
 

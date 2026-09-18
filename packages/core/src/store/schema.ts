@@ -1,5 +1,8 @@
 import type { Category, ExerciseKind, UserSettings, WorkoutStatus } from "../types"
 
+// v8: no shape change. PR comparison moved from raw kg floats to units.ts's
+//     weightKey, so every stored is_pr / is_position_pr flag computed under the
+//     old rule is stale. The bump alone makes hydrate() run recomputeAllPrs().
 // v7: add note to WorkoutExerciseRow — a note about one exercise on one day.
 // v6: workout.notes is canonical again — a per-session note that lives
 //     alongside, not instead of, the per-date day_notes row.
@@ -8,7 +11,7 @@ import type { Category, ExerciseKind, UserSettings, WorkoutStatus } from "../typ
 // v3: add soft-delete support to ExerciseRow.
 // v2: add kind to ExerciseRow, distance/time fields to SetRow.
 // Older snapshots are migrated in blob.ts:migrate().
-export const SCHEMA_VERSION = 7
+export const SCHEMA_VERSION = 8
 
 export interface ExerciseRow {
   id: number

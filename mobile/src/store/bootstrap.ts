@@ -1,10 +1,11 @@
-import { AppState } from "react-native"
+import { AppState, InteractionManager } from "react-native"
 import {
   setStorageFactory,
   configureStore,
   hydrateStore,
   flushOnHide,
   addFlushListener,
+  autoSync,
 } from "@lift/core"
 import { RnFsStorage } from "./storage"
 import {
@@ -39,6 +40,7 @@ export function installMobileStore() {
         // Foregrounding: best-effort backup confirms the latest snapshot
         // is mirrored to the user's Files folder.
         void runBackup("open")
+        scheduleAutoSync()
       }
     })
   }
@@ -58,4 +60,21 @@ export async function bootstrapForUser(userKey: string) {
   // the user hasn't picked a folder yet, and the restore flow handles the
   // empty-store case before this fires (RootNavigator gating).
   void runBackup("open")
+  scheduleAutoSync()
+}
+
+/**
+ * Cloud sync catch-up: push if this device hasn't synced in 3 days.
+ *
+ * Runs on cold start and on every foreground, which is often — that is fine.
+ * After the first call the clock is in memory, so a "not due" answer is one
+ * comparison: no disk, no network, no render. serialize() (JSON.stringify +
+ * gzipSync) only runs on the rare due call, and runAfterInteractions keeps it
+ * off the first frames. Signed out, offline, or unhydrated it does nothing —
+ * see autoSync.maybeAutoSync().
+ */
+function scheduleAutoSync() {
+  InteractionManager.runAfterInteractions(() => {
+    void autoSync.maybeAutoSync()
+  })
 }

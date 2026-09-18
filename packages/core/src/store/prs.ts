@@ -9,6 +9,7 @@
  */
 
 import type { SetRow, Snapshot } from "./schema"
+import { weightKey } from "../units"
 
 export function recomputePrsForWe(snap: Snapshot, weId: number): Snapshot {
   const we = snap.workout_exercises.find((x) => x.id === weId)
@@ -81,12 +82,23 @@ export function recomputePrsForExercise(
     if (ot !== st) return ot < st
     return o.id < s.id
   }
+  // Weights compare through weightKey, never as raw floats: an imported set
+  // and a typed one can hold kg values that differ in the third decimal while
+  // displaying the same number (see units.ts). On raw floats that noise broke
+  // both branches below — the equal-weight branch never fired, so an older
+  // 135x7 failed to dominate a newer 135x5.
   const dominates = (
     o: SetRow & { weight: number; reps: number },
     s: SetRow & { weight: number; reps: number }
-  ) =>
-    (o.weight > s.weight && o.reps >= s.reps) ||
-    (o.weight === s.weight && o.reps > s.reps)
+  ) => {
+    const ow = weightKey(o.weight)
+    const sw = weightKey(s.weight)
+    return (ow > sw && o.reps >= s.reps) || (ow === sw && o.reps > s.reps)
+  }
+  const sameEffort = (
+    o: SetRow & { weight: number; reps: number },
+    s: SetRow & { weight: number; reps: number }
+  ) => weightKey(o.weight) === weightKey(s.weight) && o.reps === s.reps
 
   type Cand = SetRow & { weight: number; reps: number }
   const computePrSets = (
@@ -102,7 +114,7 @@ export function recomputePrsForExercise(
           break
         }
         // Exact tie — earliest wins.
-        if (o.weight === s.weight && o.reps === s.reps && isPriorTo(o, s)) {
+        if (sameEffort(o, s) && isPriorTo(o, s)) {
           dominated = true
           break
         }
@@ -118,8 +130,7 @@ export function recomputePrsForExercise(
       for (const s of ordered) {
         const hadPriorRecord = prior.some(
           (o) =>
-            dominates(o, s) ||
-            (o.weight === s.weight && o.reps === s.reps && isPriorTo(o, s))
+            dominates(o, s) || (sameEffort(o, s) && isPriorTo(o, s))
         )
         if (!hadPriorRecord) historical.add(s.id)
         prior.push(s)

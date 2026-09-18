@@ -9,6 +9,7 @@ import {
   useHydrated,
 } from "@/lib/store"
 import { installWebStore } from "@/lib/store/setupWebStore"
+import { autoSync } from "@lift/core"
 
 interface Props {
   children: React.ReactNode
@@ -28,13 +29,18 @@ export function StoreProvider({ children }: Props) {
     configureStore(`users/${userKey}`)
     hydrateStore()
       .then(() => {
-        if (!cancelled) setActiveKey(userKey)
+        if (cancelled) return
+        setActiveKey(userKey)
+        // "anon" is the signed-out namespace; maybeAutoSync also no-ops
+        // without a configured transport.
+        if (userKey !== "anon") scheduleAutoSync()
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
       })
     return () => {
       cancelled = true
+      cancelAutoSync()
     }
   }, [loading, userKey])
 
@@ -51,4 +57,32 @@ export function StoreProvider({ children }: Props) {
   // mounted under "anon" (during the brief window before AuthProvider resolves
   // /auth/me) keep stale state when the real user's snapshot swaps in.
   return <div key={activeKey}>{children}</div>
+}
+
+/**
+ * Once-per-load check: push if this device hasn't synced in 3 days.
+ * Deferred to browser idle so serialize() (JSON.stringify + gzip, both
+ * synchronous) can't stall the first paint. A no-op when not due, offline,
+ * or signed out — see autoSync.maybeAutoSync().
+ */
+let cancelPendingAutoSync: (() => void) | null = null
+
+function scheduleAutoSync() {
+  cancelAutoSync()
+  const run = () => {
+    cancelPendingAutoSync = null
+    void autoSync.maybeAutoSync()
+  }
+  if (typeof window.requestIdleCallback === "function") {
+    const id = window.requestIdleCallback(run, { timeout: 5000 })
+    cancelPendingAutoSync = () => window.cancelIdleCallback(id)
+  } else {
+    const id = window.setTimeout(run, 3000)
+    cancelPendingAutoSync = () => window.clearTimeout(id)
+  }
+}
+
+function cancelAutoSync() {
+  cancelPendingAutoSync?.()
+  cancelPendingAutoSync = null
 }

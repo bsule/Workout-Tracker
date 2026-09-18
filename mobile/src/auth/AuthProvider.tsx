@@ -9,7 +9,13 @@ import {
 } from "react"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 import type { User } from "@lift/core"
-import { CloudflareTransport, sync as syncModule } from "@lift/core"
+import {
+  CloudflareTransport,
+  clearSyncClock,
+  configureSyncClock,
+  sync as syncModule,
+} from "@lift/core"
+import { rnSyncClockStore } from "../sync/clockStore"
 import Constants from "expo-constants"
 import {
   api,
@@ -67,6 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       const savedEtag = await AsyncStorage.getItem(ETAG_KEY).catch(() => null)
       if (savedEtag) syncTransport.setEtag(savedEtag)
+      configureSyncClock(rnSyncClockStore)
       syncModule.configureSync(syncTransport)
 
       // Tokens never expire server-side, so a stored token is a valid session.
@@ -105,6 +112,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await setCachedUser(res.user)
     setUser(res.user)
     syncTransport.setEtag(null)
+    // setEtag only notifies on a change, so drop the stored value directly.
+    AsyncStorage.removeItem(ETAG_KEY).catch(() => {})
+    configureSyncClock(rnSyncClockStore)
+    clearSyncClock()
     syncModule.configureSync(syncTransport)
   }, [])
 
@@ -115,6 +126,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await setCachedUser(res.user)
       setUser(res.user)
       syncTransport.setEtag(null)
+      AsyncStorage.removeItem(ETAG_KEY).catch(() => {})
+      configureSyncClock(rnSyncClockStore)
+      clearSyncClock()
       syncModule.configureSync(syncTransport)
     },
     []
@@ -139,6 +153,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await setCachedUser(null)
     setUser(null)
     syncTransport.setEtag(null)
+    clearSyncClock()
+    configureSyncClock(null)
     syncModule.configureSync(null)
   }, [])
 

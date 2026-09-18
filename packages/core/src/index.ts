@@ -27,3 +27,13 @@ export type {
   CloudflareTransportOptions,
   Quota,
 } from "./sync/cloudflareTransport"
+export {
+  configureSyncClock,
+  loadSyncClock,
+  getLastSyncedAt,
+  markSynced,
+  clearSyncClock,
+  subscribeSyncClock,
+  formatLastSynced,
+} from "./sync/syncClock"
+export type { SyncClockStore } from "./sync/syncClock"
