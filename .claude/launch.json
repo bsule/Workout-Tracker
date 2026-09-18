@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "expo",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start", "--workspace", "lift-mobile"],
+      "port": 8081
+    }
+  ]
+}

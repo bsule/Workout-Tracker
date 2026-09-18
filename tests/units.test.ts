@@ -5,6 +5,7 @@ import {
   roundForDisplay,
   formatWeight,
   defaultStep,
+  weightKey,
   KG_PER_LB,
   LB_PER_KG,
 } from "@lift/core/units"
@@ -92,5 +93,32 @@ describe("units: defaultStep", () => {
   it("is 2.5 for kg and 5 for lb", () => {
     expect(defaultStep("kg")).toBe(2.5)
     expect(defaultStep("lb")).toBe(5)
+  })
+})
+
+describe("units: weightKey", () => {
+  it("collapses the float noise a FitNotes kg column leaves behind", () => {
+    // FitNotes writes the kg column at two decimals. The app converts the same
+    // lb value to a long float. Both render as the same weight, so they must
+    // compare as the same weight.
+    for (const lb of [95, 110, 125, 135, 225]) {
+      const typed = toKg(lb, "lb")
+      const imported = Math.round(typed * 100) / 100
+      expect(formatWeight(typed, "lb")).toBe(formatWeight(imported, "lb"))
+      expect(weightKey(typed)).toBe(weightKey(imported))
+    }
+  })
+
+  it("keeps genuinely different weights apart", () => {
+    // The smallest real plate increment is 0.25 kg — far above the 0.01 grid.
+    expect(weightKey(60)).toBeLessThan(weightKey(60.25))
+    expect(weightKey(toKg(135, "lb"))).toBeLessThan(weightKey(toKg(137.5, "lb")))
+  })
+
+  it("is monotonic and returns 0 for a missing weight", () => {
+    expect(weightKey(null)).toBe(0)
+    expect(weightKey(undefined)).toBe(0)
+    expect(weightKey(NaN)).toBe(0)
+    expect(weightKey(100)).toBeGreaterThan(weightKey(99.9))
   })
 })

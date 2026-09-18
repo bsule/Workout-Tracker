@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest"
 import * as M from "@lift/core/store/mutations"
 import { resetStore, currentSnapshot, loadSnapshot } from "./helpers/store"
 import { blankSnapshot, exercise, workout, we, set } from "./helpers/build"
+import { toKg } from "@lift/core/units"
 
 /** PR flags for a set, read fresh from the store (addSet returns a stale row). */
 function flags(setId: number) {
@@ -220,5 +221,68 @@ describe("PR flags survive the other set-destroying mutations", () => {
     )!
     expect(flags(orig.id).is_pr).toBe(true)
     expect(copy.is_pr).toBe(false)
+  })
+})
+
+describe("weights that display the same compare the same", () => {
+  // A FitNotes CSV import stores the kg column at two decimals; the same
+  // weight typed in lb converts to a long float. Both render identically, so
+  // neither may outrank the other on the strength of the third decimal.
+  const typed = (lb: number) => toKg(lb, "lb")
+  const imported = (lb: number) => Math.round(toKg(lb, "lb") * 100) / 100
+
+  it("lets an imported 135x7 dominate a later typed 135x5", () => {
+    // 135 lb rounds DOWN into the kg column (61.23 vs 61.23496995), so the old
+    // raw compare found no domination at all and handed the 5-rep set a PR.
+    const ex = M.createExercise({ name: "Row", category: "back" })
+    const w1 = M.createWorkout("2026-01-01").row
+    const old = M.addSet(M.addExerciseToWorkout(w1.id, ex.id).id, {
+      weight: imported(135),
+      reps: 7,
+    })
+    const w2 = M.createWorkout("2026-02-01").row
+    const fresh = M.addSet(M.addExerciseToWorkout(w2.id, ex.id).id, {
+      weight: typed(135),
+      reps: 5,
+    })
+
+    expect(flags(fresh.id).is_pr).toBe(false)
+    expect(flags(old.id).is_pr).toBe(true)
+  })
+
+  it("lets a typed 125x8 dominate an imported 125x7", () => {
+    // 125 lb rounds UP into the kg column (56.70 vs 56.69904625), so the raw
+    // compare made the 7-rep set look heavier than the 8-rep one.
+    const ex = M.createExercise({ name: "Curl", category: "arms" })
+    const w1 = M.createWorkout("2026-01-01").row
+    const seven = M.addSet(M.addExerciseToWorkout(w1.id, ex.id).id, {
+      weight: imported(125),
+      reps: 7,
+    })
+    const w2 = M.createWorkout("2026-02-01").row
+    const eight = M.addSet(M.addExerciseToWorkout(w2.id, ex.id).id, {
+      weight: typed(125),
+      reps: 8,
+    })
+
+    expect(flags(eight.id).is_pr).toBe(true)
+    expect(flags(seven.id).is_pr).toBe(false)
+  })
+
+  it("still breaks an exact-looking tie on the earlier set", () => {
+    const ex = M.createExercise({ name: "Bench", category: "chest" })
+    const w1 = M.createWorkout("2026-01-01").row
+    const first = M.addSet(M.addExerciseToWorkout(w1.id, ex.id).id, {
+      weight: imported(185),
+      reps: 5,
+    })
+    const w2 = M.createWorkout("2026-02-01").row
+    const second = M.addSet(M.addExerciseToWorkout(w2.id, ex.id).id, {
+      weight: typed(185),
+      reps: 5,
+    })
+
+    expect(flags(first.id).is_pr).toBe(true)
+    expect(flags(second.id).is_pr).toBe(false)
   })
 })

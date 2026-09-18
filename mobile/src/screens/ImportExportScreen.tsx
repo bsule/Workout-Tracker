@@ -13,6 +13,10 @@ import * as FileSystem from "expo-file-system/legacy"
 import * as Sharing from "expo-sharing"
 import {
   autoSync,
+  formatLastSynced,
+  getLastSyncedAt,
+  loadSyncClock,
+  subscribeSyncClock,
   SyncQuotaExceededError,
   useStore,
   type Quota,
@@ -449,11 +453,21 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
     | { kind: "ok" | "info"; msg: string }
     | null
   >(null)
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(() =>
+    getLastSyncedAt()
+  )
 
   useEffect(() => {
     if (!user) return
     autoSync.fetchQuota().then(setQuota).catch(() => {})
   }, [user])
+
+  // One clock for every sync path: the button below, and the 3-day check that
+  // runs when the app opens. Subscribing keeps the label right either way.
+  useEffect(() => {
+    void loadSyncClock().then(setLastSyncedAt)
+    return subscribeSyncClock(() => setLastSyncedAt(getLastSyncedAt()))
+  }, [])
 
   if (!user) {
     return (
@@ -614,6 +628,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
             ? "Loading quota…"
             : `${quota.remaining} of ${quota.limit} syncs left today`}
         </Text>
+        <Text style={styles.help}>{formatLastSynced(lastSyncedAt)}</Text>
       </View>
 
       <View style={styles.actionsRow}>

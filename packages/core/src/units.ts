@@ -33,3 +33,26 @@ export function formatWeight(kg: number | null | undefined, unit: WeightUnit): s
 export function defaultStep(unit: WeightUnit): number {
   return unit === "kg" ? 2.5 : 5
 }
+
+/**
+ * Comparison key for a stored kg weight, quantized to 0.01 kg.
+ *
+ * Two sets that display the same weight can hold different kg floats. A weight
+ * typed in lb converts to a long float (135 lb -> 61.23496995 kg), while the
+ * FitNotes CSV kg column carries only two decimals (61.23) — and our own
+ * .fitnotesdb export rounds the same way, so a round trip produces the mismatch
+ * too. Comparing the raw floats let that noise outrank the reps tiebreak: the
+ * imported row sorted above an equal one, and an older 135x7 stopped dominating
+ * a newer 135x5, which then took the PR star.
+ *
+ * 0.01 kg is finer than any display step (0.1 lb is 0.045 kg) and far coarser
+ * than the noise. The smallest real plate increment is 0.25 kg, so nothing
+ * genuinely different collapses. Quantizing beats a tolerance compare because
+ * it stays transitive, which the PR domination rule needs.
+ *
+ * Use it for every weight *comparison*. Keep the raw kg for display and export.
+ */
+export function weightKey(kg: number | null | undefined): number {
+  if (kg == null || !Number.isFinite(kg)) return 0
+  return Math.round(kg * 100)
+}

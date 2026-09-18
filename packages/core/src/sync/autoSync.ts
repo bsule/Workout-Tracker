@@ -14,11 +14,17 @@
  *
  * Pulls (and quota fetches) are unrestricted, so reading remaining quota
  * for the UI is free.
+ *
+ * Every path here that leaves local and cloud in agreement calls
+ * markSynced() (see syncClock.ts). That single clock drives the "last synced"
+ * label and the 3-day check in maybeAutoSync(), so a manual "Sync now"
+ * resets the auto-sync timer with no extra wiring.
  */
 
 import { parse } from "../store/blob"
 import { replaceSnapshotFromBytes } from "../store/persist"
 import { getState } from "../store/store"
+import { loadSyncClock, markSynced } from "./syncClock"
 import {
   _internalPullBytes,
   getTransport,
@@ -57,6 +63,7 @@ export async function syncNow(): Promise<SyncOutcome> {
   }
   try {
     await pushNow(getState().snapshot)
+    markSynced()
     return { kind: "pushed", quota: null }
   } catch (e) {
     if (e instanceof StaleSnapshotError) {
@@ -79,6 +86,7 @@ export async function forcePush(): Promise<void> {
   }
   await _internalPullBytes()
   await pushNow(getState().snapshot)
+  markSynced()
 }
 
 /**
@@ -90,6 +98,7 @@ export async function pullAndReplace(): Promise<boolean> {
   const result = await _internalPullBytes()
   if (!result) return false
   await replaceSnapshotFromBytes(result.bytes)
+  markSynced()
   return true
 }
 
@@ -118,6 +127,7 @@ export async function previewRemote(): Promise<RemotePreview | null> {
 /** Replace local snapshot with bytes already pulled (typically from previewRemote). */
 export async function applyRemoteBytes(bytes: Uint8Array): Promise<void> {
   await replaceSnapshotFromBytes(bytes)
+  markSynced()
 }
 
 /** Fetch current daily push quota from the server. Bypasses the budget. */
@@ -132,4 +142,89 @@ export function getCachedQuota(): Quota | null {
   const t = getTransport()
   if (!(t instanceof CloudflareTransport)) return null
   return t.getCachedQuota()
+}
+
+/** Auto-sync fires when the clock is this old. */
+const AUTO_SYNC_PERIOD_MS = 3 * 24 * 60 * 60 * 1000
+/** After a failed attempt, stay off the network for this long. */
+const AUTO_SYNC_RETRY_MS = 6 * 60 * 60 * 1000
+
+let autoInFlight = false
+let lastAutoAttemptAt = 0
+
+export type AutoSyncSkip =
+  | "in-flight"
+  | "not-configured"
+  | "not-hydrated"
+  | "empty"
+  | "never-synced"
+  | "not-due"
+  | "cooling-down"
+
+export type AutoSyncResult =
+  | { kind: "skipped"; reason: AutoSyncSkip }
+  | { kind: "synced" }
+  | { kind: "stale" }
+  | { kind: "failed"; error: unknown }
+
+/**
+ * Push if this device hasn't synced in 3 days. Hosts call this on app open
+ * (web: after hydrate; mobile: after bootstrap and on AppState "active").
+ *
+ * Cheap to call often. After the first call of a session the clock is in
+ * memory, so the common "not due" answer costs one subtraction — no disk, no
+ * network, no render. Offline is not a special case: the push rejects, the
+ * clock does not move, the sync stays due, and the cooldown keeps the app off
+ * the network for 6 hours. Nothing is shown to the user either way.
+ *
+ * Never throws.
+ */
+export async function maybeAutoSync(
+  now: number = Date.now()
+): Promise<AutoSyncResult> {
+  if (autoInFlight) return skipped("in-flight")
+  if (!isSyncConfigured()) return skipped("not-configured")
+
+  const state = getState()
+  // Pushing before hydrate would upload the empty starting snapshot and
+  // overwrite the cloud copy with nothing.
+  if (!state.hydrated) return skipped("not-hydrated")
+  // Same risk after a wipe or a fresh install that restored nothing. A manual
+  // push is the user's decision; an automatic one must not silently erase the
+  // cloud copy.
+  if (state.snapshot.workouts.length === 0) return skipped("empty")
+
+  const last = await loadSyncClock()
+  // Never synced on this device. The first sync stays a deliberate act.
+  if (last === null) return skipped("never-synced")
+  if (now - last < AUTO_SYNC_PERIOD_MS) return skipped("not-due")
+  if (lastAutoAttemptAt > 0 && now - lastAutoAttemptAt < AUTO_SYNC_RETRY_MS) {
+    return skipped("cooling-down")
+  }
+
+  autoInFlight = true
+  lastAutoAttemptAt = now
+  try {
+    // syncNow() calls markSynced() itself on a 200.
+    const outcome = await syncNow()
+    if (outcome.kind === "pushed") return { kind: "synced" }
+    // Cloud is newer. Resolving it means choosing between two datasets, so
+    // leave it to the user in the Sync screen.
+    return { kind: "stale" }
+  } catch (error) {
+    // Offline, over quota, or a server error.
+    return { kind: "failed", error }
+  } finally {
+    autoInFlight = false
+  }
+}
+
+function skipped(reason: AutoSyncSkip): AutoSyncResult {
+  return { kind: "skipped", reason }
+}
+
+/** Test seam: forget the in-process attempt cooldown. */
+export function _resetAutoSyncState(): void {
+  autoInFlight = false
+  lastAutoAttemptAt = 0
 }
