@@ -30,10 +30,16 @@ export type {
 export {
   configureSyncClock,
   loadSyncClock,
+  getSyncClock,
   getLastSyncedAt,
   markSynced,
+  markCloudNewer,
+  markCloudNewerPrompted,
+  requestCloudNewerPrompt,
+  hasCloudConflict,
+  shouldPromptCloudNewer,
   clearSyncClock,
   subscribeSyncClock,
   formatLastSynced,
 } from "./sync/syncClock"
-export type { SyncClockStore } from "./sync/syncClock"
+export type { SyncClockStore, SyncClockSnapshot } from "./sync/syncClock"

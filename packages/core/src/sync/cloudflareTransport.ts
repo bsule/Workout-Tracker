@@ -3,7 +3,7 @@
  *
  * Wire format:
  *   GET  /api/sync/snapshot          → 200 raw bytes + ETag header, or 204
- *   PUT  /api/sync/snapshot          → 200 { etag, quota }, 412 stale, 428 missing precondition, 429 over limit
+ *   PUT  /api/sync/snapshot          → 200 { etag, quota }, 412 stale { etag, quota }, 428 missing precondition, 429 over limit
  *   GET  /api/sync/quota             → 200 { used, limit, remaining, resets_at }
  *
  * Auth: Authorization: Token <hex>.
@@ -22,9 +22,16 @@ export interface Quota {
 }
 
 export class StaleSnapshotError extends Error {
-  constructor() {
+  /**
+   * The etag the server holds now, when it reports one. Callers key a
+   * "cloud is newer" prompt on it so the user is asked once per distinct
+   * cloud version. Null when the server does not say.
+   */
+  remoteEtag: string | null
+  constructor(remoteEtag: string | null = null) {
     super("Remote snapshot has changed; pull and retry.")
     this.name = "StaleSnapshotError"
+    this.remoteEtag = remoteEtag
   }
 }
 
@@ -120,7 +127,14 @@ export class CloudflareTransport implements SyncTransport {
       body,
     })
 
-    if (res.status === 412) throw new StaleSnapshotError()
+    if (res.status === 412) {
+      const data = (await res.json().catch(() => null)) as {
+        etag?: string | null
+      } | null
+      throw new StaleSnapshotError(
+        typeof data?.etag === "string" ? stripQuotes(data.etag) : null
+      )
+    }
     if (res.status === 429) {
       const data = (await res.json().catch(() => null)) as { quota?: Quota } | null
       if (data?.quota) {

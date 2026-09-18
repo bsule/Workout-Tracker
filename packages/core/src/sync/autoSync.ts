@@ -24,7 +24,13 @@
 import { parse } from "../store/blob"
 import { replaceSnapshotFromBytes } from "../store/persist"
 import { getState } from "../store/store"
-import { loadSyncClock, markSynced } from "./syncClock"
+import {
+  getSyncClock,
+  hasCloudConflict,
+  loadSyncClock,
+  markCloudNewer,
+  markSynced,
+} from "./syncClock"
 import {
   _internalPullBytes,
   getTransport,
@@ -40,7 +46,7 @@ import {
 
 export type SyncOutcome =
   | { kind: "pushed"; quota: Quota | null }
-  | { kind: "stale" }
+  | { kind: "stale"; remoteEtag: string | null }
 
 export interface RemotePreview {
   exportedAt: string | null
@@ -67,7 +73,11 @@ export async function syncNow(): Promise<SyncOutcome> {
     return { kind: "pushed", quota: null }
   } catch (e) {
     if (e instanceof StaleSnapshotError) {
-      return { kind: "stale" }
+      // Nothing was overwritten: the server refused the push on its If-Match
+      // precondition. Record which cloud version won so the host can tell the
+      // user once — the manual button and the automatic check share this.
+      markCloudNewer(e.remoteEtag)
+      return { kind: "stale", remoteEtag: e.remoteEtag }
     }
     if (e instanceof SyncQuotaExceededError) throw e
     throw e
@@ -160,6 +170,7 @@ export type AutoSyncSkip =
   | "never-synced"
   | "not-due"
   | "cooling-down"
+  | "cloud-newer"
 
 export type AutoSyncResult =
   | { kind: "skipped"; reason: AutoSyncSkip }
@@ -194,10 +205,14 @@ export async function maybeAutoSync(
   // cloud copy.
   if (state.snapshot.workouts.length === 0) return skipped("empty")
 
-  const last = await loadSyncClock()
+  await loadSyncClock()
+  const clock = getSyncClock()
   // Never synced on this device. The first sync stays a deliberate act.
-  if (last === null) return skipped("never-synced")
-  if (now - last < AUTO_SYNC_PERIOD_MS) return skipped("not-due")
+  if (clock.lastSyncedAt === null) return skipped("never-synced")
+  // A refused push stays refused until the user chooses pull or overwrite.
+  // Retrying can only fail again, so stay off the network entirely.
+  if (hasCloudConflict()) return skipped("cloud-newer")
+  if (now - clock.lastSyncedAt < AUTO_SYNC_PERIOD_MS) return skipped("not-due")
   if (lastAutoAttemptAt > 0 && now - lastAutoAttemptAt < AUTO_SYNC_RETRY_MS) {
     return skipped("cooling-down")
   }
@@ -208,8 +223,8 @@ export async function maybeAutoSync(
     // syncNow() calls markSynced() itself on a 200.
     const outcome = await syncNow()
     if (outcome.kind === "pushed") return { kind: "synced" }
-    // Cloud is newer. Resolving it means choosing between two datasets, so
-    // leave it to the user in the Sync screen.
+    // syncNow() recorded the conflict. Resolving it means choosing between two
+    // datasets, so the host asks the user — see shouldPromptCloudNewer().
     return { kind: "stale" }
   } catch (error) {
     // Offline, over quota, or a server error.

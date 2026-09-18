@@ -21,12 +21,14 @@ import type { AIProviderId } from "@lift/core"
 import {
   autoSync,
   formatLastSynced,
-  getLastSyncedAt,
+  getSyncClock,
   loadSyncClock,
+  requestCloudNewerPrompt,
   subscribeSyncClock,
   SyncQuotaExceededError,
   type Quota,
   type RemotePreview,
+  type SyncClockSnapshot,
 } from "@lift/core"
 import { Button } from "@/components/ui/button"
 import { Dropdown } from "@/components/ui/Dropdown"
@@ -277,11 +279,8 @@ function CloudSyncSection() {
     null | "sync" | "pull-stale" | "force-push" | "preview" | "apply"
   >(null)
   const [status, setStatus] = useState<{ kind: "ok" | "error" | "info"; msg: string } | null>(null)
-  const [stale, setStale] = useState(false)
   const [preview, setPreview] = useState<RemotePreview | null>(null)
-  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(() =>
-    getLastSyncedAt()
-  )
+  const [clock, setClock] = useState<SyncClockSnapshot>(() => getSyncClock())
 
   useEffect(() => {
     autoSync
@@ -293,18 +292,22 @@ function CloudSyncSection() {
   // One clock for every sync path: the button here, and the 3-day check that
   // runs on app open. Subscribing keeps the label right either way.
   useEffect(() => {
-    void loadSyncClock().then(setLastSyncedAt)
-    return subscribeSyncClock(() => setLastSyncedAt(getLastSyncedAt()))
+    void loadSyncClock().then(setClock)
+    return subscribeSyncClock(() => setClock(getSyncClock()))
   }, [])
 
   async function sync() {
     setBusy("sync")
     setStatus(null)
-    setStale(false)
     try {
       const result = await autoSync.syncNow()
       if (result.kind === "stale") {
-        setStale(true)
+        // syncNow() recorded the conflict, so the panel below appears and
+        // CloudConflictPrompt shows the one dialog. The "ask once" rule covers
+        // background checks, not a button press, so ask it to open even if the
+        // user already saw it for this cloud version.
+        setStatus({ kind: "info", msg: "Cloud has newer data. Pick one below." })
+        requestCloudNewerPrompt()
         return
       }
       setStatus({ kind: "ok", msg: "Synced." })
@@ -330,7 +333,6 @@ function CloudSyncSection() {
     setStatus(null)
     try {
       const applied = await autoSync.pullAndReplace()
-      setStale(false)
       setStatus({
         kind: "info",
         msg: applied
@@ -396,11 +398,18 @@ function CloudSyncSection() {
   }
 
   async function overwriteCloud() {
+    const ok = await confirm({
+      title: "Overwrite the cloud copy?",
+      message:
+        "The cloud's newer changes will be gone. This cannot be undone.",
+      destructive: true,
+      confirmLabel: "Overwrite",
+    })
+    if (!ok) return
     setBusy("force-push")
     setStatus(null)
     try {
       await autoSync.forcePush()
-      setStale(false)
       setStatus({ kind: "ok", msg: "Overwrote cloud with this device's data." })
       const q = await autoSync.fetchQuota().catch(() => null)
       if (q) setQuota(q)
@@ -459,7 +468,7 @@ function CloudSyncSection() {
       </div>
 
       <p className="mt-2 text-xs text-muted-foreground">
-        {formatLastSynced(lastSyncedAt)}
+        {formatLastSynced(clock.lastSyncedAt)}
       </p>
 
       {preview && (
@@ -502,23 +511,15 @@ function CloudSyncSection() {
           </div>
         </div>
       )}
-      {stale && (
+      {clock.cloudNewerAt !== null && (
         <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
           <p className="text-sm font-medium">Cloud is newer</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Your cloud backup has changes that aren&apos;t on this device. Pull
-            cloud down (replaces local) or overwrite cloud with this
-            device&apos;s data?
+            Another device pushed changes this one hasn&apos;t seen, so the
+            sync was refused. Nothing was lost. Get the cloud copy, or
+            overwrite it with this device&apos;s data.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setStale(false)}
-              disabled={busy != null}
-            >
-              Cancel
-            </Button>
             <Button
               size="sm"
               onClick={pullCloudOverLocal}

@@ -13,6 +13,7 @@ import { ActiveDateProvider } from "./src/state/activeDate"
 import { ThemeProvider } from "./src/theme/ThemeProvider"
 import { getStoredMode, init as initTheme, currentMode } from "./src/theme/themeMode"
 import { CategoryStylesProvider } from "./src/categories/CategoryStylesProvider"
+import { CloudConflictPrompt } from "./src/sync/CloudConflictPrompt"
 
 // Lazy-import the navigator so its tree of screens (each calling
 // `StyleSheet.create({ ... theme.colors.x })` at module load) doesn't
@@ -74,6 +75,8 @@ export default function App() {
                   >
                     <RootNavigator />
                   </Suspense>
+                  {/* Renders nothing; alerts once when the cloud is ahead. */}
+                  <CloudConflictPrompt />
                 </ActiveDateProvider>
                 </CategoryStylesProvider>
               </SettingsProvider>
