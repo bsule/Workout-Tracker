@@ -96,6 +96,13 @@ export interface HistorySet {
   was_position_pr: boolean
   note: string
   order: number
+  /** 1-based set position within its own workout_exercise, counting only
+   *  non-planned weight x reps sets. This is the same definition prs.ts uses
+   *  for is_position_pr, so anything keyed on position agrees with the "{n}PR"
+   *  badges. 0 means the set takes no position: it is planned, or it has no
+   *  weight/reps pair (cardio). Positions are assigned per workout_exercise,
+   *  before two same-date rows merge into one ExerciseHistoryDay. */
+  position: number
   estimated_one_rm: number
 }
 
@@ -126,8 +133,10 @@ export interface UserSettings {
    *  once 30 min have elapsed regardless of this setting. */
   show_time_since_last_set?: boolean
   /** Optional UI flag: when true (default), the log-set page's workout tab
-   *  shows the "Last time" card under the set list — the previous session's
-   *  sets and the top weights for this exercise. */
+   *  shows the record card under the set list. With no set logged that day the
+   *  card shows the previous session's sets and the top weights for the whole
+   *  exercise. Once the day has a logged set it switches to the top weights
+   *  for the set position about to be logged. One flag gates both modes. */
   show_last_time?: boolean
   /** The active AI provider used by the AI Plan screen. Defaults to
    *  "openai" when unset. The matching API key is stored separately in

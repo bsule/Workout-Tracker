@@ -116,7 +116,12 @@ export function workoutFromRow(w: WorkoutRow, ix: Indexes): Workout {
   }
 }
 
-export function historySetFromRow(s: SetRow): HistorySet {
+/**
+ * `position` is supplied by the caller, not derived here: it depends on the
+ * set's rank among its siblings in one workout_exercise, which a single row
+ * cannot know. Callers that do not care pass 0.
+ */
+export function historySetFromRow(s: SetRow, position = 0): HistorySet {
   return {
     id: s.id,
     weight: s.weight,
@@ -130,6 +135,7 @@ export function historySetFromRow(s: SetRow): HistorySet {
     was_position_pr: s.was_position_pr,
     note: s.note,
     order: s.order,
+    position,
     estimated_one_rm: estimateOneRm(s.weight, s.reps),
   }
 }

@@ -4,7 +4,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ComponentProps,
 } from "react"
 import {
   Alert,
@@ -47,6 +46,8 @@ import { SetList } from "../components/SetList"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { CollapseIn, FadeHighlight, SlideDownIn } from "../components/Fade"
 import { HoldPressable } from "../components/HoldPressable"
+import { NativeMenu, type MenuAction } from "../components/NativeMenu"
+import { NavArrowButton } from "../components/NavArrowButton"
 import { NotePreview } from "../components/NotePreview"
 import { NoteSheet } from "../components/NoteSheet"
 import { pressedStyle } from "../theme/pressable"
@@ -75,8 +76,6 @@ const TOTAL_DAYS = 365 * 6
 const INITIAL_INDEX = Math.floor(TOTAL_DAYS / 2)
 
 const noop = () => {}
-const MENU_OPEN_MS = 160
-const MENU_CLOSE_MS = 140
 
 export function DayScreen({ navigation, route }: any) {
   // Date lives in the shared ActiveDate context - that way the global "+"
@@ -182,22 +181,17 @@ export function DayScreen({ navigation, route }: any) {
   }, [])
   const clearSelection = useCallback(() => setSelectedIds([]), [])
 
-  const [dateMenuOpen, setDateMenuOpen] = useState(false)
   const [noteSheetOpen, setNoteSheetOpen] = useState(false)
   const [noteSheetMode, setNoteSheetMode] = useState<"view" | "edit">("view")
   // Which note the one shared sheet is editing: the date's or the session's.
   const [noteKind, setNoteKind] = useState<NoteKind>("day")
   const [noteDraft, setNoteDraft] = useState("")
   const [noteOriginal, setNoteOriginal] = useState("")
-  const [menuCtx, setMenuCtx] = useState({
-    note: "",
-    workoutNote: "",
-    hasExercises: false,
-    workoutId: null as number | null,
-  })
 
+  // Changing the date closes the note sheet. The date menu needs no such
+  // reset: the system dismisses it on its own, and it is rebuilt from the
+  // current date every render.
   useEffect(() => {
-    setDateMenuOpen(false)
     setNoteSheetOpen(false)
   }, [date])
 
@@ -227,37 +221,36 @@ export function DayScreen({ navigation, route }: any) {
     () => openNoteSheet("view", "workout"),
     [openNoteSheet]
   )
-  const openWorkoutNoteEditor = useCallback(
-    () => openNoteSheet("edit", "workout"),
-    [openNoteSheet]
+
+  // The system menu has already dismissed by the time this fires, so these run
+  // directly. The custom menu needed a setTimeout past its own fade here, or a
+  // sheet opened while the menu was still on screen.
+  const onDateMenuAction = useCallback(
+    (id: string) => {
+      if (id === "dayNote") openNoteEditor()
+      else if (id === "calendar") {
+        // Sibling tab, not a stack push. CalendarScreen already consumes
+        // route.params.date and jumps the grid to that day.
+        navigation.navigate("Calendar", { date })
+      } else if (id === "deleteWorkout") {
+        const wid = getState().indexes.workoutsByDate.get(date)?.id ?? null
+        if (wid == null) return
+        Alert.alert(
+          "Delete workout?",
+          "All exercises and sets logged this day will be removed. Notes are kept.",
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Delete",
+              style: "destructive",
+              onPress: () => deleteWorkout(wid),
+            },
+          ]
+        )
+      }
+    },
+    [date, navigation, openNoteEditor]
   )
-
-  function openDateMenu() {
-    const { indexes } = getState()
-    const w = indexes.workoutsByDate.get(date)
-    let hasExercises = false
-    if (w) {
-      const wes = indexes.workoutExercisesByWorkout.get(w.id) ?? []
-      hasExercises = wes.some(
-        (we) => (indexes.setsByWorkoutExercise.get(we.id) ?? []).length > 0
-      )
-    }
-    setMenuCtx({
-      note: getDayNoteQ(date),
-      workoutNote: w?.notes ?? "",
-      hasExercises,
-      workoutId: w?.id ?? null,
-    })
-    setDateMenuOpen(true)
-  }
-
-  function toggleDateMenu() {
-    if (dateMenuOpen) {
-      setDateMenuOpen(false)
-      return
-    }
-    openDateMenu()
-  }
 
   const data = useMemo(
     () => Array.from({ length: TOTAL_DAYS }, (_, i) => i),
@@ -313,7 +306,11 @@ export function DayScreen({ navigation, route }: any) {
     <StaticSafeAreaView>
       {/* Pinned date header, never scrolls. */}
       <View style={styles.pinnedHeader}>
-        <DateNav date={date} onShift={shiftDay} onPressDate={toggleDateMenu} />
+        <DateNav
+          date={date}
+          onShift={shiftDay}
+          onSelectAction={onDateMenuAction}
+        />
       </View>
 
       <View style={styles.body}>
@@ -345,57 +342,6 @@ export function DayScreen({ navigation, route }: any) {
           visible={date !== todayString()}
           onPress={() => setDate(todayString())}
         />
-        <DateMenu
-          date={date}
-          visible={dateMenuOpen}
-          ctx={menuCtx}
-        onClose={() => setDateMenuOpen(false)}
-        onAddNote={() => {
-          setDateMenuOpen(false)
-          setTimeout(openNoteEditor, MENU_CLOSE_MS + 40)
-        }}
-        onClearNote={() => {
-          setDateMenuOpen(false)
-          setTimeout(() => setDayNote(date, ""), MENU_CLOSE_MS + 40)
-        }}
-        onAddWorkoutNote={() => {
-          setDateMenuOpen(false)
-          setTimeout(openWorkoutNoteEditor, MENU_CLOSE_MS + 40)
-        }}
-        onClearWorkoutNote={() => {
-          const id = menuCtx.workoutId
-          setDateMenuOpen(false)
-          if (id == null) return
-          setTimeout(() => setWorkoutNote(id, ""), MENU_CLOSE_MS + 40)
-        }}
-        onOpenCalendar={() => {
-          setDateMenuOpen(false)
-          setTimeout(() => {
-            // Sibling tab — not a stack push. CalendarScreen already
-            // consumes route.params.date and jumps the grid to that day.
-            navigation.navigate("Calendar", { date })
-          }, MENU_CLOSE_MS + 40)
-        }}
-        onDeleteWorkout={() => {
-          const id = menuCtx.workoutId
-          setDateMenuOpen(false)
-          if (id == null) return
-          setTimeout(() => {
-            Alert.alert(
-              "Delete workout?",
-              "All exercises and sets logged this day will be removed. Notes are kept.",
-              [
-                { text: "Cancel", style: "cancel" },
-                {
-                  text: "Delete",
-                  style: "destructive",
-                  onPress: () => deleteWorkout(id),
-                },
-              ]
-            )
-          }, MENU_CLOSE_MS + 40)
-        }}
-      />
       </View>
       <NoteSheet
         visible={noteSheetOpen}
@@ -484,6 +430,7 @@ function DayContent({
 
   const hydrated = useHydrated()
   const snapshot = useStore((s) => s.snapshot)
+
   const rawWorkout = useMemo(
     () => (hydrated ? getWorkoutByDateQ(date) : undefined),
     [hydrated, date, snapshot]
@@ -665,41 +612,91 @@ function DayContent({
 function DateNav({
   date,
   onShift,
-  onPressDate,
+  onSelectAction,
 }: {
   date: string
   onShift: (delta: number) => void
-  onPressDate: () => void
+  onSelectAction: (id: string) => void
 }) {
+  // The date label opens a system menu, so its items must exist at render
+  // time rather than being gathered on press. DateNav subscribes here rather
+  // than DayScreen doing it: this component is three buttons, while DayScreen
+  // hosts the whole date pager and would re-render all of it.
+  const snapshot = useStore((s) => s.snapshot)
+
+  // A system menu needs its items before the press, so this is derived on
+  // render instead of gathered in an open handler. It is a few index lookups
+  // and it only reruns when the snapshot or the date moves.
+  const menuCtx = useMemo(() => {
+    const { indexes } = getState()
+    const w = indexes.workoutsByDate.get(date)
+    let hasExercises = false
+    if (w) {
+      const wes = indexes.workoutExercisesByWorkout.get(w.id) ?? []
+      hasExercises = wes.some(
+        (we) => (indexes.setsByWorkoutExercise.get(we.id) ?? []).length > 0
+      )
+    }
+    return {
+      note: getDayNoteQ(date),
+      hasExercises,
+      workoutId: w?.id ?? null,
+    }
+  }, [snapshot, date])
+
+  const dateMenuActions = useMemo<MenuAction[]>(() => {
+    // No separate "remove" item: the editor deletes the note when you clear it
+    // and save. `setDayNote` drops the row on empty text, and the sheet treats
+    // full-to-empty as a real change, so Save stays enabled.
+    const hasNote = !!menuCtx.note.trim()
+    const actions: MenuAction[] = [
+      {
+        id: "dayNote",
+        title: noteActionLabel(date, hasNote),
+        // No subtitle: the title already says what this does. The old one read
+        // "Only this date", which existed to contrast with a workout-note item
+        // that is no longer in this menu.
+        image: "calendar.badge.plus",
+      },
+    ]
+    actions.push({
+      id: "calendar",
+      title: "Open calendar",
+      image: "calendar",
+    })
+    if (menuCtx.hasExercises) {
+      actions.push({
+        id: "deleteWorkout",
+        title: "Delete this day's workout",
+        image: "trash",
+        attributes: { destructive: true },
+      })
+    }
+    return actions
+  }, [menuCtx, date])
+
   return (
     <View style={styles.dateNav}>
-      <Pressable
+      <NavArrowButton
+        direction="back"
+        accessibilityLabel="Previous day"
         onPress={() => onShift(-1)}
-        style={({ pressed }) => [
-          styles.navBtn,
-          { transform: [{ scale: pressed ? 0.85 : 1 }] },
-        ]}
-        hitSlop={8}
+      />
+      <NativeMenu
+        style={styles.dateMenuAnchor}
+        actions={dateMenuActions}
+        onSelect={onSelectAction}
       >
-        <Ionicons name="chevron-back" size={20} color={theme.colors.foreground} />
-      </Pressable>
-      <Pressable
-        onPress={onPressDate}
-        style={({ pressed }) => [styles.dateLabel, pressedStyle(pressed)]}
-      >
-        <Text style={styles.dateText}>{labelForDate(date)}</Text>
-        <Ionicons name="chevron-down" size={14} color={theme.colors.muted} />
-      </Pressable>
-      <Pressable
+        <View style={styles.dateLabel}>
+          <Text style={styles.dateText}>{labelForDate(date)}</Text>
+          <Ionicons name="chevron-down" size={14} color={theme.colors.muted} />
+        </View>
+      </NativeMenu>
+      <NavArrowButton
+        direction="forward"
+        accessibilityLabel="Next day"
         onPress={() => onShift(1)}
-        style={({ pressed }) => [
-          styles.navBtn,
-          { transform: [{ scale: pressed ? 0.85 : 1 }] },
-        ]}
-        hitSlop={8}
-      >
-        <Ionicons name="chevron-forward" size={20} color={theme.colors.foreground} />
-      </Pressable>
+      />
     </View>
   )
 }
@@ -720,184 +717,6 @@ function noteActionLabel(date: string, hasNote: boolean): string {
   return hasNote ? "Edit this day's note" : "Add a note for this day"
 }
 
-function DateMenu({
-  date,
-  visible,
-  ctx,
-  onClose,
-  onAddNote,
-  onClearNote,
-  onAddWorkoutNote,
-  onClearWorkoutNote,
-  onOpenCalendar,
-  onDeleteWorkout,
-}: {
-  date: string
-  visible: boolean
-  ctx: {
-    note: string
-    workoutNote: string
-    hasExercises: boolean
-    workoutId: number | null
-  }
-  onClose: () => void
-  onAddNote: () => void
-  onClearNote: () => void
-  onAddWorkoutNote: () => void
-  onClearWorkoutNote: () => void
-  onOpenCalendar: () => void
-  onDeleteWorkout: () => void
-}) {
-  const opacity = useRef(new Animated.Value(0)).current
-  const [mounted, setMounted] = useState(visible)
-
-  useEffect(() => {
-    if (visible) {
-      setMounted(true)
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: MENU_OPEN_MS,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start()
-      return
-    }
-    Animated.timing(opacity, {
-      toValue: 0,
-      duration: MENU_CLOSE_MS,
-      // Linear, not eased: starts fading the instant you tap (unlike
-      // ease-in, which sits still at first) and keeps fading visibly for
-      // the whole duration (unlike ease-out cubic, which front-loads most
-      // of the drop and leaves an almost-invisible tail that reads as an
-      // instant disappear instead of a fade).
-      easing: Easing.linear,
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) setMounted(false)
-    })
-  }, [visible, opacity])
-
-  if (!mounted) return null
-
-  const hasNote = !!ctx.note.trim()
-  const hasWorkoutNote = !!ctx.workoutNote.trim()
-
-  return (
-    <Animated.View
-      pointerEvents={visible ? "auto" : "none"}
-      style={[styles.dateMenuOverlay, { opacity }]}
-    >
-      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-      <View
-        style={styles.dateMenuCardWrap}
-        onStartShouldSetResponder={() => true}
-      >
-        <View style={styles.dateMenuCard}>
-        <DateMenuRow
-          icon="create-outline"
-          label={noteActionLabel(date, hasNote)}
-          hint={hasNote ? "Only this date" : "How this day went"}
-          onPress={onAddNote}
-        />
-        {hasNote && (
-          <DateMenuRow
-            icon="close-circle-outline"
-            label="Remove this day's note"
-            onPress={onClearNote}
-          />
-        )}
-        {ctx.workoutId != null && (
-          <DateMenuRow
-            icon="barbell-outline"
-            label={hasWorkoutNote ? "Edit workout note" : "Add a workout note"}
-            hint={hasWorkoutNote ? "Only this session" : "How the session went"}
-            onPress={onAddWorkoutNote}
-          />
-        )}
-        {ctx.workoutId != null && hasWorkoutNote && (
-          <DateMenuRow
-            icon="close-circle-outline"
-            label="Remove this workout's note"
-            onPress={onClearWorkoutNote}
-          />
-        )}
-        <DateMenuRow
-          icon="calendar-outline"
-          label="Open calendar"
-          onPress={onOpenCalendar}
-          last={!ctx.hasExercises}
-        />
-        {ctx.hasExercises && (
-          <DateMenuRow
-            icon="trash-outline"
-            label="Delete this day's workout"
-            destructive
-            last
-            onPress={onDeleteWorkout}
-          />
-        )}
-        </View>
-      </View>
-    </Animated.View>
-  )
-}
-
-function DateMenuRow({
-  icon,
-  label,
-  hint,
-  onPress,
-  destructive,
-  last,
-}: {
-  icon: ComponentProps<typeof Ionicons>["name"]
-  label: string
-  hint?: string
-  onPress: () => void
-  destructive?: boolean
-  last?: boolean
-}) {
-  const color = destructive ? theme.colors.destructive : theme.colors.foreground
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.dateMenuRow,
-        !last && styles.dateMenuRowBorder,
-        pressed && styles.dateMenuRowPressed,
-      ]}
-    >
-      <View
-        style={[
-          styles.dateMenuIcon,
-          destructive && styles.dateMenuIconDestructive,
-        ]}
-      >
-        <Ionicons name={icon} size={16} color={color} />
-      </View>
-      <View style={styles.dateMenuRowBody}>
-        <Text
-          style={[styles.dateMenuRowText, destructive && { color }]}
-          numberOfLines={1}
-        >
-          {label}
-        </Text>
-        {hint ? (
-          <Text style={styles.dateMenuRowHint} numberOfLines={1}>
-            {hint}
-          </Text>
-        ) : null}
-      </View>
-    </Pressable>
-  )
-}
-
-// Floating "Go to today" chip, shown only when the viewed day isn't today.
-// It's absolutely positioned (hovering just above the bottom tab bar) so it
-// never reflows the pager - that lets the whole thing run on the *native*
-// driver (opacity + slide + scale), which is what makes it feel smooth.
-// A spring on entry gives it a soft settle; exit is a quick fade. The
-// `mounted` state keeps it alive through the exit animation before unmount.
 function TodayPill({
   visible,
   onPress,
@@ -1039,7 +858,7 @@ function SummaryStrip({
               ]}
               hitSlop={8}
             >
-              <Text style={styles.summaryMetaLabel}>Day</Text>
+              <Text style={styles.summaryMetaLabel}>Day note</Text>
               <NotePreview note={note} style={styles.summaryNoteLine} />
             </Pressable>
           )}
@@ -1055,7 +874,7 @@ function SummaryStrip({
               ]}
               hitSlop={8}
             >
-              <Text style={styles.summaryMetaLabel}>Workout</Text>
+              <Text style={styles.summaryMetaLabel}>Workout note</Text>
               <NotePreview note={workoutNote} style={styles.summaryNoteLine} />
             </Pressable>
           )}
@@ -1468,13 +1287,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: theme.spacing[2],
   },
-  navBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  // The menu anchor takes the row's middle, the way the old date Pressable
+  // did. The arrows are NavArrowButton and carry their own size.
+  dateMenuAnchor: { flex: 1 },
   dateLabel: {
     flex: 1,
     flexDirection: "row",
@@ -1485,73 +1300,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   dateText: { color: theme.colors.foreground, fontSize: theme.fontSize.md, fontWeight: "700" },
-  dateMenuOverlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    paddingTop: theme.spacing[2],
-    paddingHorizontal: theme.spacing[4],
-    justifyContent: "flex-start",
-    zIndex: 50,
-    elevation: 50,
-  },
-  dateMenuCardWrap: {
-    width: "100%",
-    borderRadius: theme.radius.lg,
-    shadowColor: "#000",
-    shadowOpacity: 0.45,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 16,
-  },
-  dateMenuCard: {
-    width: "100%",
-    backgroundColor: theme.colors.inputBg,
-    borderRadius: theme.radius.lg,
-    borderColor: theme.colors.border,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingVertical: 4,
-    overflow: "hidden",
-  },
-  dateMenuRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: 12,
-  },
-  dateMenuRowBorder: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.colors.border,
-  },
-  dateMenuRowPressed: {
-    backgroundColor: "rgba(255,255,255,0.06)",
-  },
-  dateMenuIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dateMenuIconDestructive: {
-    backgroundColor: "rgba(239,68,68,0.12)",
-  },
-  dateMenuRowBody: {
-    flex: 1,
-    gap: 1,
-    minWidth: 0,
-  },
-  dateMenuRowText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: "600",
-  },
-  dateMenuRowHint: {
-    color: theme.colors.muted,
-    fontSize: 11,
-    fontWeight: "500",
-  },
   todayPillWrap: {
     position: "absolute",
     left: 0,

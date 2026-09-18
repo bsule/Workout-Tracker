@@ -50,6 +50,8 @@ export {
   patchWorkout,
 } from "./mutations"
 export { estimateOneRm } from "./materialize"
+export { topRepRecords, topRepRecordsByPosition } from "./records"
+export type { TopRepRecord } from "./records"
 
 /**
  * The workout's effective "end time" — the last logged set that's still part
