@@ -1,8 +1,11 @@
 import sharp from "sharp"
 import fs from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 
-const assets = "mobile/assets"
+// Resolved from this file, not from the working directory, so the script
+// runs the same from the repo root and from mobile/.
+const assets = fileURLToPath(new URL("../assets/", import.meta.url))
 
 const iconSvg = fs.readFileSync(path.join(assets, "icon-source.svg"))
 const adaptiveSvg = fs.readFileSync(path.join(assets, "adaptive-icon-source.svg"))
