@@ -1,38 +1,45 @@
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useRef, type ReactNode } from "react"
 import {
+  Alert,
   Pressable,
-  ScrollView,
   StyleSheet,
-  Text,
-  View,
+  type AlertButton,
   type StyleProp,
   type ViewStyle,
 } from "react-native"
-import { Ionicons } from "@expo/vector-icons"
-import { OverlayCard, overlayCardStyles } from "./OverlayCard"
-import { ANIM_SLACK_MS, DUR, deferPastAnimation, usePresence } from "../anim"
-import { theme } from "../theme/theme"
+import type { Ionicons } from "@expo/vector-icons"
 
 /**
- * The app's dropdown menus, as a centred card.
+ * The app's dropdown menus, as the system alert.
  *
- * These were system menus for a while (`@react-native-menu/menu`, a UIMenu on
- * iOS). The platform places a UIMenu itself, and from a button in the
- * navigation bar iOS 26 puts it straight over the button that opened it - the
- * overflow "..." disappears under its own menu. There is no placement prop to
- * fix that with, so the menus are drawn here instead, in the middle of the
- * screen, where they cover nothing the user just tapped.
+ * ## How this got here
  *
- * It is the same shell as every other popup in the app: `usePresence` for the
- * fade, `OverlayCard` for the backdrop and the card. Two things the system
- * menu did for free come back as code:
+ * These were UIMenus for a while, through a native module. The platform places
+ * a UIMenu itself, and from a button in the navigation bar iOS 26 puts it
+ * straight over the button that opened it - the overflow "..." disappears
+ * under its own menu. There is no placement prop to fix that with, so they
+ * became a hand-drawn card in the middle of the screen, where they cover
+ * nothing the user just tapped. That module is gone from the dependencies; an
+ * alert needs none.
  *
- * - **Dismiss timing.** A store mutation run during the fade re-renders the
- *   screen behind the card and stalls it. `onSelect` is therefore deferred
- *   past the fade, once, here - not at each call site.
- * - **The checkmark.** `selected` draws it, in place of UIMenu's `state`.
+ * Centred was the right call; drawing it ourselves was not. `Alert.alert` is
+ * centred too, and on iOS 26 the system draws it as a stack of pill buttons -
+ * which is the look the card was imitating. So the placement stays and the
+ * drawing goes back to the platform.
  *
- * Icons are Ionicons names, not SF Symbols, because these rows are ours.
+ * Three things follow from that, and they are the whole reason this file is
+ * still a file rather than a call to `Alert.alert` at each site:
+ *
+ * - **No dismiss timing.** The card had to defer `onSelect` past its own
+ *   fade, or a store mutation would re-render the screen behind it and stall
+ *   the animation. The alert is gone before `onPress` fires, so handlers run
+ *   directly.
+ * - **No armed backdrop.** The card had to ignore taps for one fade's length
+ *   so the tap that opened it could not bleed through and close it again.
+ * - **A narrower row.** An alert button is a title and nothing else. What the
+ *   richer `MenuAction` carried is folded into that title below.
+ *
+ * `MenuAction` keeps its shape so call sites did not have to change.
  */
 
 export type MenuAction = {
@@ -40,25 +47,78 @@ export type MenuAction = {
   id: string
   title: string
   /** A second line under the title. Say why a row is disabled, or what it
-   *  counts - never repeat the title. */
+   *  counts - never repeat the title. Folded into the button title in
+   *  parentheses, since an alert button has no second line. */
   subtitle?: string
+  /** Kept for source compatibility. An alert button cannot carry an icon, so
+   *  this is ignored. */
   icon?: keyof typeof Ionicons.glyphMap
   /** Red title, for a row that destroys data. */
   destructive?: boolean
-  /** Greyed and inert. Pair it with a `subtitle` that says why. */
+  /** An alert cannot grey a button out, so a disabled row is left off the
+   *  alert and its `subtitle` is shown as the message instead - the "why"
+   *  survives even though the row does not. */
   disabled?: boolean
-  /** Left out of the card entirely. */
+  /** Left out entirely. */
   hidden?: boolean
-  /** Marks the current choice, for a menu that picks one of a set. */
+  /** Marks the current choice, for a menu that picks one of a set. An alert
+   *  has no checkmark, so the title is ticked instead. */
   selected?: boolean
 }
 
-const FADE_MS = DUR.fadeFast
+function labelFor(a: MenuAction): string {
+  const base = a.selected ? `✓ ${a.title}` : a.title
+  return a.subtitle ? `${base} (${a.subtitle})` : base
+}
 
 /**
- * The card on its own, for a caller that owns the open state - the set
+ * Present the menu. Returns immediately; `onSelect` fires later, or not at all
+ * if the user cancels.
+ */
+function present(
+  actions: MenuAction[],
+  onSelect: (id: string) => void,
+  title: string | undefined,
+  onDismiss: () => void
+) {
+  const rows = actions.filter((a) => !a.hidden)
+  const enabled = rows.filter((a) => !a.disabled)
+  if (enabled.length === 0) {
+    onDismiss()
+    return
+  }
+
+  // A disabled row's subtitle is the only place that says why it is disabled,
+  // and the row itself cannot be shown greyed. The message carries it instead.
+  const why = rows
+    .filter((a) => a.disabled && a.subtitle)
+    .map((a) => `${a.title}: ${a.subtitle}`)
+    .join("\n")
+
+  const buttons: AlertButton[] = enabled.map((a) => ({
+    text: labelFor(a),
+    style: a.destructive ? "destructive" : "default",
+    onPress: () => {
+      onDismiss()
+      onSelect(a.id)
+    },
+  }))
+  // Last, so iOS puts it at the bottom of the stack.
+  buttons.push({ text: "Cancel", style: "cancel", onPress: onDismiss })
+
+  Alert.alert(title ?? "", why || undefined, buttons, {
+    cancelable: true,
+    onDismiss,
+  })
+}
+
+/**
+ * The menu on its own, for a caller that owns the open state - the set
  * logger's overflow menu, whose button lives in the native header while the
- * card belongs in the screen.
+ * menu belongs to the screen.
+ *
+ * Renders nothing. It presents the alert when `visible` turns true and calls
+ * `onClose` once the alert is gone, so the caller's flag tracks reality.
  */
 export function MenuPopup({
   visible,
@@ -70,64 +130,44 @@ export function MenuPopup({
   visible: boolean
   onClose: () => void
   actions: MenuAction[]
-  /** Receives the `id` of the chosen row, after the fade-out. */
+  /** Receives the `id` of the chosen row. */
   onSelect: (id: string) => void
   /** Optional heading above the rows. */
   title?: string
 }) {
-  const { mounted, opacity } = usePresence(visible, { inMs: FADE_MS })
+  // The latest props, read at press time rather than captured when the alert
+  // was presented. An alert is a native window: it outlives the render that
+  // opened it, and the actions behind it can change while it is up.
+  const live = useRef({ actions, onSelect, onClose })
+  live.current = { actions, onSelect, onClose }
 
-  // Disarm the backdrop during the entrance so the tap that opened the menu
-  // cannot bleed through and close it again.
-  const [armed, setArmed] = useState(false)
+  const shown = useRef(false)
   useEffect(() => {
     if (!visible) {
-      setArmed(false)
+      shown.current = false
       return
     }
-    const t = setTimeout(() => setArmed(true), FADE_MS + ANIM_SLACK_MS)
-    return () => clearTimeout(t)
-  }, [visible])
+    // Guard against a re-render while the alert is already up: presenting a
+    // second one would stack two windows over each other.
+    if (shown.current) return
+    shown.current = true
+    present(
+      live.current.actions,
+      (id) => live.current.onSelect(id),
+      title,
+      () => {
+        shown.current = false
+        live.current.onClose()
+      }
+    )
+  }, [visible, title])
 
-  if (!mounted) return null
-
-  const rows = actions.filter((a) => !a.hidden)
-
-  function choose(action: MenuAction) {
-    onClose()
-    deferPastAnimation(() => onSelect(action.id), FADE_MS)
-  }
-
-  return (
-    <OverlayCard
-      opacity={opacity}
-      visible={visible}
-      onBackdropPress={armed ? onClose : undefined}
-      align="center"
-      hostInModal
-      style={styles.card}
-    >
-      <ScrollView
-        style={overlayCardStyles.scroll}
-        contentContainerStyle={styles.content}
-      >
-        {title != null && <Text style={styles.title}>{title}</Text>}
-        {rows.map((a, i) => (
-          <MenuRow
-            key={a.id}
-            action={a}
-            last={i === rows.length - 1}
-            onPress={() => choose(a)}
-          />
-        ))}
-      </ScrollView>
-    </OverlayCard>
-  )
+  return null
 }
 
 /**
  * A trigger and its menu. The trigger is whatever you pass as children; a tap
- * on it opens the card.
+ * on it presents the alert.
  */
 export function MenuButton({
   actions,
@@ -142,103 +182,26 @@ export function MenuButton({
   style?: StyleProp<ViewStyle>
   children: ReactNode
 }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <>
-      <Pressable
-        onPress={() => setOpen(true)}
-        unstable_pressDelay={0}
-        style={({ pressed }) => [style, pressed && styles.triggerPressed]}
-      >
-        {children}
-      </Pressable>
-      <MenuPopup
-        visible={open}
-        onClose={() => setOpen(false)}
-        actions={actions}
-        onSelect={onSelect}
-        title={title}
-      />
-    </>
-  )
-}
-
-function MenuRow({
-  action,
-  last,
-  onPress,
-}: {
-  action: MenuAction
-  last: boolean
-  onPress: () => void
-}) {
-  const color = action.disabled
-    ? theme.colors.muted
-    : action.destructive
-      ? theme.colors.destructive
-      : theme.colors.foreground
-
+  // No open state to hold: the alert is a native window, so there is nothing
+  // in this tree to keep in sync with it.
+  const open = useRef(false)
   return (
     <Pressable
-      onPress={onPress}
-      disabled={action.disabled}
+      onPress={() => {
+        if (open.current) return
+        open.current = true
+        present(actions, onSelect, title, () => {
+          open.current = false
+        })
+      }}
       unstable_pressDelay={0}
-      style={({ pressed }) => [
-        styles.row,
-        !last && styles.rowDivider,
-        pressed && !action.disabled && styles.rowPressed,
-      ]}
+      style={({ pressed }) => [style, pressed && styles.triggerPressed]}
     >
-      {action.icon != null && (
-        <Ionicons name={action.icon} size={18} color={color} />
-      )}
-      <View style={styles.rowBody}>
-        <Text style={[styles.rowTitle, { color }]} numberOfLines={2}>
-          {action.title}
-        </Text>
-        {action.subtitle != null && (
-          <Text style={styles.rowSubtitle} numberOfLines={2}>
-            {action.subtitle}
-          </Text>
-        )}
-      </View>
-      {action.selected === true && (
-        <Ionicons name="checkmark" size={18} color={theme.colors.secondary} />
-      )}
+      {children}
     </Pressable>
   )
 }
 
 const styles = StyleSheet.create({
-  // The rows run edge to edge, so the card keeps no padding of its own and
-  // each row carries it instead. A divider that stopped short of the card's
-  // edge would read as a gap in the list.
-  card: { padding: 0, gap: 0 },
-  content: { paddingVertical: theme.spacing[1] },
-  // Smaller and quieter than `overlayCardStyles.title`: this is a menu's
-  // heading ("Sort by"), not a popup's subject.
-  title: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.muted,
-    fontWeight: "700",
-    paddingHorizontal: theme.spacing[4],
-    paddingTop: theme.spacing[3],
-    paddingBottom: theme.spacing[2],
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
-  },
-  rowDivider: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.colors.border,
-  },
-  rowPressed: { backgroundColor: "rgba(255,255,255,0.08)" },
-  rowBody: { flex: 1, gap: 2 },
-  rowTitle: { fontSize: theme.fontSize.base, fontWeight: "600" },
-  rowSubtitle: { color: theme.colors.muted, fontSize: theme.fontSize.xs },
-  triggerPressed: { opacity: 0.6 },
+  triggerPressed: { opacity: 0.55 },
 })
