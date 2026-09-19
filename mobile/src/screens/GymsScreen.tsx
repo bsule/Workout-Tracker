@@ -3,13 +3,11 @@ import {
   Alert,
   Keyboard,
   LayoutAnimation,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  UIManager,
   View,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
@@ -17,36 +15,11 @@ import { localApi as api, useStore } from "@lift/core"
 import type { Gym } from "@lift/core"
 import { Button } from "../components/Button"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
+import { LIST_ANIM } from "../anim"
 import { theme } from "../theme/theme"
 
-if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true)
-}
-
-// Opacity-driven enter/exit + an easeInEaseOut height settle. scaleXY
-// looks janky on full-width rows because the row scales toward a
-// corner; fading them in/out while the surrounding rows slide into
-// place reads as a single smooth motion.
-const GYM_ANIM = {
-  duration: 240,
-  create: {
-    type: LayoutAnimation.Types.easeInEaseOut,
-    property: LayoutAnimation.Properties.opacity,
-    duration: 240,
-  },
-  update: {
-    type: LayoutAnimation.Types.easeInEaseOut,
-    duration: 240,
-  },
-  delete: {
-    type: LayoutAnimation.Types.easeInEaseOut,
-    property: LayoutAnimation.Properties.opacity,
-    duration: 200,
-  },
-} as const
-
 function animateGyms() {
-  LayoutAnimation.configureNext(GYM_ANIM)
+  LayoutAnimation.configureNext(LIST_ANIM)
 }
 
 export function GymsScreen() {
@@ -67,18 +40,22 @@ export function GymsScreen() {
       setDraft("")
       Keyboard.dismiss()
     } catch (e) {
+      animateGyms()
       setError(e instanceof Error ? e.message : "Failed to add gym.")
     }
   }
 
   function startEdit(g: Gym) {
     if (g.id == null) return
+    // The row is replaced by a taller edit form, so the rows under it move.
+    animateGyms()
     setEditingId(g.id)
     setEditDraft(g.name)
     setEditError(null)
   }
   function cancelEdit() {
     Keyboard.dismiss()
+    animateGyms()
     setEditingId(null)
     setEditDraft("")
     setEditError(null)
@@ -87,6 +64,7 @@ export function GymsScreen() {
     if (editingId == null) return
     const trimmed = editDraft.trim()
     if (!trimmed) {
+      animateGyms()
       setEditError("Name can't be empty.")
       return
     }
@@ -103,10 +81,12 @@ export function GymsScreen() {
       (g) => g.id !== editingId && g.name.toLowerCase() === trimmed.toLowerCase()
     )
     if (collision) {
+      animateGyms()
       setEditError("A gym with that name already exists.")
       return
     }
     Keyboard.dismiss()
+    animateGyms()
     api.renameGym(editingId, trimmed)
     setEditingId(null)
     setEditDraft("")

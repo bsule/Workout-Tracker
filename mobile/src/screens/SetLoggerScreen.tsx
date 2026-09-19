@@ -23,9 +23,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  UIManager,
   View,
-  Platform,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import Svg, { Circle, G, Line as SvgLine, Path as SvgPath, Text as SvgText } from "react-native-svg"
@@ -65,12 +63,26 @@ import type {
   WorkoutExercise,
   WorkoutSet,
 } from "@lift/core"
-import { Button } from "../components/Button"
 import { PopupModal } from "../components/PopupModal"
 import { HoldPressable } from "../components/HoldPressable"
-import { NativeMenu, type MenuAction } from "../components/NativeMenu"
+import { MenuButton, MenuPopup, type MenuAction } from "../components/MenuPopup"
 import { NotePreview } from "../components/NotePreview"
-import { NoteReveal, NOTE_SHIFT_ANIM } from "../components/NoteReveal"
+import { NoteReveal } from "../components/NoteReveal"
+import { NoteSheet } from "../components/NoteSheet"
+import { OverlayCard, overlayCardStyles } from "../components/OverlayCard"
+import { SpinChevron } from "../components/SpinChevron"
+import {
+  ANIM_SLACK_MS,
+  DUR,
+  EASE,
+  NOTE_SHIFT_ANIM,
+  SET_ANIM,
+  SHIFT_ANIM,
+  deferPastAnimation,
+  usePresence,
+  useExpandToggle,
+  useToggleTiming,
+} from "../anim"
 import { sameHistory } from "../store/sameHistory"
 import { useStableValue } from "../hooks/useStableValue"
 import { PrIcon } from "../components/PrIcon"
@@ -172,44 +184,10 @@ function formatRest(prevIso: string | null | undefined, curIso: string): string 
   return s === 0 ? `${m}m` : `${m}m ${s}s`
 }
 
-// Enable LayoutAnimation on Android (iOS has it on by default).
-if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true)
-}
-
-// Animate the next layout change — used right before any mutation that
-// adds or removes a set from the list, so the new row eases in / the
-// removed row collapses smoothly instead of just popping in/out.
-// LayoutAnimation runs on the JS driver. The set rows contain a legacy
-// Swipeable whose `progress`/`dragX` Animated.Values are native-driven and
-// bound to nested view opacities/transforms. Animating `opacity` here on
-// create/delete reliably collides with those native nodes ("Attempting to
-// run JS driven animation on animated node that has been moved to native"),
-// so we use `scaleXY` instead — visually similar (rows pop in/out) and not
-// shared with any native binding.
-// Per-section durations: rows settle in with a soft spring (alive without
-// being bouncy); both `delete` and `update` use easeInEaseOut so the
-// disappearing row's collapse and the neighbour-shift flow as one motion,
-// matched to the row's own opacity+translateY exit (~180ms total).
-const SET_ANIM = {
-  duration: 220,
-  create: {
-    type: LayoutAnimation.Types.spring,
-    springDamping: 0.78,
-    property: LayoutAnimation.Properties.scaleXY,
-    duration: 260,
-  },
-  update: {
-    type: LayoutAnimation.Types.easeInEaseOut,
-    duration: 220,
-  },
-  delete: {
-    type: LayoutAnimation.Types.easeInEaseOut,
-    property: LayoutAnimation.Properties.scaleXY,
-    duration: 180,
-  },
-} as const
-
+// Animate the next layout change — used right before any mutation that adds or
+// removes a set from the list, so the new row eases in and the removed row
+// collapses instead of popping. SET_ANIM, the reason it animates scaleXY rather
+// than opacity, and the Android enable flag all live in ../anim now.
 function animateNext() {
   LayoutAnimation.configureNext(SET_ANIM)
 }
@@ -234,25 +212,17 @@ const CARD_GAP = 16
 const FIELD_H_FALLBACK = 70
 
 // How long the exercise-note row takes to appear the first time.
-const EX_NOTE_REVEAL_MS = 260
+const EX_NOTE_REVEAL_MS = DUR.noteReveal
 
 // The "Last time" card's collapse. Height is a layout property, so it runs on
 // the JS driver — see the save path, which holds the store mutation back for
 // this long when the card is collapsing so the shrink has a clear thread.
 const LAST_TIME_COLLAPSE_MS = 150
 
-// Layout half of that reveal: the downward shift of everything under the
-// note row. No `create`/`delete` sections, so only views that already exist
-// animate. See the reveal state for why this is not a height animation.
-const EX_NOTE_SHIFT_ANIM = {
-  duration: EX_NOTE_REVEAL_MS,
-  update: {
-    type: LayoutAnimation.Types.easeInEaseOut,
-    duration: EX_NOTE_REVEAL_MS,
-  },
-} as const
-
 const EMPTY_HISTORY: ExerciseHistoryDay[] = []
+
+/** For a NoteSheet that opens at the input: there is no "Edit" button to wire. */
+function noop() {}
 
 // Heaviest set from the most recent prior workout for this exercise, used to
 // prefill the log-set form when there's nothing else to seed from. Skips the
@@ -776,7 +746,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
     return null
   })
   // One-shot flag flipped on the first frame after mount. Used to keep
-  // non-first-paint subtrees (e.g. the always-mounted NoteEditorSheet Modal)
+  // non-first-paint subtrees (e.g. the always-mounted note sheet)
   // out of the very first render, so native-stack can start the push
   // animation as soon as possible after navigation.replace.
   const [firstPaintDone, setFirstPaintDone] = useState(false)
@@ -1165,12 +1135,6 @@ export function SetLoggerScreen({ route, navigation }: any) {
 
   // Note about this exercise on this day. Separate from a set's own note and
   // from the session note on the workout.
-  // The menu hangs off the header button, so it needs the button's position in
-  // window coordinates — a padding guess is wrong the moment the safe-area
-  // inset changes. Measured on press, handed to a Modal, which shares that
-  // coordinate space.
-
-
   const [exNoteOpen, setExNoteOpen] = useState(false)
   const [exNoteMode, setExNoteMode] = useState<"view" | "edit">("view")
   const [exNoteDraft, setExNoteDraft] = useState("")
@@ -1194,55 +1158,65 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // header menu's note item is disabled and says why.
   const exNoteShown = (we?.id ?? -1) > 0
 
-  // The overflow menu lives in the native header beside the back button. It is
-  // a real UIMenu, so there is no anchor to measure and no fade to wait out
-  // before running the action - the menu is already gone when onSelect fires.
-  //
-  // The deps are the values the actions read. They change rarely: `exNoteShown`
-  // flips once, on the first set of the day, and the rest only on a tap.
+  // The overflow menu's button lives in the native header, beside the back
+  // button. The card itself is rendered with the screen's other popups, not
+  // here: a Modal presented from a navigation-bar subview is a corner the app
+  // has no reason to sit in, and the button only has to set a flag.
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false)
+
+  const headerMenuActions = useMemo<MenuAction[]>(
+    () => [
+      {
+        id: "note",
+        title: we?.note.trim() ? "Edit exercise note" : "Add exercise note",
+        // Before the first set there is no workout_exercise row to hang a
+        // note on, so a note written then would be dropped silently. The
+        // subtitle says why instead of the row just vanishing.
+        subtitle: exNoteShown ? undefined : "Log a set first",
+        icon: "document-text-outline",
+        disabled: !exNoteShown,
+      },
+      {
+        id: "lastTime",
+        title: showLastTime ? "Hide Last time card" : "Show Last time card",
+        icon: showLastTime ? "eye-off-outline" : "eye-outline",
+      },
+    ],
+    [we?.note, exNoteShown, showLastTime]
+  )
+
+  function onHeaderMenuAction(id: string) {
+    if (id === "note") openExerciseNote()
+    else if (id === "lastTime") {
+      api.updateSettings({ show_last_time: !showLastTime })
+    }
+  }
+
+  // The button never changes, so the header is set once. It used to be rebuilt
+  // on every note edit and every Last time toggle, because the menu's items
+  // hung off it.
   useLayoutEffect(() => {
     navigation.setOptions({
       headerRight: () => (
-        <NativeMenu
-          actions={[
-            {
-              id: "note",
-              title: we?.note.trim()
-                ? "Edit exercise note"
-                : "Add exercise note",
-              // Before the first set there is no workout_exercise row to hang
-              // a note on, so a note written then would be dropped silently.
-              // The subtitle says why instead of the row just vanishing.
-              subtitle: exNoteShown ? undefined : "Log a set first",
-              image: "square.and.pencil",
-              attributes: { disabled: !exNoteShown },
-            },
-            {
-              id: "lastTime",
-              title: showLastTime
-                ? "Hide Last time card"
-                : "Show Last time card",
-              image: showLastTime ? "eye.slash" : "eye",
-            },
+        <Pressable
+          onPress={() => setHeaderMenuOpen(true)}
+          unstable_pressDelay={0}
+          hitSlop={8}
+          accessibilityLabel="More"
+          style={({ pressed }) => [
+            styles.headerMenuBtn,
+            pressed && { opacity: 0.6 },
           ]}
-          onSelect={(id) => {
-            if (id === "note") openExerciseNote()
-            else if (id === "lastTime") {
-              api.updateSettings({ show_last_time: !showLastTime })
-            }
-          }}
         >
-          <View style={styles.headerMenuBtn}>
-            <Ionicons
-              name="ellipsis-horizontal"
-              size={20}
-              color={theme.colors.foreground}
-            />
-          </View>
-        </NativeMenu>
+          <Ionicons
+            name="ellipsis-horizontal"
+            size={20}
+            color={theme.colors.foreground}
+          />
+        </Pressable>
       ),
     })
-  }, [navigation, we?.note, exNoteShown, showLastTime, openExerciseNote])
+  }, [navigation])
 
   // Smooth edit-mode transition. Single Animated.Value, fully native-driven
   // (scale + opacity). The "white border while editing" effect is done via
@@ -1253,14 +1227,10 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // also makes the transition immune to the SetList re-render that fires
   // right after setEditingSetId(null).
   const editAnim = useRef(new Animated.Value(0)).current
-  useEffect(() => {
-    Animated.timing(editAnim, {
-      toValue: editingSetId != null ? 1 : 0,
-      duration: EDIT_MS,
-      easing: Easing.inOut(Easing.cubic),
-      useNativeDriver: true,
-    }).start()
-  }, [editingSetId, editAnim])
+  useToggleTiming(editAnim, editingSetId != null, {
+    inMs: EDIT_MS,
+    easeIn: EASE.inOut,
+  })
 
   function startEdit(s: WorkoutSet) {
     // No LayoutAnimation here: it made every set row in the list animate
@@ -1441,16 +1411,11 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // unit), so its height is the rest row's height.
   const [fieldHeight, setFieldHeight] = useState(0)
 
-  useEffect(() => {
-    const anim = Animated.timing(restReveal, {
-      toValue: restShown ? 1 : 0,
-      duration: EDIT_MS,
-      easing: Easing.inOut(Easing.cubic),
-      useNativeDriver: false, // height can't run on the native driver
-    })
-    anim.start()
-    return () => anim.stop()
-  }, [restShown, restReveal])
+  useToggleTiming(restReveal, restShown, {
+    inMs: EDIT_MS,
+    easeIn: EASE.inOut,
+    native: false, // height can't run on the native driver
+  })
 
   function onFieldLayout(e: LayoutChangeEvent) {
     const h = Math.round(e.nativeEvent.layout.height)
@@ -1586,7 +1551,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
               ...(newCreatedAt ? { created_at: newCreatedAt } : {}),
             })
           }
-        }, EDIT_MS + 40)
+        }, EDIT_MS + ANIM_SLACK_MS)
       } else if (isPlanned) {
         // isPlanned only true for an existing planned workout — already resolved.
         if (!resolved) return
@@ -1685,12 +1650,12 @@ export function SetLoggerScreen({ route, navigation }: any) {
             // `update` is configured: the shift animates natively, while
             // newly created views (the note row, the new set row) are left
             // alone so they keep their own fade-ins.
-            LayoutAnimation.configureNext(EX_NOTE_SHIFT_ANIM)
+            LayoutAnimation.configureNext(SHIFT_ANIM)
             setResolved(ids)
             api.addSet(ids.weId, { weight: w, reps: r })
           }
           if (cardMayResize) {
-            setTimeout(runMutation, LAST_TIME_COLLAPSE_MS + 40)
+            deferPastAnimation(runMutation, LAST_TIME_COLLAPSE_MS)
           } else {
             requestAnimationFrame(runMutation)
           }
@@ -1829,17 +1794,23 @@ export function SetLoggerScreen({ route, navigation }: any) {
        *  the critical path of the slide-in. The Modal is invisible during the
        *  push animation anyway; mounting it one frame later is imperceptible. */}
       {firstPaintDone && (
-        <NoteEditorSheet
+        <NoteSheet
           visible={noteEditingSet != null}
+          // A set note opens straight at the input: the row already shows the
+          // note text, so there is nothing to read here first.
+          mode="edit"
+          title="Note"
+          placeholder="Add a note for this set…"
           original={noteEditingSet?.note ?? ""}
           draft={noteDraft}
           onChangeDraft={setNoteDraft}
+          onEdit={noop}
           onClose={closeNoteEditor}
           onSave={persistNote}
         />
       )}
       {firstPaintDone && (
-        <NoteEditorSheet
+        <NoteSheet
           visible={exNoteOpen}
           original={we.note}
           draft={exNoteDraft}
@@ -1852,6 +1823,14 @@ export function SetLoggerScreen({ route, navigation }: any) {
           onEdit={() => setExNoteMode("edit")}
         />
       )}
+      {/* The overflow menu's card. Its button is in the native header; see
+          the headerRight effect above. */}
+      <MenuPopup
+        visible={headerMenuOpen}
+        onClose={() => setHeaderMenuOpen(false)}
+        actions={headerMenuActions}
+        onSelect={onHeaderMenuAction}
+      />
       <PlannedSetActionsModal
         set={activePlannedSet}
         unit={unit}
@@ -1909,7 +1888,6 @@ function PlannedSetActionsModal({
       visible={set != null}
       title={title}
       onClose={onClose}
-      animationType="fade"
     >
       <Pressable
         onPress={() => set && onHit(set)}
@@ -2085,22 +2063,8 @@ const SubTabBar = memo(function SubTabBar({ tab, onChange }: { tab: SubTab; onCh
  * card shows one note, so a label would say nothing.
  */
 function ExpandableNote({ note }: { note: string }) {
-  const [open, setOpen] = useState(false)
-  const spin = useRef(new Animated.Value(0)).current
+  const { open, toggle, spin } = useExpandToggle()
   const text = note.trim()
-
-  const toggle = useCallback(() => {
-    LayoutAnimation.configureNext(EXPAND_ANIM)
-    setOpen((v) => {
-      Animated.timing(spin, {
-        toValue: v ? 0 : 1,
-        duration: 240,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start()
-      return !v
-    })
-  }, [spin])
 
   if (!text) return null
 
@@ -2124,20 +2088,7 @@ function ExpandableNote({ note }: { note: string }) {
           <NotePreview note={text} style={styles.dayCardNote} />
         )}
       </View>
-      <Animated.View
-        style={{
-          transform: [
-            {
-              rotate: spin.interpolate({
-                inputRange: [0, 1],
-                outputRange: ["0deg", "180deg"],
-              }),
-            },
-          ],
-        }}
-      >
-        <Ionicons name="chevron-down" size={12} color={theme.colors.muted} />
-      </Animated.View>
+      <SpinChevron progress={spin} size={12} />
     </Pressable>
   )
 }
@@ -2373,34 +2324,15 @@ const LastTimePanel = memo(function LastTimePanel({
   // header animates (the calendar button's width). A single Animated.Value
   // cannot serve both drivers, so it is two values on one clock.
   const modeLayout = useRef(new Animated.Value(positionMode ? 1 : 0)).current
-  useEffect(() => {
-    const a = Animated.parallel([
-      Animated.timing(modeAnim, {
-        toValue: positionMode ? 1 : 0,
-        duration: LAST_TIME_COLLAPSE_MS,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.timing(modeLayout, {
-        toValue: positionMode ? 1 : 0,
-        duration: LAST_TIME_COLLAPSE_MS,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: false,
-      }),
-    ])
-    a.start()
-    return () => a.stop()
-  }, [positionMode, modeAnim, modeLayout])
-  useEffect(() => {
-    const a = Animated.timing(openAnim, {
-      toValue: open ? 1 : 0,
-      duration: LAST_TIME_COLLAPSE_MS,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    })
-    a.start()
-    return () => a.stop()
-  }, [open, openAnim])
+  // Two values on one clock rather than an Animated.parallel: same duration and
+  // easing, started in the same commit, and nothing reads their joint
+  // completion. One of them cannot leave JS (see modeLayout above).
+  useToggleTiming(modeAnim, positionMode, { inMs: LAST_TIME_COLLAPSE_MS })
+  useToggleTiming(modeLayout, positionMode, {
+    inMs: LAST_TIME_COLLAPSE_MS,
+    native: false,
+  })
+  useToggleTiming(openAnim, open, { inMs: LAST_TIME_COLLAPSE_MS })
 
   const lastTimeOpacity = useMemo(
     () => Animated.multiply(Animated.subtract(1, modeAnim), openAnim),
@@ -3531,29 +3463,6 @@ const REP_SORTS: { key: RepSort; label: string; hint: string }[] = [
 // Rows shown before the "Show all" toggle is tapped.
 const REP_ROWS_COLLAPSED = 3
 
-// Expand/collapse inside the Summary tab — the "Show all" rep rows and the
-// collapsible notes. Revealed content fades in while the container height
-// eases, so each toggle reads as one motion instead of a jump. Opacity is safe
-// here (unlike SET_ANIM): the Summary tab never mounts the swipeable set list,
-// so there are no native-driven Animated nodes for it to collide with.
-const EXPAND_ANIM = {
-  duration: 260,
-  create: {
-    type: LayoutAnimation.Types.easeInEaseOut,
-    property: LayoutAnimation.Properties.opacity,
-    duration: 240,
-  },
-  update: {
-    type: LayoutAnimation.Types.easeInEaseOut,
-    duration: 260,
-  },
-  delete: {
-    type: LayoutAnimation.Types.easeInEaseOut,
-    property: LayoutAnimation.Properties.opacity,
-    duration: 160,
-  },
-} as const
-
 /**
  * The "Summary" sub-tab (was "Records"): what you did last time for this
  * exercise, the notes attached to that day, and your best set at every rep
@@ -3633,31 +3542,17 @@ export const SummaryPanel = memo(function SummaryPanel({
   // "all" pools every position; otherwise restrict to one set number.
   const [scope, setScope] = useState<"all" | number>("all")
   const [sort, setSort] = useState<RepSort>("weight")
-  const [showAllRows, setShowAllRows] = useState(false)
   // The day whose sets the record popup is showing, or null when closed.
   const [recordDay, setRecordDay] = useState<ExerciseHistoryDay | null>(null)
 
-  // Drives the "Show all" chevron flip. Separate from the LayoutAnimation
-  // because it is a transform, which LayoutAnimation cannot animate.
-  const moreSpin = useRef(new Animated.Value(0)).current
-  const toggleShowAllRows = useCallback(() => {
-    LayoutAnimation.configureNext(EXPAND_ANIM)
-    setShowAllRows((v) => {
-      Animated.timing(moreSpin, {
-        toValue: v ? 0 : 1,
-        duration: 240,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start()
-      return !v
-    })
-  }, [moreSpin])
-
-  // Collapse back to the top rows whenever the list itself changes shape.
-  const resetRows = useCallback(() => {
-    setShowAllRows(false)
-    moreSpin.setValue(0)
-  }, [moreSpin])
+  // The chevron's flip is a transform, which LayoutAnimation cannot animate, so
+  // the toggle owns both: the height change and the turn, on one clock.
+  const {
+    open: showAllRows,
+    toggle: toggleShowAllRows,
+    reset: resetRows,
+    spin: moreSpin,
+  } = useExpandToggle()
 
   const openRecordDay = useCallback(
     (date: string) => {
@@ -3826,7 +3721,7 @@ export const SummaryPanel = memo(function SummaryPanel({
                   id: "all",
                   title: "All sets",
                   subtitle: `${wrSets.length} ${wrSets.length === 1 ? "set" : "sets"}`,
-                  state: scope === "all" ? "on" : "off",
+                  selected: scope === "all",
                 },
                 ...setNumbers.map((n) => {
                   const count = wrSets.filter((s) => s.setNum === n).length
@@ -3834,7 +3729,7 @@ export const SummaryPanel = memo(function SummaryPanel({
                     id: String(n),
                     title: `Set ${n}`,
                     subtitle: `${count} ${count === 1 ? "time" : "times"}`,
-                    state: (scope === n ? "on" : "off") as "on" | "off",
+                    selected: scope === n,
                   }
                 }),
               ]}
@@ -3851,7 +3746,7 @@ export const SummaryPanel = memo(function SummaryPanel({
                 id: o.key,
                 title: o.label,
                 subtitle: o.hint,
-                state: (sort === o.key ? "on" : "off") as "on" | "off",
+                selected: sort === o.key,
               }))}
               onSelect={(id) => {
                 setSort(id as RepSort)
@@ -3921,24 +3816,7 @@ export const SummaryPanel = memo(function SummaryPanel({
                     ? `Show top ${REP_ROWS_COLLAPSED}`
                     : `Show all ${repRows.length} rep counts`}
                 </Text>
-                <Animated.View
-                  style={{
-                    transform: [
-                      {
-                        rotate: moreSpin.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: ["0deg", "180deg"],
-                        }),
-                      },
-                    ],
-                  }}
-                >
-                  <Ionicons
-                    name="chevron-down"
-                    size={14}
-                    color={theme.colors.primary}
-                  />
-                </Animated.View>
+                <SpinChevron progress={moreSpin} color={theme.colors.primary} />
               </Pressable>
             )}
           </View>
@@ -3972,94 +3850,73 @@ function RecordDayPopup({
   onClose: () => void
   onPressDate?: (date: string) => void
 }) {
-  const opacity = useRef(new Animated.Value(0)).current
+  const { mounted, opacity, hide } = usePresence(day != null, {
+    inMs: PICKER_FADE_MS,
+  })
+  // The last non-null day, held so the card still has content to render while
+  // it fades out.
   const [shown, setShown] = useState<ExerciseHistoryDay | null>(day)
+  useEffect(() => {
+    if (day) setShown(day)
+  }, [day])
 
   // Leaving for the calendar skips the fade: a native Modal sits above the
   // whole app, so fading it out over the incoming screen would put 150ms of
-  // dimmed backdrop on top of the push. Unmount it this commit, navigate on
-  // the next frame. The pending fade-out's callback is guarded on `finished`,
-  // so a reopen inside that window cannot blank the new content.
+  // dimmed backdrop on top of the push. Drop it this commit, navigate on the
+  // next frame.
   const goToDate = useCallback(() => {
     if (!shown || !onPressDate) return
     const date = shown.date
-    opacity.setValue(0)
-    setShown(null)
+    hide()
     onClose()
     requestAnimationFrame(() => onPressDate(date))
-  }, [shown, onPressDate, onClose, opacity])
+  }, [shown, onPressDate, onClose, hide])
 
-  useEffect(() => {
-    if (day) {
-      setShown(day)
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: PICKER_FADE_MS,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start()
-      return
-    }
-    Animated.timing(opacity, {
-      toValue: 0,
-      duration: PICKER_FADE_MS,
-      easing: Easing.in(Easing.cubic),
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) setShown(null)
-    })
-  }, [day, opacity])
-
-  if (!shown) return null
+  if (!mounted || !shown) return null
 
   return (
-    <Modal transparent visible animationType="none" statusBarTranslucent onRequestClose={onClose}>
-      <Animated.View style={[styles.pickerOverlay, { opacity }]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        {/* Backdrop and card are siblings, not nested — that is what keeps a
-            single tap enough to dismiss.
-
-            box-none, unlike the option picker's card: the set list below is
-            plain Views, so nothing inside claims the touch, and a responder
-            claimed here would block the list's native scroll gesture on a day
-            with many sets. The option picker can claim it because each of its
-            rows is a Pressable that takes the touch first. The cost is that a
-            tap on this card's padding closes the popup — it is read-only, so
-            that discards nothing. */}
-        <View style={styles.pickerCard} pointerEvents="box-none">
-          <View style={styles.recordDayHead}>
-            <View style={styles.pickerTitleCol}>
-              <Text style={styles.pickerTitle}>{niceDate(shown.date)}</Text>
-              <ExpandableNote note={shown.note} />
-            </View>
-            {onPressDate && (
-              <Pressable
-                onPress={goToDate}
-                hitSlop={10}
-                unstable_pressDelay={0}
-                style={({ pressed }) => [
-                  styles.dayCardCalBtn,
-                  pressedStyle(pressed),
-                ]}
-              >
-                <Ionicons
-                  name="calendar-outline"
-                  size={18}
-                  color={theme.colors.muted}
-                />
-              </Pressable>
-            )}
-          </View>
-          <ScrollView
-            style={styles.pickerScroll}
-            contentContainerStyle={styles.recordDaySets}
-            showsVerticalScrollIndicator
-          >
-            <SharedSetList sets={shown.sets} showNotes />
-          </ScrollView>
+    // Hosted in a Modal so it escapes the Summary tab's ScrollView, centred
+    // because it is read-only and has no input for a keyboard to cover. The
+    // card does not claim touches: the set list inside is plain Views, so a
+    // responder here would block its scroll gesture on a day with many sets.
+    <OverlayCard
+      opacity={opacity}
+      visible={day != null}
+      onBackdropPress={onClose}
+      align="center"
+      hostInModal
+    >
+      <View style={styles.recordDayHead}>
+        <View style={styles.pickerTitleCol}>
+          <Text style={overlayCardStyles.title}>{niceDate(shown.date)}</Text>
+          <ExpandableNote note={shown.note} />
         </View>
-      </Animated.View>
-    </Modal>
+        {onPressDate && (
+          <Pressable
+            onPress={goToDate}
+            hitSlop={10}
+            unstable_pressDelay={0}
+            style={({ pressed }) => [
+              styles.dayCardCalBtn,
+              pressedStyle(pressed),
+            ]}
+          >
+            <Ionicons
+              name="calendar-outline"
+              size={18}
+              color={theme.colors.muted}
+            />
+          </Pressable>
+        )}
+      </View>
+      <ScrollView
+        style={overlayCardStyles.scroll}
+        contentContainerStyle={styles.recordDaySets}
+        showsVerticalScrollIndicator
+      >
+        <SharedSetList sets={shown.sets} showNotes />
+      </ScrollView>
+    </OverlayCard>
   )
 }
 
@@ -4069,22 +3926,8 @@ function RecordDayPopup({
  * can run long, and rendering them all open pushed the sets off the screen.
  */
 function CollapsibleNote({ label, text }: { label: string; text: string }) {
-  const [open, setOpen] = useState(false)
-  const spin = useRef(new Animated.Value(0)).current
+  const { open, toggle, spin } = useExpandToggle()
   const firstLine = text.split("\n").find((l) => l.trim())?.trim() ?? ""
-
-  const toggle = useCallback(() => {
-    LayoutAnimation.configureNext(EXPAND_ANIM)
-    setOpen((v) => {
-      Animated.timing(spin, {
-        toValue: v ? 0 : 1,
-        duration: 240,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start()
-      return !v
-    })
-  }, [spin])
 
   return (
     <Pressable
@@ -4106,24 +3949,7 @@ function CollapsibleNote({ label, text }: { label: string; text: string }) {
         >
           {firstLine}
         </Text>
-        <Animated.View
-          style={{
-            transform: [
-              {
-                rotate: spin.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: ["0deg", "180deg"],
-                }),
-              },
-            ],
-          }}
-        >
-          <Ionicons
-            name="chevron-down"
-            size={14}
-            color={theme.colors.muted}
-          />
-        </Animated.View>
+        <SpinChevron progress={spin} />
       </View>
       {open && <Text style={styles.summaryNoteText}>{text}</Text>}
     </Pressable>
@@ -4131,12 +3957,9 @@ function CollapsibleNote({ label, text }: { label: string; text: string }) {
 }
 
 /**
- * A chip that opens a system menu of choices. The chip shows the current one,
- * and the menu marks it with the platform's own checkmark via `state: "on"`,
- * so there is no custom active styling to keep in sync.
- *
- * There is no pressed state on the chip: iOS leaves a menu's anchor alone and
- * lets the menu appearing be the feedback.
+ * A chip that opens a menu of choices. The chip shows the current one, and the
+ * menu marks it with a checkmark via `selected`, so there is no custom active
+ * styling to keep in sync.
  */
 function PickerTrigger({
   icon,
@@ -4152,7 +3975,7 @@ function PickerTrigger({
   onSelect: (id: string) => void
 }) {
   return (
-    <NativeMenu title={title} actions={actions} onSelect={onSelect}>
+    <MenuButton title={title} actions={actions} onSelect={onSelect}>
       <View style={styles.setPickerTrigger}>
         <Ionicons name={icon} size={13} color={theme.colors.muted} />
         <Text style={styles.setPickerTriggerText} numberOfLines={1}>
@@ -4160,19 +3983,16 @@ function PickerTrigger({
         </Text>
         <Ionicons name="chevron-down" size={14} color={theme.colors.muted} />
       </View>
-    </NativeMenu>
+    </MenuButton>
   )
 }
 
-// Centered, scrollable option picker. Mirrors NoteEditorSheet: the fade is
-// a single JS-driven Animated opacity, so there's no react-native-modal
-// backdrop transition to flicker on open/close. A core Modal hosts it only so
-// it escapes SummaryPanel's ScrollView and centers on the screen — its native
-// fade is disabled (animationType="none"); we mount it instantly and run our
-// own fade, unmounting after the fade-out completes. The dimmed backdrop and
-// the card are siblings (not nested), so a single tap closes/selects — nesting
-// Pressables is what previously needed a double tap.
-const PICKER_FADE_MS = 150
+// How long the record-day popup's fade runs. Shorter than the app's standard
+// fade: it opens over a scroll view the user is already reading, so it has to
+// feel lighter than a form popup. Everything else about that popup - the
+// backdrop, the card, the native Modal that escapes SummaryPanel's ScrollView -
+// is OverlayCard.
+const PICKER_FADE_MS = DUR.fadeFast
 function todayString(): string {
   const d = new Date()
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
@@ -4903,148 +4723,6 @@ const SetList = memo(function SetList({
   )
 })
 
-// Plain Animated.View overlay for editing a set's note. We stopped using
-// react-native-modal here because its keyboard handling caused the modal
-// to visibly track the keyboard for a frame on close. This is just an
-// absolute-positioned card with a tap-to-dismiss backdrop and a single
-// native-driven opacity animation — keyboard handling is whatever RN does
-// for any focused TextInput in normal layout, no library quirks.
-const NOTE_FADE_MS = 180
-function NoteEditorSheet({
-  visible,
-  original,
-  draft,
-  onChangeDraft,
-  onClose,
-  onSave,
-  title = "Note",
-  placeholder = "Add a note for this set…",
-  mode = "edit",
-  onEdit,
-}: {
-  visible: boolean
-  original: string
-  draft: string
-  onChangeDraft: (s: string) => void
-  onClose: () => void
-  onSave: () => void
-  title?: string
-  placeholder?: string
-  /** "view" shows the saved note read-only behind a Close/Edit pair. Callers
-   *  that have nothing to read — a set note, or an exercise with no note yet —
-   *  leave this at "edit" and land straight in the input. */
-  mode?: "view" | "edit"
-  onEdit?: () => void
-}) {
-  const dirty = draft.trim() !== (original ?? "").trim()
-  const inputRef = useRef<TextInput | null>(null)
-  const opacity = useRef(new Animated.Value(0)).current
-  const [mounted, setMounted] = useState(visible)
-
-  useEffect(() => {
-    if (visible) {
-      setMounted(true)
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: NOTE_FADE_MS,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start()
-      return
-    }
-    Animated.timing(opacity, {
-      toValue: 0,
-      duration: NOTE_FADE_MS,
-      easing: Easing.in(Easing.cubic),
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) setMounted(false)
-    })
-  }, [visible, opacity])
-
-  // Focus after one frame so the keyboard rises against an already visible
-  // card (no focus-during-fade-in flash). Keyed on `mode` too, so tapping Edit
-  // in a view-first sheet raises the keyboard the same way.
-  useEffect(() => {
-    if (!visible || mode !== "edit") return
-    const f = requestAnimationFrame(() => inputRef.current?.focus())
-    return () => cancelAnimationFrame(f)
-  }, [visible, mode])
-
-  function handleSave() {
-    if (!dirty) return
-    // Close first; the snapshot mutation is deferred past the fade so the
-    // set list behind doesn't re-render mid-animation when the new note
-    // bubble appears.
-    const save = onSave
-    onClose()
-    setTimeout(save, NOTE_FADE_MS + 40)
-  }
-
-  if (!mounted) return null
-
-  const viewing = mode === "view"
-
-  return (
-    <Animated.View
-      pointerEvents={visible ? "auto" : "none"}
-      style={[styles.noteOverlay, { opacity }]}
-    >
-      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-      <View style={styles.noteOverlayCard} pointerEvents="box-none">
-        <Text style={styles.noteOverlayTitle}>{title}</Text>
-        {viewing ? (
-          <ScrollView
-            style={styles.noteViewScroll}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator
-          >
-            <Text style={styles.noteViewText}>{(original || draft).trim()}</Text>
-          </ScrollView>
-        ) : (
-          <TextInput
-            ref={inputRef}
-            value={draft}
-            onChangeText={onChangeDraft}
-            placeholder={placeholder}
-            placeholderTextColor={theme.colors.muted}
-            multiline
-            style={styles.noteSheetInput}
-          />
-        )}
-        <View style={styles.noteSheetActions}>
-          {viewing ? (
-            <>
-              <Button
-                label="Close"
-                variant="secondary"
-                onPress={onClose}
-                style={{ flex: 1 }}
-              />
-              <Button label="Edit" onPress={onEdit} style={{ flex: 1 }} />
-            </>
-          ) : (
-            <>
-              <Button
-                label="Cancel"
-                variant="secondary"
-                onPress={onClose}
-                style={{ flex: 1 }}
-              />
-              <Button
-                label="Save"
-                onPress={handleSave}
-                disabled={!dirty}
-                style={{ flex: 1 }}
-              />
-            </>
-          )}
-        </View>
-      </View>
-    </Animated.View>
-  )
-}
-
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: theme.colors.background },
   // Sits in the native header, opposite the back button.
@@ -5463,54 +5141,6 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     fontStyle: "italic",
     lineHeight: 16,
-  },
-  noteOverlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    paddingTop: 80,
-    paddingHorizontal: theme.spacing[4],
-    zIndex: 50,
-    elevation: 50,
-  },
-  noteOverlayCard: {
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.radius.lg,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    padding: theme.spacing[4],
-    gap: theme.spacing[3],
-    // The card is what bounds a long note, and the scroll area shrinks inside
-    // it. A maxHeight on the scroll area alone left the card free to grow.
-    maxHeight: "70%",
-  },
-  noteOverlayTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.md,
-    fontWeight: "800",
-  },
-  // Read-only body of the sheet. Keep in step with NoteSheet's viewer.
-  noteViewScroll: { flexGrow: 0, flexShrink: 1 },
-  noteViewText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    lineHeight: 22,
-  },
-  noteSheetInput: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    backgroundColor: "rgba(255,255,255,0.04)",
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    borderRadius: theme.radius.md,
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[3],
-    height: 96,
-    maxHeight: 160,
-    textAlignVertical: "top",
-  },
-  noteSheetActions: {
-    flexDirection: "row",
-    gap: theme.spacing[3],
   },
   selectionBar: {
     flexDirection: "row",
@@ -6037,26 +5667,8 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.sm,
     fontWeight: "700",
   },
-  pickerOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: theme.spacing[5],
-  },
-  pickerCard: {
-    width: "100%",
-    maxWidth: 360,
-    maxHeight: "70%",
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.radius.lg,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    padding: theme.spacing[4],
-    gap: theme.spacing[2],
-  },
-  // A row inside pickerCard, which is a column. The title column takes the
-  // flex here rather than on the card, where flex:1 would stretch the title
+  // A row inside the record-day card, which is a column. The title column takes
+  // the flex here rather than on the card, where flex:1 would stretch the title
   // block and squash the set list under it.
   recordDayHead: {
     flexDirection: "row",
@@ -6064,40 +5676,8 @@ const styles = StyleSheet.create({
     gap: theme.spacing[2],
   },
   pickerTitleCol: { flex: 1, gap: 2 },
-  pickerTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.md,
-    fontWeight: "800",
-  },
-  pickerScroll: {
-    flexGrow: 0,
-    flexShrink: 1,
-  },
-  pickerScrollContent: {
-    gap: theme.spacing[1],
-  },
   recordDaySets: {
     marginHorizontal: -theme.spacing[4],
-  },
-  setPickerOption: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[3],
-    borderRadius: theme.radius.md,
-  },
-  setPickerOptionActive: {
-    backgroundColor: "rgba(0,119,188,0.12)",
-  },
-  setPickerOptionText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.md,
-    fontWeight: "700",
-  },
-  setPickerOptionCount: {
-    color: theme.colors.muted,
-    fontSize: theme.fontSize.sm,
   },
   swipeDeleteText: {
     color: "#fff",
