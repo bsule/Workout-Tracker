@@ -47,11 +47,19 @@ import { SetList } from "../components/SetList"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { CollapseIn, FadeHighlight, SlideDownIn } from "../components/Fade"
 import { HoldPressable } from "../components/HoldPressable"
-import { NativeMenu, type MenuAction } from "../components/NativeMenu"
+import { MenuButton, type MenuAction } from "../components/MenuPopup"
 import { NavArrowButton } from "../components/NavArrowButton"
 import { NotePreview } from "../components/NotePreview"
-import { NoteReveal, NOTE_SHIFT_ANIM } from "../components/NoteReveal"
+import { NoteReveal } from "../components/NoteReveal"
 import { NoteSheet } from "../components/NoteSheet"
+import { OverlayCard, overlayCardStyles } from "../components/OverlayCard"
+import {
+  DUR,
+  NOTE_SHIFT_ANIM,
+  SHIFT_ANIM,
+  deferPastAnimation,
+  usePresence,
+} from "../anim"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
 import { useActiveDateAndSetter } from "../state/activeDate"
@@ -224,9 +232,8 @@ export function DayScreen({ navigation, route }: any) {
     [openNoteSheet]
   )
 
-  // The system menu has already dismissed by the time this fires, so these run
-  // directly. The custom menu needed a setTimeout past its own fade here, or a
-  // sheet opened while the menu was still on screen.
+  // MenuPopup holds this back until its fade-out has finished, so a sheet
+  // opened here cannot land while the menu is still on screen.
   const onDateMenuAction = useCallback(
     (id: string) => {
       if (id === "dayNote") openNoteEditor()
@@ -491,6 +498,14 @@ function DayContent({
             // resolves against the in-memory snapshot, so awaiting only
             // yields to React between removals — each one then recomputes
             // PRs, rebuilds indexes and re-renders on its own.
+            // Shift-only, so the cards under the removed ones slide up rather
+            // than jumping. The removed cards themselves are left alone on
+            // purpose: a selected card has FadeHighlight's native-driven
+            // opacity on it, and a JS-driven `delete: opacity` over the same
+            // node throws (see SET_ANIM in ../anim). scaleXY is the usual way
+            // out of that, but a full-width card scaling toward its corner
+            // reads as the card flying sideways.
+            LayoutAnimation.configureNext(SHIFT_ANIM)
             batchMutations(() => {
               for (const weId of selectedIds) {
                 api.removeExerciseFromWorkout(workout.id, weId)
@@ -623,14 +638,14 @@ function DateNav({
   onShift: (delta: number) => void
   onSelectAction: (id: string) => void
 }) {
-  // The date label opens a system menu, so its items must exist at render
-  // time rather than being gathered on press. DateNav subscribes here rather
+  // The date label opens a menu whose items must exist at render time rather
+  // than being gathered on press. DateNav subscribes here rather
   // than DayScreen doing it: this component is three buttons, while DayScreen
   // hosts the whole date pager and would re-render all of it.
   const snapshot = useStore((s) => s.snapshot)
 
-  // A system menu needs its items before the press, so this is derived on
-  // render instead of gathered in an open handler. It is a few index lookups
+  // The menu needs its items before the press, so this is derived on render
+  // instead of gathered in an open handler. It is a few index lookups
   // and it only reruns when the snapshot or the date moves.
   const menuCtx = useMemo(() => {
     const { indexes } = getState()
@@ -661,20 +676,20 @@ function DateNav({
         // No subtitle: the title already says what this does. The old one read
         // "Only this date", which existed to contrast with a workout-note item
         // that is no longer in this menu.
-        image: "calendar.badge.plus",
+        icon: "document-text-outline",
       },
     ]
     actions.push({
       id: "calendar",
       title: "Open calendar",
-      image: "calendar",
+      icon: "calendar-outline",
     })
     if (menuCtx.hasExercises) {
       actions.push({
         id: "deleteWorkout",
         title: "Delete this day's workout",
-        image: "trash",
-        attributes: { destructive: true },
+        icon: "trash-outline",
+        destructive: true,
       })
     }
     return actions
@@ -687,7 +702,7 @@ function DateNav({
         accessibilityLabel="Previous day"
         onPress={() => onShift(-1)}
       />
-      <NativeMenu
+      <MenuButton
         style={styles.dateMenuAnchor}
         actions={dateMenuActions}
         onSelect={onSelectAction}
@@ -696,7 +711,7 @@ function DateNav({
           <Text style={styles.dateText}>{labelForDate(date)}</Text>
           <Ionicons name="chevron-down" size={14} color={theme.colors.muted} />
         </View>
-      </NativeMenu>
+      </MenuButton>
       <NavArrowButton
         direction="forward"
         accessibilityLabel="Next day"
@@ -907,13 +922,10 @@ function SummaryStrip({
   )
 }
 
-// Custom Animated.View overlay (not react-native-modal) for picking
-// the workout's gym. Same pattern as SetLogger's NoteEditorSheet -
-// react-native-modal's keyboard handling caused visible stutter on
-// close, and mutations during the exit animation made it appear to
-// "double-animate". This implementation runs a single native-driven
-// fade and defers store mutations until after the fade completes.
-const GYM_FADE_MS = 180
+// Picking the workout's gym. Runs the app's shared overlay: one native-driven
+// fade (usePresence), and store mutations deferred past it - mutating during
+// the exit re-renders this screen mid-fade and visibly stutters the overlay.
+const GYM_FADE_MS = DUR.fade
 function GymPickerModal({
   visible,
   workout,
@@ -926,44 +938,25 @@ function GymPickerModal({
   const [gymNames, setGymNames] = useState<string[]>([])
   const [adding, setAdding] = useState(false)
   const [newGym, setNewGym] = useState("")
-  const opacity = useRef(new Animated.Value(0)).current
-  const [mounted, setMounted] = useState(visible)
+  const { mounted, opacity } = usePresence(visible, { inMs: GYM_FADE_MS })
   const newGymInputRef = useRef<TextInput | null>(null)
 
+  // Never resume mid-form: an open always lands on the list, not the add field.
   useEffect(() => {
-    if (visible) {
-      setMounted(true)
-      setAdding(false)
-      setNewGym("")
-      api
-        .listGyms()
-        .then((gs) => setGymNames(gs.map((g) => g.name)))
-        .catch(() => setGymNames([]))
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: GYM_FADE_MS,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start()
-      return
-    }
-    Animated.timing(opacity, {
-      toValue: 0,
-      duration: GYM_FADE_MS,
-      easing: Easing.in(Easing.cubic),
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) setMounted(false)
-    })
-  }, [visible, opacity])
+    if (!visible) return
+    setAdding(false)
+    setNewGym("")
+    api
+      .listGyms()
+      .then((gs) => setGymNames(gs.map((g) => g.name)))
+      .catch(() => setGymNames([]))
+  }, [visible])
 
   const selected = workout.gym
 
-  // Close first, then run the (sync) store mutation after the fade has
-  // finished. Mutating during the exit animation re-renders the parent
-  // mid-fade and visibly stutters the overlay.
+  // Close first, then run the (sync) store mutation once the fade has landed.
   function deferMutation(fn: () => void) {
-    setTimeout(fn, GYM_FADE_MS + 40)
+    deferPastAnimation(fn, GYM_FADE_MS)
   }
 
   function selectGym(name: string) {
@@ -1009,13 +1002,8 @@ function GymPickerModal({
   if (!mounted) return null
 
   return (
-    <Animated.View
-      pointerEvents={visible ? "auto" : "none"}
-      style={[styles.gymOverlay, { opacity }]}
-    >
-      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-      <View style={styles.gymOverlayCard} pointerEvents="box-none">
-        <Text style={styles.gymOverlayTitle}>Gym</Text>
+    <OverlayCard opacity={opacity} visible={visible} onBackdropPress={onClose}>
+      <Text style={overlayCardStyles.title}>Gym</Text>
         {adding ? (
           <>
             <TextInput
@@ -1028,9 +1016,9 @@ function GymPickerModal({
               autoCorrect={false}
               returnKeyType="done"
               onSubmitEditing={commitNew}
-              style={styles.gymSheetInput}
+              style={[overlayCardStyles.input, styles.gymSheetInput]}
             />
-            <View style={styles.gymSheetActions}>
+            <View style={overlayCardStyles.actions}>
               <Button
                 label="Cancel"
                 variant="secondary"
@@ -1082,7 +1070,7 @@ function GymPickerModal({
                 })}
               </ScrollView>
             )}
-            <View style={styles.gymSheetActions}>
+            <View style={overlayCardStyles.actions}>
               <Button
                 label="Add gym"
                 variant="secondary"
@@ -1100,8 +1088,7 @@ function GymPickerModal({
             ) : null}
           </>
         )}
-      </View>
-    </Animated.View>
+    </OverlayCard>
   )
 }
 
@@ -1601,37 +1588,8 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.sm,
     fontWeight: "700",
   },
-  gymOverlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    paddingTop: 80,
-    paddingHorizontal: theme.spacing[4],
-    zIndex: 50,
-    elevation: 50,
-  },
-  gymOverlayCard: {
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.radius.lg,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    padding: theme.spacing[4],
-    gap: theme.spacing[3],
-  },
-  gymOverlayTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.md,
-    fontWeight: "800",
-  },
-  gymSheetInput: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    backgroundColor: "rgba(255,255,255,0.04)",
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    borderRadius: theme.radius.md,
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[3],
-  },
+  // Layered over overlayCardStyles.input, which carries the field's chrome.
+  gymSheetInput: { fontSize: theme.fontSize.base },
   gymSheetSuggestList: {
     maxHeight: 200,
     borderColor: theme.colors.border,
@@ -1659,9 +1617,5 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.sm,
     fontStyle: "italic",
     paddingVertical: theme.spacing[2],
-  },
-  gymSheetActions: {
-    flexDirection: "row",
-    gap: theme.spacing[3],
   },
 })

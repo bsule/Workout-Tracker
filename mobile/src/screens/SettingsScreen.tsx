@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import {
   Alert,
+  LayoutAnimation,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -24,6 +25,7 @@ import { clearApiKey, getApiKey, setApiKey } from "../ai/keys"
 import { Button } from "../components/Button"
 import { PopupModal } from "../components/PopupModal"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
+import { EXPAND_ANIM } from "../anim"
 import { theme } from "../theme/theme"
 import {
   currentMode,
@@ -70,11 +72,14 @@ export function SettingsScreen({ navigation }: any) {
             setRecomputeStatus(null)
             try {
               const res = await api.recomputePrs()
+              // The status line appears under the button and grows the card.
+              LayoutAnimation.configureNext(EXPAND_ANIM)
               setRecomputeStatus({
                 kind: "ok",
                 msg: `Recomputed PRs across ${res.recomputed} exercises.`,
               })
             } catch (e) {
+              LayoutAnimation.configureNext(EXPAND_ANIM)
               setRecomputeStatus({
                 kind: "error",
                 msg: e instanceof Error ? e.message : "Failed.",

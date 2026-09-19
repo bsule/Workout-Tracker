@@ -1,6 +1,7 @@
 import { useState } from "react"
 import {
   Alert,
+  LayoutAnimation,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,6 +14,7 @@ import type { Category } from "@lift/core"
 import { Button } from "../components/Button"
 import { PopupModal } from "../components/PopupModal"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
+import { LIST_ANIM } from "../anim"
 import { theme } from "../theme/theme"
 import {
   COLOR_PALETTE,
@@ -54,6 +56,9 @@ export function CategoryStylesScreen() {
     closeEditor()
   }
   function commitCreate(label: string, color: string) {
+    // The new row arrives in the card and pushes the Add button down. Same
+    // list animation the saved-gyms list uses.
+    LayoutAnimation.configureNext(LIST_ANIM)
     const slug = addCategory(label, color)
     if (!slug) {
       Alert.alert("Could not add category", "Please choose a different name.")
@@ -71,6 +76,7 @@ export function CategoryStylesScreen() {
           text: "Delete",
           style: "destructive",
           onPress: () => {
+            LayoutAnimation.configureNext(LIST_ANIM)
             removeCategory(c)
             closeEditor()
           },

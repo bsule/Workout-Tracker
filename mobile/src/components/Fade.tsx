@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useRef, type ReactNode } from "react"
 import {
   Animated,
-  Easing,
   StyleSheet,
   type StyleProp,
   type ViewStyle,
 } from "react-native"
+import { DUR, EASE, useToggleTiming } from "../anim"
 
 /**
  * An absolutely positioned layer that fades in when `active` turns true.
@@ -23,15 +23,12 @@ export function FadeHighlight({
   style?: StyleProp<ViewStyle>
 }) {
   const anim = useRef(new Animated.Value(active ? 1 : 0)).current
-
-  useEffect(() => {
-    Animated.timing(anim, {
-      toValue: active ? 1 : 0,
-      duration: active ? 110 : 90,
-      easing: active ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
-      useNativeDriver: true,
-    }).start()
-  }, [active, anim])
+  useToggleTiming(anim, active, {
+    inMs: DUR.highlightIn,
+    outMs: DUR.highlightOut,
+    easeIn: EASE.out,
+    easeOut: EASE.in,
+  })
 
   return (
     <Animated.View
@@ -67,22 +64,20 @@ export function SlideDownIn({
   children: ReactNode
 }) {
   const anim = useRef(new Animated.Value(0)).current
-
-  useEffect(() => {
-    Animated.timing(anim, {
-      toValue: active ? 1 : 0,
-      duration: active ? 150 : 100,
-      // Ease-OUT on the way out, not ease-in. Ease-in holds the bar near full
-      // opacity through the first half, and that stall is what reads as lag.
-      // Ease-out spends the visible part of the motion up front and leaves a
-      // soft tail, so the exit can last long enough to be seen without
-      // feeling slow.
-      easing: active ? Easing.out(Easing.cubic) : Easing.out(Easing.quad),
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished && !active) onExited?.()
-    })
-  }, [active, anim, onExited])
+  useToggleTiming(anim, active, {
+    inMs: DUR.barIn,
+    outMs: DUR.barOut,
+    easeIn: EASE.out,
+    // Ease-OUT on the way out, not ease-in. Ease-in holds the bar near full
+    // opacity through the first half, and that stall is what reads as lag.
+    // Ease-out spends the visible part of the motion up front and leaves a
+    // soft tail, so the exit can last long enough to be seen without
+    // feeling slow.
+    easeOut: EASE.outSoft,
+    onRest: (finished, on) => {
+      if (finished && !on) onExited?.()
+    },
+  })
 
   return (
     <Animated.View
@@ -134,15 +129,12 @@ export function CollapseIn({
   children: ReactNode
 }) {
   const anim = useRef(new Animated.Value(active ? 1 : 0)).current
-
-  useEffect(() => {
-    Animated.timing(anim, {
-      toValue: active ? 1 : 0,
-      duration: active ? 130 : 110,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start()
-  }, [active, anim])
+  useToggleTiming(anim, active, {
+    inMs: DUR.collapseIn,
+    outMs: DUR.collapseOut,
+    easeIn: EASE.out,
+    native: false, // width is a layout property
+  })
 
   return (
     <Animated.View
