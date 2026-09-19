@@ -9,6 +9,7 @@ import {
   Text,
   View,
   VirtualizedList,
+  useWindowDimensions,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from "react-native"
@@ -125,10 +126,18 @@ export function CalendarScreen({ navigation, route }: any) {
   // The Calendar tab stays mounted; the user may have paged to another month
   // since the last Open calendar, and skipping that case left the grid there.
   // Clearing the param afterwards prevents a later re-focus from replaying it.
+  //
+  // On the mount pass there is nothing to apply. The state initialisers above
+  // already read `incomingDate`, and the pager mounts at
+  // `initialScrollIndex={visibleIndex}`, so the right month is on screen
+  // before this effect can run. Re-applying it put a `scrollToIndex` on a
+  // list that may not have rendered yet (it is gated on `pageWidth`), plus
+  // two setState calls and a setParams, all inside the 120ms slide.
+  const appliedOnce = useRef(false)
   useEffect(() => {
     if (!incomingDate) return
-    jumpToMonth(monthIndex(parseYear(incomingDate), parseMonth(incomingDate)), false)
-    setSelectedDate(incomingDate)
+    const isMount = !appliedOnce.current
+    appliedOnce.current = true
     // Only the tab instance owns the global active date. The pushed instance
     // sits on top of SetLogger / ExerciseDetail, so writing the date here
     // would move the Today tab underneath: popping back to it would land the
@@ -136,6 +145,19 @@ export function CalendarScreen({ navigation, route }: any) {
     // freezeOnBlur hides that until the last pop, which made it look like a
     // delayed jump. "Go to date" below is the explicit opt-in.
     if (!pushed) setActiveDate(incomingDate)
+
+    if (isMount) {
+      // Clearing the param is still worth doing, so a later re-focus cannot
+      // replay it. It just waits for the transition rather than re-rendering
+      // in the middle of it.
+      const task = InteractionManager.runAfterInteractions(() =>
+        navigation.setParams({ date: undefined })
+      )
+      return () => task.cancel()
+    }
+
+    jumpToMonth(monthIndex(parseYear(incomingDate), parseMonth(incomingDate)), false)
+    setSelectedDate(incomingDate)
     navigation.setParams({ date: undefined })
   }, [incomingDate])
 
@@ -183,7 +205,17 @@ export function CalendarScreen({ navigation, route }: any) {
   // and deceleration. The old fade/swap animation jumped between two offsets.
   const pager = useRef<VirtualizedList<number>>(null)
   const paging = useRef(false)
-  const [pageWidth, setPageWidth] = useState(0)
+  // Seeded from the window rather than starting at 0. The month pager only
+  // renders once this is known, and the viewport's height is derived from it,
+  // so a 0 here means the calendar slides in with an empty, collapsed grid
+  // that pops to full size the frame after `onLayout` lands. That pop is the
+  // glitch on open.
+  //
+  // The viewport runs the full width of the screen - neither `pinned` nor
+  // `monthViewport` adds horizontal padding - so the window width is not an
+  // approximation. `onLayout` still runs and still wins if they disagree.
+  const { width: windowWidth } = useWindowDimensions()
+  const [pageWidth, setPageWidth] = useState(windowWidth)
   const viewportHeight = useRef(new Animated.Value(0)).current
   const visibleIndex = monthIndex(year, month)
   const [reduceMotion, setReduceMotion] = useState(false)
