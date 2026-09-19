@@ -57,7 +57,7 @@ npm test            # vitest run — one-shot, used in CI / before merging
 npm run test:watch  # re-run on change
 ```
 
-What's covered: units conversion, blob serialize/migrate (schema v1→5), indexes, materialize (Brzycki 1RM, durations), queries (fuzzy match, history, calendar, day notes), every mutation, the PR / position-PR computation, FitNotes CSV import (incl. the real fixture), JSON export↔import round-trips, crash-log replay in `persist`, and the `CloudflareTransport` wire protocol (mocked `fetch`). Tests live in `tests/`; shared store-reset and in-memory-storage helpers are in `tests/helpers/`.
+What's covered: units conversion, blob serialize/migrate (schema v1→8), indexes, materialize (Brzycki 1RM, durations), queries (fuzzy match, history, calendar, day notes), top-weight records, every mutation, the PR / position-PR computation, FitNotes CSV import (incl. the real fixture), JSON export↔import round-trips, crash-log replay in `persist`, the device-local sync clock, and the `CloudflareTransport` wire protocol (mocked `fetch`). Tests live in `tests/`; shared store-reset and in-memory-storage helpers are in `tests/helpers/`.
 
 The store is a module-level singleton — suites that touch it call `resetStore()` in `beforeEach` (see `tests/helpers/store.ts`), and import paths that flush inject an in-memory `BlobStorage` via `installMemoryStorage()`.
 
@@ -77,6 +77,7 @@ Everything important lives in `packages/core/src`. The two clients are thin shel
 - **PR computation** (`store/prs.ts`) is deliberately separate from mutations so `persist.ts` can reuse it when replaying the crash log without creating a `persist ↔ mutations` import cycle. Pure snapshot→snapshot: `recomputePrsForWe`, `recomputePrsForExercise`, `recomputePrsForExercises`. **Every path that adds, edits, or removes a set must run one of these** — live mutation, crash-log replay, import, migration — or the `is_pr` / `is_position_pr` flags stored on the rows go stale.
 - **Indexes** (`store/indexes.ts`) are rebuilt from the snapshot on every committed change; queries read indexes, not raw arrays.
 - **Queries** (`store/queries.ts`) derive the view-model objects (`Workout`, `Exercise`, etc.) that components consume.
+- **Records** (`store/records.ts`) derive top-weight-per-rep records from an `ExerciseHistoryDay[]`. They are pure functions with no store access, which is why they sit apart from `queries.ts` (that file reaches into `getState()`).
 - **`localApi`** (`store/index.ts`) is the data-access surface components call. **It resolves synchronously against the in-memory snapshot but wraps results in `Promise.resolve(...)`** to keep call sites uniform with the old networked API. See the memory note: do not `await` between a `localApi` mutation and a navigation/commit — the await yields to React mid-flow and causes visible freezes.
 
 ### Persistence (`store/persist.ts`)
@@ -97,13 +98,17 @@ The core does **not** know how to persist. Hosts inject a `BlobStorage` factory 
 
 ### Schema migrations
 
-`store/schema.ts` has `SCHEMA_VERSION` (currently 7). On parse, `store/blob.ts:migrate()` upgrades older snapshots field-by-field. A migration that adds derived flags (e.g. v4's `is_position_pr`) triggers a full `recomputeAllPrs()` pass after hydrate. v5 copies non-empty `workout.notes` into `day_notes`, then blanks leftover `workout.notes` so a deleted day note cannot resurrect on export. v6 makes `workout.notes` canonical again as a per-session note; it blanks leftovers on the v5→v6 hop only (under v5 the field was dead, so any value on a v5 row is garbage). v7 adds `workout_exercise.note` and backfills it empty — new storage, nothing to lift from an older field. **The blanking pass must never run on a current-version snapshot** — it would delete every workout note on the next boot. `tests/blob.test.ts` guards this. **When you change the snapshot shape, bump `SCHEMA_VERSION` and add a migration branch** — older clients/blobs in the wild will otherwise break.
+`store/schema.ts` has `SCHEMA_VERSION` (currently 8). On parse, `store/blob.ts:migrate()` upgrades older snapshots field-by-field. A migration that adds derived flags (e.g. v4's `is_position_pr`) triggers a full `recomputeAllPrs()` pass after hydrate. v5 copies non-empty `workout.notes` into `day_notes`, then blanks leftover `workout.notes` so a deleted day note cannot resurrect on export. v6 makes `workout.notes` canonical again as a per-session note; it blanks leftovers on the v5→v6 hop only (under v5 the field was dead, so any value on a v5 row is garbage). v7 adds `workout_exercise.note` and backfills it empty — new storage, nothing to lift from an older field. v8 changes no field at all: PR comparison moved from raw kg floats to `units.ts`'s `weightKey`, so every flag computed under the old rule is stale. The bump exists only to make hydrate run `recomputeAllPrs()`, so v8 has no branch in `migrate()`. **The blanking pass must never run on a current-version snapshot** — it would delete every workout note on the next boot. `tests/blob.test.ts` guards this. **When you change the snapshot shape, bump `SCHEMA_VERSION` and add a migration branch** — older clients/blobs in the wild will otherwise break.
 
 ### Sync (`store/../sync/`)
 
-Manual, user-triggered (a Settings button), not background. `sync/autoSync.ts:syncNow()`:
+Mostly manual. The user triggers a round-trip from a Settings button. `sync/autoSync.ts:syncNow()`:
 1. Push the snapshot via `CloudflareTransport` (`PUT /api/sync/snapshot` with `If-Match`/`If-None-Match` etag).
-2. `200` → done. `412` (stale etag) → return `{ kind: "stale" }` so the UI prompts: pull cloud vs. overwrite. `429` → `SyncQuotaExceededError` (server enforces a small daily push budget).
+2. `200` → done. `412` (stale etag) → return `{ kind: "stale" }` so the UI prompts: pull cloud vs. overwrite. `429` → `SyncQuotaExceededError` (the server enforces 5 pushes per UTC day; `fetchQuota()` reads the remaining count from `GET /api/sync/quota`, and pulls and quota reads are free).
+
+`sync/syncClock.ts` holds the device-local sync state: `lastSyncedAt`, plus the etag of a cloud version that is ahead and whether the user has already been told about it. It is deliberately **not** part of the `Snapshot`, because `serialize()` re-stamps `exported_at` on every push, so a timestamp inside the snapshot would dirty it forever. Hosts inject a `SyncClockStore` via `configureSyncClock(...)`, the same pattern as `BlobStorage`. Until a host injects one, reads are empty and writes do nothing. Every path that leaves local and cloud in agreement calls `markSynced()`.
+
+That one clock drives two things: the "last synced" label, and `maybeAutoSync()`. The latter is the only non-manual path. Both clients call it once after hydrate (`StoreProvider.tsx` on web, `store/bootstrap.ts` on mobile). It pushes when the last sync is over 3 days old, and it waits 6 hours before retrying a failed attempt. It skips outright when the store is not hydrated, when the snapshot has no workouts, when this device has never synced, or when a conflict is open — an automatic push must never overwrite the cloud copy with nothing. `markCloudNewer()` records a `412` so the app asks once per distinct cloud etag and never nags twice about the same one.
 
 The R2 etag is an opaque version cookie; treat it as such. The blob the worker stores is byte-identical to the local snapshot — clients diff/merge by full replace, not field-level.
 
