@@ -7,9 +7,10 @@ Local-first workout tracker. Plan routines, log weight/reps per set, watch your 
 | Path          | What it is                                                                                                |
 |---------------|-----------------------------------------------------------------------------------------------------------|
 | `packages/core` | Shared store, sync, units, FitNotes import/export. Used by both `frontend` and `mobile`.                |
-| `frontend`    | Next.js 16 + React 19 + Tailwind. Persists to IndexedDB.                                                  |
+| `frontend`    | Next.js 16 + React 19 + Tailwind. Persists to OPFS, with an IndexedDB fallback.                           |
 | `mobile`      | Expo / React Native. Persists to the app's filesystem sandbox; auto-backs-up to a user-picked Files folder. |
 | `cloudflare`  | Hono Worker on Cloudflare. Auth in D1, snapshot blob in R2. Replaces the old Django backend.              |
+| `tests`       | Vitest suite for `@lift/core`. See [tests/README.md](tests/README.md).                                    |
 
 ## Run it locally
 
@@ -63,6 +64,19 @@ npm run apk:gh
 Both require the `gh` CLI to be installed and authenticated; each build takes ~10–20 min. The iOS `.ipa` is unsigned — re-sign it with Sideloadly (or similar) and a free Apple ID before installing. The Android `.apk` is debug-signed and installs directly (`adb install <file>.apk`, or just open it on the device).
 
 You can also build through EAS instead of GitHub Actions (`npm run build:ios` / `npm run build:android`, plus `:prod` variants).
+
+## Tests
+
+The shared core has a Vitest suite. Run it from the repo root:
+
+```bash
+npm test            # one-shot
+npm run test:watch  # re-run on change
+```
+
+The suite covers `@lift/core` only. The two clients' UI and the Worker have no
+automated tests. Verify those by running the app, or by curling the Worker (see
+[cloudflare/README.md](cloudflare/README.md)).
 
 ## Configuration
 

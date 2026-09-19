@@ -15,7 +15,13 @@ Auth:
 Sync:
 
 - `GET /api/sync/snapshot` → 200 raw bytes + `ETag`, or 204 if no snapshot exists
-- `PUT /api/sync/snapshot` → 200 `{ etag }`. Required header: `If-Match: "<etag>"` (overwrite) or `If-None-Match: *` (first write). 412 on stale etag.
+- `PUT /api/sync/snapshot` → 200 `{ etag, quota }`. Required header: `If-Match: "<etag>"` (overwrite) or `If-None-Match: *` (first write).
+  - 428 if neither header is present.
+  - 412 on a stale etag, with `{ detail, etag, quota }`. The `etag` is the cloud version the push lost to, so a client can prompt once per distinct version. A refused push does not spend quota.
+  - 429 when the daily push budget is spent, with `{ detail, quota }`.
+- `GET /api/sync/quota` → `{ used, limit, remaining, resets_at }`. Free to call.
+
+Each user may push 5 snapshots per UTC day (`DAILY_PUSH_LIMIT` in `src/sync/routes.ts`). Counts live in the `sync_quota` table and reset at UTC midnight. Pulls and quota reads are unlimited.
 
 All routes (except `/api/auth/signup` and `/api/auth/login`) require `Authorization: Token <hex>`.
 
@@ -72,7 +78,7 @@ echo -n "test snapshot bytes" | \
     -H "authorization: Token $TOKEN" \
     -H 'if-none-match: *' \
     --data-binary @-
-# → {"etag":"<md5>"}
+# → {"etag":"<md5>","quota":{"used":1,"limit":5,"remaining":4,"resets_at":"..."}}
 
 # Pull
 curl -i http://localhost:8787/api/sync/snapshot \
@@ -86,6 +92,11 @@ echo -n "newer bytes" | \
     -H 'if-match: "deadbeef"' \
     --data-binary @-
 # → 412 Precondition Failed
+
+# Remaining push budget
+curl http://localhost:8787/api/sync/quota \
+  -H "authorization: Token $TOKEN"
+# → {"used":1,"limit":5,"remaining":4,"resets_at":"<utc-midnight>"}
 ```
 
 ## Layout
@@ -94,7 +105,8 @@ echo -n "newer bytes" | \
 cloudflare/
 ├── wrangler.toml             # Worker name + bindings (DB, SNAPSHOTS, ALLOWED_ORIGINS)
 ├── migrations/
-│   └── 0001_init.sql         # users, tokens
+│   ├── 0001_init.sql         # users, tokens
+│   └── 0002_sync_quota.sql   # per-user daily push counter
 └── src/
     ├── index.ts              # Hono app + CORS
     ├── env.ts                # Env / Variables types for Hono
@@ -104,7 +116,7 @@ cloudflare/
     │   ├── tokens.ts         # 32-byte hex token + D1 lookup/revoke
     │   └── middleware.ts     # requireAuth
     └── sync/
-        └── routes.ts         # GET/PUT snapshot, R2 conditional puts
+        └── routes.ts         # GET/PUT snapshot, GET quota, R2 conditional puts
 ```
 
 ## Notes
@@ -112,3 +124,4 @@ cloudflare/
 - Passwords are hashed with PBKDF2-SHA256 at 100,000 iterations. If the free-tier 10ms CPU budget bites under load, either bump the Workers plan ($5/mo) or lower iterations in `src/auth/password.ts`.
 - `password_hash` format is `pbkdf2_sha256$<iters>$<salt-b64>$<key-b64>`.
 - R2's `etag` is the upload identifier (MD5 for small objects). It's opaque to the client; treat it as a version cookie.
+- The push budget caps R2 write cost. Raise `DAILY_PUSH_LIMIT` in `src/sync/routes.ts` if 5 a day is too tight.

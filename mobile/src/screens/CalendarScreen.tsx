@@ -129,7 +129,13 @@ export function CalendarScreen({ navigation, route }: any) {
     if (!incomingDate) return
     jumpToMonth(monthIndex(parseYear(incomingDate), parseMonth(incomingDate)), false)
     setSelectedDate(incomingDate)
-    setActiveDate(incomingDate)
+    // Only the tab instance owns the global active date. The pushed instance
+    // sits on top of SetLogger / ExerciseDetail, so writing the date here
+    // would move the Today tab underneath: popping back to it would land the
+    // user on the date they only glanced at, not the day they were logging.
+    // freezeOnBlur hides that until the last pop, which made it look like a
+    // delayed jump. "Go to date" below is the explicit opt-in.
+    if (!pushed) setActiveDate(incomingDate)
     navigation.setParams({ date: undefined })
   }, [incomingDate])
 
@@ -238,9 +244,12 @@ export function CalendarScreen({ navigation, route }: any) {
   const openDay = useCallback((date: string) => {
     setSelectedDate(date)
     // Make this date the "active" target for the global "+" tab too, so a
-    // user who picks a calendar day then taps "+" adds to that day.
-    setActiveDate(date)
-  }, [setActiveDate])
+    // user who picks a calendar day then taps "+" adds to that day. The
+    // pushed instance hides the tab bar, so there is no "+" to aim, and
+    // writing the date there would drag the Today tab along (see the
+    // incoming-date effect above).
+    if (!pushed) setActiveDate(date)
+  }, [setActiveDate, pushed])
 
   function openSetLogger(workoutId: number, weId: number) {
     navigation.navigate("SetLogger", { workoutId, weId })
