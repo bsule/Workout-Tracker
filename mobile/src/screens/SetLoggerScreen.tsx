@@ -1022,29 +1022,25 @@ export function SetLoggerScreen({ route, navigation }: any) {
     return unsub
   }, [navigation, workoutId, weId, swipeHold])
 
-  // Stable identity so HistoryDayCard's `onPressDate` prop doesn't change on
-  // unrelated parent re-renders, keeping the memoized day cards from
-  // re-rendering during scroll.
-  const openCalendarAtDate = useCallback(
-    (date: string) => {
-      // Disable the back-slide animation just for this transition so the
-      // Calendar appears immediately. The screen is being popped, so this
-      // option change has no lingering effect — fresh pushes start a new
-      // SetLogger instance with default options.
-      navigation.setOptions({ animation: "none" })
-      navigation.navigate("Main", { screen: "Calendar", params: { date } })
-    },
-    [navigation]
-  )
-
-  // Summary-tab date taps push CalendarDate on top of the stack instead of
-  // jumping to the Calendar tab. The tab jump pops SetLogger and unfreezes
-  // every pre-mounted tab on the same frame (a visible "sec" freeze); a stack
-  // push keeps MainTabs frozen, so the calendar opens instantly and the
-  // workout stays underneath. Mirrors ExerciseDetail's openCalendarAtDate.
   const showSummaryTab = useCallback(() => setTab("summary"), [])
 
-  const pushCalendarAtDate = useCallback(
+  /**
+   * Every date tap on this screen opens a calendar of its own, pushed on top
+   * of the stack. None of them jump to the Calendar tab.
+   *
+   * A tab jump pops SetLogger and unfreezes every pre-mounted tab on the same
+   * frame, which reads as a freeze before the calendar appears, and it leaves
+   * you in the tab rather than over the workout you were looking at. A push
+   * keeps MainTabs frozen, so the calendar opens at once and the workout is
+   * still underneath when you go back.
+   *
+   * The History tab used to jump. It was the last one that did.
+   *
+   * Stable identity, so HistoryDayCard's `onPressDate` does not change on an
+   * unrelated re-render and force the memoised day cards to re-render mid
+   * scroll.
+   */
+  const openCalendarAtDate = useCallback(
     (date: string) => {
       navigation.navigate("CalendarDate", { date })
     },
@@ -1769,7 +1765,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
               unit={unit}
               nextPosition={displayPosition}
               isWeightReps={we.exercise.kind === "weight_reps"}
-              onPressDate={pushCalendarAtDate}
+              onPressDate={openCalendarAtDate}
               onShowMore={showSummaryTab}
             />
           )}
@@ -1778,7 +1774,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
             <SummaryPanel
               days={history}
               unit={unit}
-              onPressDate={pushCalendarAtDate}
+              onPressDate={openCalendarAtDate}
               excludeDate={workout.date}
             />
           )}
