@@ -27,6 +27,8 @@ navigation.navigate("CalendarDate", { date })
 
 `CalendarDate` is a stack-registered instance of `CalendarScreen` existing for exactly this reason. Use the stack push for any "open at a target" navigation from a screen that sits above `MainTabs` (ExerciseDetail, SetLogger).
 
+The pushed `CalendarDate` instance never writes the shared ActiveDate context; only the Calendar tab does (`if (!pushed) setActiveDate(...)` in `CalendarScreen.tsx`). A glance at a date from SetLogger must not move the Today tab underneath it. On mount it also clears its `date` param only after the transition (`InteractionManager.runAfterInteractions`), so the clear does not re-render mid-slide.
+
 **Exception — DayScreen's "Open calendar":** DayScreen is already a Main tab. Its date-header menu switches to the Calendar *tab* (`navigation.navigate("Calendar", { date })`), not a stacked `CalendarDate` page — the user wants the tab, not another stack screen. `CalendarScreen` always applies an incoming `date` param even if it matches the current string (the tab stays mounted; the user may have paged months), then clears the param so a later re-focus does not replay it.
 
 ### 2. Defer the destination's heavy work past the animation
@@ -58,7 +60,7 @@ Inside a `ScrollView`, `Pressable` waits ~130ms (press-in/scroll disambiguation)
 Never `await` a `localApi` mutation (they're sync, Promise-wrapped) before `navigation.navigate` — awaiting yields to React mid-flow and adds a visible hitch. No snapshot reads/mutations in the handler; defer id resolution like SetLogger defers its create+addExercise to the first Save.
 
 ### 6. (Optional) Cheaper, shorter animation
-A short or no animation hides a small first-render hitch. The repo uses `animationDuration: 120` on `CalendarDate` and `animation: "none"` on some pops.
+A short animation hides a small first-render hitch. The stack default is `animationDuration: 180` (`stackScreenOptions` in `RootNavigator.tsx`), and `CalendarDate` uses 120.
 
 ## Common mistakes
 

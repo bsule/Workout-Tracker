@@ -80,7 +80,7 @@ automated tests. Verify those by running the app, or by curling the Worker (see
 
 ## Configuration
 
-Both clients default to `http://localhost:8787/api`. Override per-client:
+Both clients fall back to `http://localhost:8787/api` in code. The checked-in `mobile/app.json` already overrides it with the production worker. Override per-client:
 
 - **Web** - `frontend/.env.local`: `NEXT_PUBLIC_API_BASE_URL=https://your-worker.example.com/api`
 - **Mobile** - `mobile/app.json` → `expo.extra.apiBaseUrl`. On a real device, use your LAN IP, not `localhost`.
