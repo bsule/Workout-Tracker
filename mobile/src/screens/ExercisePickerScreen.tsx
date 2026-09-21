@@ -3,10 +3,7 @@ import {
   FlatList,
   InteractionManager,
   Keyboard,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -16,25 +13,18 @@ import { Ionicons } from "@expo/vector-icons"
 import { SafeAreaView } from "react-native-safe-area-context"
 import {
   listExercisesQ,
-  localApi as api,
   useStore,
 } from "@lift/core"
 import type { Exercise } from "@lift/core"
-import { Button } from "../components/Button"
 import { useActiveDate } from "../state/activeDate"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
 import { useCategoryStyles } from "../categories/CategoryStylesProvider"
+import { formatExerciseSubtitle } from "../format"
+import { CategoryChips } from "../components/CategoryChips"
+import { NewExerciseView } from "../components/NewExerciseView"
 
 type Mode = "pick" | "new"
-
-function todayString(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-function pad(n: number) {
-  return String(n).padStart(2, "0")
-}
 
 /**
  * Picker rendered as a stack screen with `presentation: "modal"`. Picking
@@ -99,10 +89,6 @@ function PickView({
   const [search, setSearch] = useState("")
   const [category, setCategory] = useState<string | null>(null)
   const searchRef = useRef<TextInput>(null)
-  const { categories, labels, colors: catColors } = useCategoryStyles()
-  function colorFor(c: string): string {
-    return catColors[c] ?? theme.colors.cat[c] ?? theme.colors.muted
-  }
   const snapshot = useStore((s) => s.snapshot)
   // Defer the exercise-list query + FlatList until the picker's slide-in
   // animation has fully settled. listExercisesQ iterates every exercise and
@@ -171,21 +157,11 @@ function PickView({
       {/* Chips + list shell are off the first commit so iOS can start the
        *  picker's slide as soon as possible. Both mount one rAF later. */}
       {chromeReady && (
-        <View style={styles.chipsGrid}>
-          {categories.map((cat) => {
-            const active = category === cat
-            return (
-              <Pressable
-                key={cat}
-                onPress={() => setCategory(active ? null : cat)}
-                style={[styles.chip, active && styles.chipActive]}
-              >
-                <View style={[styles.chipDot, { backgroundColor: colorFor(cat) }]} />
-                <Text style={styles.chipText}>{labels[cat] ?? cat}</Text>
-              </Pressable>
-            )
-          })}
-        </View>
+        <CategoryChips
+          selected={category}
+          onSelect={(cat) => setCategory(category === cat ? null : cat)}
+          padded
+        />
       )}
 
       {chromeReady && (
@@ -213,7 +189,7 @@ function ExerciseRow({ ex, onPress }: { ex: Exercise; onPress: () => void }) {
   const { colors: catColors } = useCategoryStyles()
   const dotColor =
     catColors[ex.category] ?? theme.colors.cat[ex.category] ?? theme.colors.muted
-  const subtitle = formatSubtitle(ex)
+  const subtitle = formatExerciseSubtitle(ex)
   return (
     <Pressable
       onPress={onPress}
@@ -225,115 +201,6 @@ function ExerciseRow({ ex, onPress }: { ex: Exercise; onPress: () => void }) {
         <Text style={styles.rowSub}>{subtitle}</Text>
       </View>
     </Pressable>
-  )
-}
-
-function formatSubtitle(ex: Exercise): string {
-  const count = ex.workouts_count ?? 0
-  const days = ex.last_performed_days_ago ?? null
-  if (count === 0) return "0 workouts"
-  if (days == null) return `${count} workout${count === 1 ? "" : "s"}`
-  return `${count} workout${count === 1 ? "" : "s"} (${formatDays(days)})`
-}
-
-function formatDays(d: number): string {
-  if (d === 0) return "today"
-  if (d === 1) return "yesterday"
-  if (d < 7) return `${d} days ago`
-  if (d < 30) return `${Math.floor(d / 7)} week${Math.floor(d / 7) === 1 ? "" : "s"} ago`
-  if (d < 365) return `${Math.floor(d / 30)} month${Math.floor(d / 30) === 1 ? "" : "s"} ago`
-  return "last year"
-}
-
-function NewExerciseView({
-  onBack,
-  onCreated,
-}: {
-  onBack: () => void
-  onCreated: (ex: Exercise) => void
-}) {
-  const { categories, labels, colors: catColors } = useCategoryStyles()
-  const [name, setName] = useState("")
-  const [category, setCategory] = useState<string>("chest")
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function onCreate() {
-    if (!name.trim()) return
-    setSubmitting(true)
-    setError(null)
-    try {
-      const ex = await api.createExercise({ name: name.trim(), category })
-      onCreated(ex)
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to create exercise")
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <View style={styles.header}>
-        <Pressable onPress={onBack} hitSlop={12} style={styles.headerSideBtn}>
-          <Ionicons name="chevron-back" size={26} color={theme.colors.foreground} />
-        </Pressable>
-        <Text style={styles.title}>New Exercise</Text>
-        <View style={styles.headerSideBtn} />
-      </View>
-
-      <ScrollView
-        contentContainerStyle={styles.newWrap}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={{ gap: 6 }}>
-          <Text style={styles.fieldLabel}>Name</Text>
-          <TextInput
-            value={name}
-            onChangeText={setName}
-            placeholder="e.g. Bench Press"
-            placeholderTextColor={theme.colors.muted}
-            style={styles.nameInput}
-            autoFocus
-            autoCapitalize="words"
-            autoCorrect={false}
-          />
-        </View>
-
-        <View style={{ gap: 6 }}>
-          <Text style={styles.fieldLabel}>Category</Text>
-          <View style={styles.chipsGrid}>
-            {categories.map((cat) => {
-              const active = category === cat
-              const dot =
-                catColors[cat] ?? theme.colors.cat[cat] ?? theme.colors.muted
-              return (
-                <Pressable
-                  key={cat}
-                  onPress={() => setCategory(cat)}
-                  style={[styles.chip, active && styles.chipActive]}
-                >
-                  <View style={[styles.chipDot, { backgroundColor: dot }]} />
-                  <Text style={styles.chipText}>{labels[cat] ?? cat}</Text>
-                </Pressable>
-              )
-            })}
-          </View>
-        </View>
-
-        {error && <Text style={styles.error}>{error}</Text>}
-
-        <Button
-          label="Create exercise"
-          onPress={onCreate}
-          loading={submitting}
-          disabled={!name.trim()}
-        />
-      </ScrollView>
-    </KeyboardAvoidingView>
   )
 }
 
@@ -362,34 +229,6 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.base,
     paddingVertical: 6,
   },
-  chipsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[3],
-  },
-  chip: {
-    flexBasis: "23%",
-    flexGrow: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.card,
-    borderWidth: 1,
-    borderColor: "transparent",
-  },
-  chipActive: { backgroundColor: theme.colors.cardElevated, borderColor: theme.colors.foreground },
-  chipDot: { width: 8, height: 8, borderRadius: 4 },
-  chipText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: "500",
-  },
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -405,26 +244,4 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.border,
     marginHorizontal: theme.spacing[4],
   },
-  newWrap: {
-    padding: theme.spacing[4],
-    gap: theme.spacing[5],
-  },
-  fieldLabel: {
-    color: theme.colors.muted,
-    fontSize: theme.fontSize.xs,
-    textTransform: "uppercase",
-    letterSpacing: 1.2,
-    fontWeight: "700",
-  },
-  nameInput: {
-    backgroundColor: theme.colors.inputBg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.radius.md,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-  },
-  error: { color: theme.colors.destructive, fontSize: theme.fontSize.sm },
 })

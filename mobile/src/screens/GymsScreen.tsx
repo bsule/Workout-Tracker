@@ -1,6 +1,7 @@
-import { useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import {
   Alert,
+  Animated,
   Keyboard,
   LayoutAnimation,
   Pressable,
@@ -14,9 +15,9 @@ import { Ionicons } from "@expo/vector-icons"
 import { localApi as api, useStore } from "@lift/core"
 import type { Gym } from "@lift/core"
 import { Button } from "../components/Button"
-import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
-import { LIST_ANIM } from "../anim"
+import { EASE, LIST_ANIM } from "../anim"
 import { theme } from "../theme/theme"
+import { Card } from "../components/Card"
 
 function animateGyms() {
   LayoutAnimation.configureNext(LIST_ANIM)
@@ -29,13 +30,29 @@ export function GymsScreen() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editDraft, setEditDraft] = useState("")
   const [editError, setEditError] = useState<string | null>(null)
+  // Rows playing their exit. The gym stays in the store until its row has
+  // collapsed, so the rows under it slide up in step with the fade.
+  const [removingIds, setRemovingIds] = useState<ReadonlySet<number>>(new Set())
+
+  // Keys of rows already on screen. A row whose key is not in here yet is a
+  // gym that was just added, and it plays the enter animation. Seeded with
+  // the first render's gyms so opening the page animates nothing.
+  const knownKeys = useRef<Set<string> | null>(null)
+  if (knownKeys.current == null) {
+    knownKeys.current = new Set(gyms.map(gymKey))
+  }
+  useEffect(() => {
+    for (const g of gyms) knownKeys.current!.add(gymKey(g))
+  }, [gyms])
 
   function addGym() {
     const trimmed = draft.trim()
     if (!trimmed) return
     setError(null)
     try {
-      animateGyms()
+      // The first gym swaps the "No gyms yet" line for the list card. Later
+      // ones animate their own row instead (GymRowTransition).
+      if (gyms.length === 0) animateGyms()
       api.createGym(trimmed)
       setDraft("")
       Keyboard.dismiss()
@@ -105,24 +122,36 @@ export function GymsScreen() {
           text: "Remove",
           style: "destructive",
           onPress: () => {
-            if (g.id != null) {
-              animateGyms()
-              api.deleteGym(g.id)
-            }
+            const id = g.id
+            if (id == null) return
+            setRemovingIds((prev) => new Set(prev).add(id))
           },
         },
       ]
     )
   }
 
+  function finishRemove(id: number) {
+    // The last gym leaving swaps the list card for the "No gyms yet" line.
+    if (gyms.length === 1) animateGyms()
+    api.deleteGym(id)
+    setRemovingIds((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }
+
   return (
-    <StaticSafeAreaView>
+    // Pushed route with a native header, which already clears the status
+    // bar. StaticSafeAreaView would pad the top a second time.
+    <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <ScrollView
         style={{ flex: 1, backgroundColor: theme.colors.background }}
         contentContainerStyle={styles.wrap}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.card}>
+        <Card>
           <View style={styles.addRow}>
             <TextInput
               value={draft}
@@ -142,16 +171,24 @@ export function GymsScreen() {
             />
           </View>
           {error && <Text style={styles.error}>{error}</Text>}
-        </View>
+        </Card>
 
         {gyms.length === 0 ? (
           <Text style={styles.empty}>No gyms yet.</Text>
         ) : (
-          <View style={styles.card}>
+          <Card style={styles.listCard}>
             {gyms.map((g) => {
               const isEditing = editingId != null && g.id === editingId
+              const key = gymKey(g)
+              const id = g.id
               return (
-                <View key={String(g.id ?? g.name)} style={styles.rowWrap}>
+                <GymRowTransition
+                  key={key}
+                  entering={!knownKeys.current!.has(key)}
+                  removing={id != null && removingIds.has(id)}
+                  onRemoved={() => id != null && finishRemove(id)}
+                >
+                <View style={styles.rowWrap}>
                   <View style={styles.row}>
                     {isEditing ? (
                       <TextInput
@@ -237,25 +274,151 @@ export function GymsScreen() {
                     <Text style={styles.error}>{editError}</Text>
                   )}
                 </View>
+                </GymRowTransition>
               )
             })}
-          </View>
+          </Card>
         )}
       </ScrollView>
-    </StaticSafeAreaView>
+    </View>
+  )
+}
+
+function gymKey(g: Gym): string {
+  return String(g.id ?? g.name)
+}
+
+const ENTER_MS = 260
+const EXIT_MS = 220
+
+/**
+ * A gym row's arrival and departure. On add, the row opens from zero height
+ * while it fades in and settles down into place. On delete, it fades and
+ * slides left while it collapses, then calls `onRemoved` so the store change
+ * lands after the motion rather than cutting it short.
+ *
+ * Two views, because the height is JS-driven (layout) and the fade and slide
+ * are native-driven, and one view cannot carry both. The inner view is
+ * measured at its natural height even while the outer one is clipped to 0.
+ */
+function GymRowTransition({
+  entering,
+  removing,
+  onRemoved,
+  children,
+}: {
+  entering: boolean
+  removing: boolean
+  onRemoved: () => void
+  children: ReactNode
+}) {
+  const [phase, setPhase] = useState<"enter" | "idle" | "exit">(
+    entering ? "enter" : "idle"
+  )
+  const height = useRef(new Animated.Value(0)).current
+  const shown = useRef(new Animated.Value(entering ? 0 : 1)).current
+  const naturalHeight = useRef(0)
+  const enterStarted = useRef(false)
+  const onRemovedRef = useRef(onRemoved)
+  onRemovedRef.current = onRemoved
+  const removingRef = useRef(removing)
+  removingRef.current = removing
+  const removedRef = useRef(false)
+
+  function onLayout(h: number) {
+    naturalHeight.current = h
+    if (phase !== "enter" || enterStarted.current) return
+    enterStarted.current = true
+    Animated.timing(height, {
+      toValue: h,
+      duration: ENTER_MS,
+      easing: EASE.out,
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (finished) setPhase("idle")
+    })
+    Animated.timing(shown, {
+      toValue: 1,
+      duration: ENTER_MS - 40,
+      delay: 40,
+      easing: EASE.out,
+      useNativeDriver: true,
+    }).start()
+  }
+
+  useEffect(() => {
+    if (!removing) return
+    height.stopAnimation()
+    shown.stopAnimation()
+    height.setValue(naturalHeight.current)
+    setPhase("exit")
+  }, [removing, height, shown])
+
+  // Started once the exit style (clipped height, sideways slide) is on
+  // screen, so the motion never runs against the enter transform.
+  useEffect(() => {
+    if (phase !== "exit") return
+    Animated.timing(shown, {
+      toValue: 0,
+      duration: EXIT_MS - 60,
+      easing: EASE.in,
+      useNativeDriver: true,
+    }).start()
+    Animated.timing(height, {
+      toValue: 0,
+      duration: EXIT_MS,
+      easing: EASE.inOut,
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (finished && !removedRef.current) {
+        removedRef.current = true
+        onRemovedRef.current()
+      }
+    })
+  }, [phase, height, shown])
+
+  // Leaving the page mid-exit must not lose a delete the user confirmed.
+  useEffect(
+    () => () => {
+      if (removingRef.current && !removedRef.current) {
+        removedRef.current = true
+        onRemovedRef.current()
+      }
+    },
+    []
+  )
+
+  const offset =
+    phase === "exit"
+      ? { translateX: shown.interpolate({ inputRange: [0, 1], outputRange: [-24, 0] }) }
+      : { translateY: shown.interpolate({ inputRange: [0, 1], outputRange: [-6, 0] }) }
+
+  return (
+    <Animated.View
+      style={phase === "idle" ? undefined : { height, overflow: "hidden" }}
+      pointerEvents={phase === "exit" ? "none" : "auto"}
+    >
+      <Animated.View
+        onLayout={(e) => onLayout(e.nativeEvent.layout.height)}
+        style={[styles.rowSpacing, { opacity: shown, transform: [offset] }]}
+      >
+        {children}
+      </Animated.View>
+    </Animated.View>
   )
 }
 
 const styles = StyleSheet.create({
-  wrap: {
-    padding: theme.spacing[4],
-    gap: theme.spacing[3],
+  // The rows carry the space between them (rowSpacing) instead of the card's
+  // gap, so a collapsing row takes its gap with it and nothing jumps at the
+  // end. The bottom padding makes up the last row's spacing: 12 + 4 = 16, the
+  // card's usual padding.
+  listCard: {
+    gap: 0,
+    paddingBottom: theme.spacing[4] - theme.spacing[3],
   },
-  card: {
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.radius.lg,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
+  rowSpacing: { paddingBottom: theme.spacing[3] },
+  wrap: {
     padding: theme.spacing[4],
     gap: theme.spacing[3],
   },

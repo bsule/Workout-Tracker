@@ -17,6 +17,7 @@ import {
   Keyboard,
   LayoutAnimation,
   type LayoutChangeEvent,
+  type ViewStyle,
   Modal,
   Pressable,
   ScrollView,
@@ -90,8 +91,9 @@ import { SetList as SharedSetList } from "../components/SetList"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
 import { useSettings, useWeightUnit } from "../settings/SettingsProvider"
+import { todayString } from "../dates"
+import { SubTabBar, type SubTab } from "../components/SubTabBar"
 
-type SubTab = "workout" | "history" | "graph" | "summary" | "settings"
 
 // Predict whether a hypothetical (weight, reps) added to `weId` would be the
 // current overall PR / position PR for `exerciseId`. Mirrors the dominance
@@ -693,13 +695,13 @@ function SetRowFade({
 type Metric = "one_rm" | "heaviest" | "avg_weight" | "per_set"
 
 const METRIC_OPTIONS: {
-  id: Metric
+  value: Metric
   label: string
 }[] = [
-  { id: "per_set", label: "Per Set" },
-  { id: "heaviest", label: "Heaviest" },
-  { id: "one_rm", label: "1RM" },
-  { id: "avg_weight", label: "Avg Weight" },
+  { value: "per_set", label: "Per Set" },
+  { value: "heaviest", label: "Heaviest" },
+  { value: "one_rm", label: "1RM" },
+  { value: "avg_weight", label: "Avg Weight" },
 ]
 
 const SET_INDEX_OPTIONS: { value: number; label: string }[] = [
@@ -1819,8 +1821,8 @@ export function SetLoggerScreen({ route, navigation }: any) {
           onEdit={() => setExNoteMode("edit")}
         />
       )}
-      {/* The overflow menu's card. Its button is in the native header; see
-          the headerRight effect above. */}
+      {/* The overflow menu (a system alert). Its button is in the native
+          header; see the headerRight effect above. */}
       <MenuPopup
         visible={headerMenuOpen}
         onClose={() => setHeaderMenuOpen(false)}
@@ -1959,8 +1961,7 @@ function PhaseButton({
   onPress?: () => void
   style?: any
 }) {
-  const fg =
-    variant === "secondary" ? theme.colors.foreground : theme.colors.foreground
+  const fg = theme.colors.foreground
   const border =
     variant === "secondary" ? theme.colors.borderStrong : theme.colors.foreground
   const fadeOut = phase.interpolate({
@@ -2006,48 +2007,6 @@ function PhaseButton({
     </Pressable>
   )
 }
-
-// Memoized: its only inputs are the active tab and the (stable) setter.
-const SubTabBar = memo(function SubTabBar({ tab, onChange }: { tab: SubTab; onChange: (t: SubTab) => void }) {
-  const items: { key: SubTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-    { key: "workout", label: "Workout", icon: "barbell-outline" },
-    { key: "history", label: "History", icon: "list-outline" },
-    { key: "graph", label: "Graph", icon: "stats-chart-outline" },
-    { key: "summary", label: "Summary", icon: "reader-outline" },
-    { key: "settings", label: "Settings", icon: "settings-outline" },
-  ]
-  return (
-    <View style={styles.subTabBar}>
-      {items.map((it) => {
-        const active = tab === it.key
-        return (
-          <Pressable
-            key={it.key}
-            onPress={() => onChange(it.key)}
-            // Catches the few points above the bar's top border as well; the
-            // only thing up there is the scroll view's bottom padding.
-            hitSlop={{ top: 6 }}
-            style={styles.subTabBtn}
-          >
-            <Ionicons
-              name={it.icon}
-              size={20}
-              color={active ? theme.colors.foreground : theme.colors.muted}
-            />
-            <Text
-              style={[
-                styles.subTabLabel,
-                active && { color: theme.colors.foreground },
-              ]}
-            >
-              {it.label}
-            </Text>
-          </Pressable>
-        )
-      })}
-    </View>
-  )
-})
 
 /**
  * The note on a read-only day card. Collapsed it is NotePreview's two lines;
@@ -2101,6 +2060,30 @@ const SLOT_LINE_H = 14
 const CAL_BTN_W = 26
 const POSITION_ROW_H = 22
 
+/** One "top weight for N reps" line: weight, rep count, and the date. */
+function TopWeightRow({
+  r,
+  unit,
+  style,
+}: {
+  r: TopRepRecord
+  unit: "kg" | "lb"
+  style?: ViewStyle
+}) {
+  return (
+    <View style={[styles.topRow, style]}>
+      <Text style={styles.topWeight}>
+        {formatWeight(r.weightKg, unit)}
+        <Text style={styles.topUnit}> {unit}</Text>
+      </Text>
+      <Text style={styles.topReps}>
+        × {r.reps} {r.reps === 1 ? "rep" : "reps"}
+      </Text>
+      <Text style={styles.topDate}>{recordDate(r.date)}</Text>
+    </View>
+  )
+}
+
 /**
  * The record rows for one set position. Always exactly POSITION_ROWS slots
  * tall, so the box never changes height and a swap between positions does no
@@ -2125,16 +2108,7 @@ function PositionRows({
   return (
     <>
       {records.map((r) => (
-        <View key={r.reps} style={[styles.topRow, styles.posRow]}>
-          <Text style={styles.topWeight}>
-            {formatWeight(r.weightKg, unit)}
-            <Text style={styles.topUnit}> {unit}</Text>
-          </Text>
-          <Text style={styles.topReps}>
-            × {r.reps} {r.reps === 1 ? "rep" : "reps"}
-          </Text>
-          <Text style={styles.topDate}>{recordDate(r.date)}</Text>
-        </View>
+        <TopWeightRow key={r.reps} r={r} unit={unit} style={styles.posRow} />
       ))}
     </>
   )
@@ -2434,7 +2408,6 @@ const LastTimePanel = memo(function LastTimePanel({
   // that survives to position mode always had records to get there.
   if (!last && top.length === 0) return null
 
-
   const collapsedLine = last
     ? last.sets
         .map((s) => `${formatWeight(s.weight, unit)}×${s.reps}`)
@@ -2533,24 +2506,7 @@ const LastTimePanel = memo(function LastTimePanel({
               )}
             </Animated.View>
           </View>
-          <Animated.View
-            style={{
-              transform: [
-                {
-                  rotate: openAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: ["0deg", "180deg"],
-                  }),
-                },
-              ],
-            }}
-          >
-            <Ionicons
-              name="chevron-down"
-              size={13}
-              color={theme.colors.muted}
-            />
-          </Animated.View>
+          <SpinChevron progress={openAnim} size={13} />
         </Pressable>
         {/* The calendar shortcut opens the previous session, so it goes with
             the chips when position mode takes over. It fades rather than
@@ -2582,21 +2538,11 @@ const LastTimePanel = memo(function LastTimePanel({
             }}
             pointerEvents={positionMode ? "none" : "auto"}
           >
-            <Pressable
+            <CalendarButton
               onPress={() => onPressDate(last.date)}
-              hitSlop={10}
-              unstable_pressDelay={0}
-              style={({ pressed }) => [
-                styles.lastTimeCalBtn,
-                pressedStyle(pressed),
-              ]}
-            >
-              <Ionicons
-                name="calendar-outline"
-                size={15}
-                color={theme.colors.muted}
-              />
-            </Pressable>
+              size={15}
+              style={styles.lastTimeCalBtn}
+            />
           </Animated.View>
         )}
       </View>
@@ -2691,16 +2637,7 @@ const LastTimePanel = memo(function LastTimePanel({
               <View style={styles.lastTimeRule} />
               <Text style={styles.lastTimeLabel}>Top weights</Text>
               {top.map((r) => (
-                <View key={r.reps} style={styles.topRow}>
-                  <Text style={styles.topWeight}>
-                    {formatWeight(r.weightKg, unit)}
-                    <Text style={styles.topUnit}> {unit}</Text>
-                  </Text>
-                  <Text style={styles.topReps}>
-                    × {r.reps} {r.reps === 1 ? "rep" : "reps"}
-                  </Text>
-                  <Text style={styles.topDate}>{recordDate(r.date)}</Text>
-                </View>
+                <TopWeightRow key={r.reps} r={r} unit={unit} />
               ))}
             </>
           )}
@@ -2756,21 +2693,11 @@ const HistoryDayCard = memo(function HistoryDayCard({
           <ExpandableNote note={day.note} />
         </View>
         {onPressDate && (
-          <Pressable
+          <CalendarButton
             onPress={() => onPressDate(day.date)}
-            hitSlop={10}
-            unstable_pressDelay={0}
-            style={({ pressed }) => [
-              styles.dayCardCalBtn,
-              pressedStyle(pressed),
-            ]}
-          >
-            <Ionicons
-              name="calendar-outline"
-              size={16}
-              color={theme.colors.muted}
-            />
-          </Pressable>
+            size={16}
+            style={styles.dayCardCalBtn}
+          />
         )}
       </View>
       <SharedSetList sets={day.sets} showNotes />
@@ -2940,7 +2867,7 @@ export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "
     [days, metric, setIndex, unit]
   )
 
-  const opt = METRIC_OPTIONS.find((m) => m.id === metric)!
+  const opt = METRIC_OPTIONS.find((m) => m.value === metric)!
   const headerLabel =
     metric === "heaviest"
       ? "Heaviest set"
@@ -2988,9 +2915,14 @@ export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "
 
         <View style={styles.metricPanel}>
           <Text style={styles.metricPanelLabel}>Metric</Text>
-          <MetricSwitcher metric={metric} onChange={setMetric} />
+          <Segmented options={METRIC_OPTIONS} value={metric} onChange={setMetric} />
           {metric === "per_set" && (
-            <SetIndexSwitcher setIndex={setIndex} onChange={setSetIndex} />
+            <Segmented
+              options={SET_INDEX_OPTIONS}
+              value={setIndex}
+              onChange={setSetIndex}
+              style={{ marginTop: 8 }}
+            />
           )}
         </View>
       </View>
@@ -3060,9 +2992,14 @@ export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "
 
       <View style={styles.metricPanel}>
         <Text style={styles.metricPanelLabel}>Metric</Text>
-        <MetricSwitcher metric={metric} onChange={setMetric} />
+        <Segmented options={METRIC_OPTIONS} value={metric} onChange={setMetric} />
         {metric === "per_set" && (
-          <SetIndexSwitcher setIndex={setIndex} onChange={setSetIndex} />
+          <Segmented
+            options={SET_INDEX_OPTIONS}
+            value={setIndex}
+            onChange={setSetIndex}
+            style={{ marginTop: 8 }}
+          />
         )}
       </View>
     </View>
@@ -3318,21 +3255,26 @@ function SvgLineChart({
   )
 }
 
-function SetIndexSwitcher({
-  setIndex,
+/** A row of equal-width buttons, one of which is active. */
+function Segmented<T extends string | number>({
+  options,
+  value,
   onChange,
+  style,
 }: {
-  setIndex: number
-  onChange: (n: number) => void
+  options: { value: T; label: string }[]
+  value: T
+  onChange: (v: T) => void
+  style?: ViewStyle
 }) {
   return (
-    <View style={[styles.metricSwitcher, { marginTop: 8 }]}>
-      {SET_INDEX_OPTIONS.map((s) => {
-        const active = setIndex === s.value
+    <View style={[styles.metricSwitcher, style]}>
+      {options.map((o) => {
+        const active = value === o.value
         return (
           <Pressable
-            key={s.value}
-            onPress={() => onChange(s.value)}
+            key={o.value}
+            onPress={() => onChange(o.value)}
             style={({ pressed }) => [
               styles.metricButton,
               active && styles.metricButtonActive,
@@ -3340,38 +3282,7 @@ function SetIndexSwitcher({
             ]}
           >
             <Text style={[styles.metricButtonText, active && styles.metricButtonTextActive]}>
-              {s.label}
-            </Text>
-          </Pressable>
-        )
-      })}
-    </View>
-  )
-}
-
-function MetricSwitcher({
-  metric,
-  onChange,
-}: {
-  metric: Metric
-  onChange: (m: Metric) => void
-}) {
-  return (
-    <View style={styles.metricSwitcher}>
-      {METRIC_OPTIONS.map((m) => {
-        const active = metric === m.id
-        return (
-          <Pressable
-            key={m.id}
-            onPress={() => onChange(m.id)}
-            style={({ pressed }) => [
-              styles.metricButton,
-              active && styles.metricButtonActive,
-              pressed && styles.metricButtonPressed,
-            ]}
-          >
-            <Text style={[styles.metricButtonText, active && styles.metricButtonTextActive]}>
-              {m.label}
+              {o.label}
             </Text>
           </Pressable>
         )
@@ -3667,21 +3578,11 @@ export const SummaryPanel = memo(function SummaryPanel({
               <Text style={styles.summaryAgo}>{agoLabel(lastDay.date)}</Text>
             </View>
             {onPressDate && (
-              <Pressable
+              <CalendarButton
                 onPress={() => onPressDate(lastDay.date)}
-                hitSlop={10}
-                unstable_pressDelay={0}
-                style={({ pressed }) => [
-                  styles.dayCardCalBtn,
-                  pressedStyle(pressed),
-                ]}
-              >
-                <Ionicons
-                  name="calendar-outline"
-                  size={16}
-                  color={theme.colors.muted}
-                />
-              </Pressable>
+                size={16}
+                style={styles.dayCardCalBtn}
+              />
             )}
           </View>
           {lastNotes.length > 0 && (
@@ -3828,7 +3729,6 @@ export const SummaryPanel = memo(function SummaryPanel({
   )
 })
 
-
 /**
  * What a record row opens: the date it was set, and every set logged for this
  * exercise that day. Tap the backdrop to dismiss, or the calendar button to
@@ -3888,21 +3788,11 @@ function RecordDayPopup({
           <ExpandableNote note={shown.note} />
         </View>
         {onPressDate && (
-          <Pressable
+          <CalendarButton
             onPress={goToDate}
-            hitSlop={10}
-            unstable_pressDelay={0}
-            style={({ pressed }) => [
-              styles.dayCardCalBtn,
-              pressedStyle(pressed),
-            ]}
-          >
-            <Ionicons
-              name="calendar-outline"
-              size={18}
-              color={theme.colors.muted}
-            />
-          </Pressable>
+            size={18}
+            style={styles.dayCardCalBtn}
+          />
         )}
       </View>
       <ScrollView
@@ -3989,13 +3879,28 @@ function PickerTrigger({
 // backdrop, the card, the native Modal that escapes SummaryPanel's ScrollView -
 // is OverlayCard.
 const PICKER_FADE_MS = DUR.fadeFast
-function todayString(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+/** The small calendar icon that opens a date on the calendar. */
+function CalendarButton({
+  onPress,
+  size,
+  style,
+}: {
+  onPress: () => void
+  size: number
+  style: ViewStyle
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      hitSlop={10}
+      unstable_pressDelay={0}
+      style={({ pressed }) => [style, pressedStyle(pressed)]}
+    >
+      <Ionicons name="calendar-outline" size={size} color={theme.colors.muted} />
+    </Pressable>
+  )
 }
-function pad(n: number) {
-  return String(n).padStart(2, "0")
-}
+
 function niceDate(d: string): string {
   return new Date(d + "T00:00:00").toLocaleDateString("en-US", {
     weekday: "short",
@@ -4874,6 +4779,10 @@ const styles = StyleSheet.create({
     gap: 4,
     minHeight: 40,
     marginTop: 2,
+    // Pulls the row into the card's bottom padding. The label is centred in
+    // its 40pt row, so the row's own lower half plus the card padding left
+    // too much space under it. The space above the label is unchanged.
+    marginBottom: -10,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.colors.border,
   },
@@ -5174,37 +5083,6 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.md,
     fontWeight: "700",
   },
-  // Sub-tab bar at the bottom of the SetLogger screen.
-  // The bottom inset belongs to the buttons, not to the bar. As bar padding
-  // it was 24pt of dead space directly under the labels — exactly where a
-  // thumb lands reaching down — and it left each button at 42pt, under the
-  // 44pt minimum and 10pt shorter than the main tab bar.
-  subTabBar: {
-    flexDirection: "row",
-    backgroundColor: theme.colors.background,
-    borderTopColor: theme.colors.border,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 8,
-  },
-  // Same total height as before — the 24pt moved down here — so nothing on
-  // screen shifts, but the strip below the label is now part of the target.
-  // Keep in step with ExerciseDetailScreen's copy of this bar.
-  subTabBtn: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 2,
-    borderRadius: theme.radius.md,
-    minHeight: 48,
-    paddingTop: 4,
-    paddingBottom: 28,
-  },
-  subTabLabel: {
-    color: theme.colors.muted,
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 0.5,
-  },
   // Past-history list (under the today list in History tab).
   section: {
     color: theme.colors.muted,
@@ -5367,22 +5245,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
   },
-  xAxisRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingTop: 6,
-    paddingHorizontal: 4,
-  },
-  xAxisLabel: {
-    color: theme.colors.muted,
-    fontSize: 10,
-    fontWeight: "600",
-  },
-  graphAxisLabel: {
-    color: theme.colors.muted,
-    fontSize: 10,
-    fontWeight: "600",
-  },
   pointerLabel: {
     borderRadius: theme.radius.md,
     borderWidth: 1,
@@ -5479,19 +5341,6 @@ const styles = StyleSheet.create({
     color: theme.colors.muted,
     fontSize: theme.fontSize.xs,
     marginTop: 2,
-  },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: theme.colors.muted,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkboxOn: {
-    backgroundColor: theme.colors.foreground,
-    borderColor: theme.colors.foreground,
   },
   // Summary tab — last session
   summaryAgo: {
@@ -5674,12 +5523,5 @@ const styles = StyleSheet.create({
   pickerTitleCol: { flex: 1, gap: 2 },
   recordDaySets: {
     marginHorizontal: -theme.spacing[4],
-  },
-  swipeDeleteText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: theme.fontSize.sm,
-    letterSpacing: 1,
-    textTransform: "uppercase",
   },
 })

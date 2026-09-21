@@ -18,6 +18,7 @@ import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
 import { useCategoryColor } from "../categories/CategoryStylesProvider"
+import { formatExerciseSubtitle } from "../format"
 
 export function ExercisesScreen({ navigation }: any) {
   const [search, setSearch] = useState("")
@@ -115,7 +116,7 @@ function ExerciseRow({
   onEdit: () => void
   onDelete: () => void
 }) {
-  const subtitle = formatSubtitle(ex)
+  const subtitle = formatExerciseSubtitle(ex)
   const dotColor = useCategoryColor(ex.category)
   const swipeableRef = useRef<Swipeable | null>(null)
   // Per-touch tracking so swipes that don't reach the open threshold still
@@ -257,23 +258,6 @@ function ExerciseRow({
       </Pressable>
     </Swipeable>
   )
-}
-
-function formatSubtitle(ex: Exercise): string {
-  const count = ex.workouts_count ?? 0
-  const days = ex.last_performed_days_ago ?? null
-  if (count === 0) return "0 workouts"
-  if (days == null) return `${count} workout${count === 1 ? "" : "s"}`
-  return `${count} workout${count === 1 ? "" : "s"} (${formatDays(days)})`
-}
-
-function formatDays(d: number): string {
-  if (d === 0) return "today"
-  if (d === 1) return "yesterday"
-  if (d < 7) return `${d} days ago`
-  if (d < 30) return `${Math.floor(d / 7)} week${Math.floor(d / 7) === 1 ? "" : "s"} ago`
-  if (d < 365) return `${Math.floor(d / 30)} month${Math.floor(d / 30) === 1 ? "" : "s"} ago`
-  return "last year"
 }
 
 const styles = StyleSheet.create({

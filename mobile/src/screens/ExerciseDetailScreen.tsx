@@ -1,12 +1,10 @@
 import { useCallback, useMemo, useState } from "react"
 import {
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native"
-import { Ionicons } from "@expo/vector-icons"
 import {
   getExerciseHistoryQ,
   listExercisesQ,
@@ -24,16 +22,10 @@ import {
   SettingsPanel,
   SummaryPanel,
 } from "./SetLoggerScreen"
+import { todayString } from "../dates"
+import { SubTabBar, type SubTab as LoggerSubTab } from "../components/SubTabBar"
 
-type SubTab = "history" | "graph" | "summary" | "settings"
-
-function todayString(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-function pad(n: number) {
-  return String(n).padStart(2, "0")
-}
+type SubTab = Exclude<LoggerSubTab, "workout">
 
 export function ExerciseDetailScreen({ navigation, route }: any) {
   const { exerciseId } = route.params
@@ -48,6 +40,19 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
   const history: ExerciseHistoryDay[] = useMemo(
     () => getExerciseHistoryQ(exerciseId),
     [snapshot, exerciseId]
+  )
+
+  // Every hook sits above the early return below, so a render where the
+  // exercise is gone calls the same hooks as one where it exists.
+  const openCalendarAtDate = useCallback(
+    (date: string) => {
+      // Push the calendar onto the stack instead of jumping to the Calendar
+      // tab. Stack push leaves MainTabs frozen, so the destination paints
+      // without the unfreeze fan-out (DayScreen + ExercisesScreen all
+      // re-running queries on the same frame as the pop animation).
+      navigation.navigate("CalendarDate", { date })
+    },
+    [navigation]
   )
 
   if (!exercise) {
@@ -67,17 +72,6 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
 
   const totalWorkouts = history.length
   const lastDate = history[0]?.date ?? null
-
-  const openCalendarAtDate = useCallback(
-    (date: string) => {
-      // Push the calendar onto the stack instead of jumping to the Calendar
-      // tab. Stack push leaves MainTabs frozen, so the destination paints
-      // without the unfreeze fan-out (DayScreen + ExercisesScreen all
-      // re-running queries on the same frame as the pop animation).
-      navigation.navigate("CalendarDate", { date })
-    },
-    [navigation]
-  )
 
   return (
     <View style={styles.flex}>
@@ -127,47 +121,7 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
         {tab === "settings" && <SettingsPanel navigation={navigation} />}
       </ScrollView>
 
-      <SubTabBar tab={tab} onChange={setTab} />
-    </View>
-  )
-}
-
-function SubTabBar({ tab, onChange }: { tab: SubTab; onChange: (t: SubTab) => void }) {
-  const items: { key: SubTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-    { key: "history", label: "History", icon: "list-outline" },
-    { key: "graph", label: "Graph", icon: "stats-chart-outline" },
-    { key: "summary", label: "Summary", icon: "reader-outline" },
-    { key: "settings", label: "Settings", icon: "settings-outline" },
-  ]
-  return (
-    <View style={styles.subTabBar}>
-      {items.map((it) => {
-        const active = tab === it.key
-        return (
-          <Pressable
-            key={it.key}
-            onPress={() => onChange(it.key)}
-            // Catches the few points above the bar's top border as well; the
-            // only thing up there is the scroll view's bottom padding.
-            hitSlop={{ top: 6 }}
-            style={styles.subTabBtn}
-          >
-            <Ionicons
-              name={it.icon}
-              size={20}
-              color={active ? theme.colors.foreground : theme.colors.muted}
-            />
-            <Text
-              style={[
-                styles.subTabLabel,
-                active && { color: theme.colors.foreground },
-              ]}
-            >
-              {it.label}
-            </Text>
-          </Pressable>
-        )
-      })}
+      <SubTabBar tab={tab} onChange={setTab} withWorkout={false} />
     </View>
   )
 }
@@ -218,33 +172,4 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
   },
   statValue: { color: theme.colors.foreground, fontSize: theme.fontSize.lg, fontWeight: "700" },
-  // The bottom inset belongs to the buttons, not to the bar. As bar padding
-  // it was 24pt of dead space directly under the labels — exactly where a
-  // thumb lands reaching down — and it left each button at 42pt, under the
-  // 44pt minimum and 10pt shorter than the main tab bar.
-  subTabBar: {
-    flexDirection: "row",
-    backgroundColor: theme.colors.background,
-    borderTopColor: theme.colors.border,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 8,
-  },
-  // This copy had no vertical padding at all, so its buttons were 34pt — the
-  // smallest targets in the app. Keep in step with SetLoggerScreen's copy.
-  subTabBtn: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 2,
-    borderRadius: theme.radius.md,
-    minHeight: 48,
-    paddingTop: 4,
-    paddingBottom: 28,
-  },
-  subTabLabel: {
-    color: theme.colors.muted,
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 0.5,
-  },
 })

@@ -27,27 +27,8 @@ import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { useSettings } from "../settings/SettingsProvider"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
-
-function todayString(): string {
-  const d = new Date()
-  return ymd(d.getFullYear(), d.getMonth() + 1, d.getDate())
-}
-function pad(n: number) {
-  return String(n).padStart(2, "0")
-}
-function ymd(y: number, m: number, d: number): string {
-  return `${y}-${pad(m)}-${pad(d)}`
-}
-function addDays(date: string, days: number): string {
-  const dt = new Date(date + "T00:00:00")
-  dt.setDate(dt.getDate() + days)
-  return ymd(dt.getFullYear(), dt.getMonth() + 1, dt.getDate())
-}
-function diffDays(from: string, to: string): number {
-  const a = Date.parse(from + "T00:00:00")
-  const b = Date.parse(to + "T00:00:00")
-  return Math.round((b - a) / 86400000)
-}
+import { addDays, todayString } from "../dates"
+import { Card } from "../components/Card"
 
 function enumerateDates(from: string, to: string): string[] {
   if (from > to) return []
@@ -199,15 +180,15 @@ export function AiPlanScreen({ navigation, route }: any) {
           keyboardShouldPersistTaps="handled"
         >
           <Text style={styles.section}>Provider</Text>
-          <View style={styles.card}>
+          <Card>
             <Text style={styles.rowValue}>{providerLabel}</Text>
             <Text style={styles.help}>
               Change the provider or update API keys in Settings → AI.
             </Text>
-          </View>
+          </Card>
 
           <Text style={styles.section}>Plan for</Text>
-          <View style={styles.card}>
+          <Card>
             <DateRow
               label="Start"
               value={planStart}
@@ -228,10 +209,10 @@ export function AiPlanScreen({ navigation, route }: any) {
                 ? `${planDates.length} day${planDates.length === 1 ? "" : "s"} will be planned.`
                 : "Pick future dates (tomorrow or later)."}
             </Text>
-          </View>
+          </Card>
 
           <Text style={styles.section}>History context</Text>
-          <View style={styles.card}>
+          <Card>
             <View style={styles.toggleRow}>
               <Text style={styles.rowLabel}>Include past workouts</Text>
               <Switch
@@ -291,10 +272,10 @@ export function AiPlanScreen({ navigation, route }: any) {
                 </View>
               </>
             )}
-          </View>
+          </Card>
 
           <Text style={styles.section}>Guidance (optional)</Text>
-          <View style={styles.card}>
+          <Card>
             <TextInput
               value={comment}
               onChangeText={setComment}
@@ -304,7 +285,7 @@ export function AiPlanScreen({ navigation, route }: any) {
               multiline
               numberOfLines={3}
             />
-          </View>
+          </Card>
 
           {error && (
             <View style={styles.errorBox}>
@@ -320,7 +301,7 @@ export function AiPlanScreen({ navigation, route }: any) {
           {preview && (
             <>
               <Text style={styles.section}>Preview</Text>
-              <View style={styles.card}>
+              <Card>
                 {preview.days.length === 0 ? (
                   <Text style={styles.help}>The AI returned no days.</Text>
                 ) : (
@@ -344,7 +325,7 @@ export function AiPlanScreen({ navigation, route }: any) {
                     </View>
                   ))
                 )}
-              </View>
+              </Card>
             </>
           )}
 
@@ -485,14 +466,6 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 1.5,
     marginTop: theme.spacing[3],
-  },
-  card: {
-    backgroundColor: theme.colors.card,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing[4],
-    gap: theme.spacing[3],
   },
   toggleRow: {
     flexDirection: "row",

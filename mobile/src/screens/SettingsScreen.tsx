@@ -33,6 +33,7 @@ import {
   type ThemeMode,
 } from "../theme/themeMode"
 import { useSettings, useWeightUnit } from "../settings/SettingsProvider"
+import { Card, cardStyle } from "../components/Card"
 
 type ProfileField = "username" | "email"
 
@@ -91,6 +92,13 @@ export function SettingsScreen({ navigation }: any) {
         },
       ]
     )
+  }
+
+  function confirmLogout() {
+    Alert.alert("Log out?", "You can log back in at any time.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Log out", style: "destructive", onPress: logout },
+    ])
   }
 
   async function chooseTheme(m: ThemeMode) {
@@ -217,7 +225,7 @@ export function SettingsScreen({ navigation }: any) {
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.section}>Account</Text>
-        <View style={styles.card}>
+        <Card>
           <EditableRow
             label="Username"
             value={user?.username ?? "—"}
@@ -228,130 +236,84 @@ export function SettingsScreen({ navigation }: any) {
             value={user?.email ?? "—"}
             onPress={() => openEditor("email")}
           />
-        </View>
+        </Card>
 
         <Text style={styles.section}>Preferences</Text>
-        <View style={styles.card}>
-          <Row label="Weight unit" value={unit.toUpperCase()} />
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <Button
-              label="kg"
-              variant={unit === "kg" ? "primary" : "secondary"}
-              style={{ flex: 1 }}
-              onPress={() => api.updateSettings({ weight_unit: "kg" })}
-            />
-            <Button
-              label="lb"
-              variant={unit === "lb" ? "primary" : "secondary"}
-              style={{ flex: 1 }}
-              onPress={() => api.updateSettings({ weight_unit: "lb" })}
-            />
-          </View>
+        <Card>
+          <ChoiceSetting
+            label="Weight unit"
+            value={unit.toUpperCase()}
+            options={[
+              {
+                label: "kg",
+                active: unit === "kg",
+                onPress: () => api.updateSettings({ weight_unit: "kg" }),
+              },
+              {
+                label: "lb",
+                active: unit === "lb",
+                onPress: () => api.updateSettings({ weight_unit: "lb" }),
+              },
+            ]}
+          />
 
-          <Row
+          <ChoiceSetting
             label="First day of week"
             value={firstDayOfWeek === 1 ? "Monday" : "Sunday"}
+            options={[
+              {
+                label: "Sunday",
+                active: firstDayOfWeek === 0,
+                onPress: () => api.updateSettings({ first_day_of_week: 0 }),
+              },
+              {
+                label: "Monday",
+                active: firstDayOfWeek === 1,
+                onPress: () => api.updateSettings({ first_day_of_week: 1 }),
+              },
+            ]}
           />
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <Button
-              label="Sunday"
-              variant={firstDayOfWeek === 0 ? "primary" : "secondary"}
-              style={{ flex: 1 }}
-              onPress={() => api.updateSettings({ first_day_of_week: 0 })}
-            />
-            <Button
-              label="Monday"
-              variant={firstDayOfWeek === 1 ? "primary" : "secondary"}
-              style={{ flex: 1 }}
-              onPress={() => api.updateSettings({ first_day_of_week: 1 })}
-            />
-          </View>
 
-          <Row
+          <ChoiceSetting
             label="Theme"
             value={themeMode === "light" ? "Light" : "Dark"}
+            options={[
+              {
+                label: "Dark",
+                active: themeMode === "dark",
+                onPress: () => chooseTheme("dark"),
+              },
+              {
+                label: "Light",
+                active: themeMode === "light",
+                onPress: () => chooseTheme("light"),
+              },
+            ]}
           />
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <Button
-              label="Dark"
-              variant={themeMode === "dark" ? "primary" : "secondary"}
-              style={{ flex: 1 }}
-              onPress={() => chooseTheme("dark")}
-            />
-            <Button
-              label="Light"
-              variant={themeMode === "light" ? "primary" : "secondary"}
-              style={{ flex: 1 }}
-              onPress={() => chooseTheme("light")}
-            />
-          </View>
 
-          <Row
+          <OnOffSetting
             label="Per-set PRs"
-            value={showPositionPrs ? "On" : "Off"}
+            on={showPositionPrs}
+            onChange={(v) => api.updateSettings({ show_position_prs: v })}
           />
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <Button
-              label="On"
-              variant={showPositionPrs ? "primary" : "secondary"}
-              style={{ flex: 1 }}
-              onPress={() => api.updateSettings({ show_position_prs: true })}
-            />
-            <Button
-              label="Off"
-              variant={!showPositionPrs ? "primary" : "secondary"}
-              style={{ flex: 1 }}
-              onPress={() => api.updateSettings({ show_position_prs: false })}
-            />
-          </View>
 
-          <Row
+          <OnOffSetting
             label="Rest time between sets"
-            value={showRestTime ? "On" : "Off"}
+            on={showRestTime}
+            onChange={(v) => api.updateSettings({ show_rest_time: v })}
           />
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <Button
-              label="On"
-              variant={showRestTime ? "primary" : "secondary"}
-              style={{ flex: 1 }}
-              onPress={() => api.updateSettings({ show_rest_time: true })}
-            />
-            <Button
-              label="Off"
-              variant={!showRestTime ? "primary" : "secondary"}
-              style={{ flex: 1 }}
-              onPress={() => api.updateSettings({ show_rest_time: false })}
-            />
-          </View>
 
-          <Row
+          <OnOffSetting
             label="Time since last set"
-            value={showTimeSinceLastSet ? "On" : "Off"}
+            on={showTimeSinceLastSet}
+            onChange={(v) => api.updateSettings({ show_time_since_last_set: v })}
           />
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <Button
-              label="On"
-              variant={showTimeSinceLastSet ? "primary" : "secondary"}
-              style={{ flex: 1 }}
-              onPress={() =>
-                api.updateSettings({ show_time_since_last_set: true })
-              }
-            />
-            <Button
-              label="Off"
-              variant={!showTimeSinceLastSet ? "primary" : "secondary"}
-              style={{ flex: 1 }}
-              onPress={() =>
-                api.updateSettings({ show_time_since_last_set: false })
-              }
-            />
-          </View>
-        </View>
+        </Card>
 
         <Text style={styles.section}>Categories</Text>
         <Pressable
           onPress={() => navigation.navigate("CategoryStyles")}
-          style={({ pressed }) => [styles.card, pressed && { opacity: 0.7 }]}
+          style={({ pressed }) => [cardStyle, pressed && { opacity: 0.7 }]}
         >
           <View style={styles.row}>
             <Text style={styles.rowLabel}>Customize categories</Text>
@@ -365,7 +327,7 @@ export function SettingsScreen({ navigation }: any) {
 
         {/* AI settings disabled for now.
         <Text style={styles.section}>AI</Text>
-        <View style={styles.card}>
+        <Card>
           <Text style={styles.rowLabel}>Active provider</Text>
           <View style={styles.providerGrid}>
             {AI_PROVIDERS.map((p) => (
@@ -406,13 +368,13 @@ export function SettingsScreen({ navigation }: any) {
               </View>
             )
           })}
-        </View>
+        </Card>
         */}
 
         <Text style={styles.section}>Data</Text>
         <Pressable
           onPress={() => navigation.navigate("ImportExport")}
-          style={({ pressed }) => [styles.card, pressed && { opacity: 0.7 }]}
+          style={({ pressed }) => [cardStyle, pressed && { opacity: 0.7 }]}
         >
           <View style={styles.row}>
             <Text style={styles.rowLabel}>Import / Export</Text>
@@ -430,7 +392,7 @@ export function SettingsScreen({ navigation }: any) {
         <Text style={styles.section}>Gyms</Text>
         <Pressable
           onPress={() => navigation.navigate("Gyms")}
-          style={({ pressed }) => [styles.card, pressed && { opacity: 0.7 }]}
+          style={({ pressed }) => [cardStyle, pressed && { opacity: 0.7 }]}
         >
           <View style={styles.row}>
             <Text style={styles.rowLabel}>Manage gyms</Text>
@@ -443,7 +405,7 @@ export function SettingsScreen({ navigation }: any) {
         </Pressable>
 
         <Text style={styles.section}>Maintenance</Text>
-        <View style={styles.card}>
+        <Card>
           <Text style={styles.maintenanceHelp}>
             Clears every PR mark and re-derives them from your set history.
             Useful if PRs got out of sync.
@@ -465,10 +427,10 @@ export function SettingsScreen({ navigation }: any) {
               {recomputeStatus.msg}
             </Text>
           )}
-        </View>
+        </Card>
 
         <View style={{ marginTop: theme.spacing[6] }}>
-          <Button label="Log out" variant="destructive" onPress={logout} />
+          <Button label="Log out" variant="destructive" onPress={confirmLogout} />
         </View>
       </ScrollView>
 
@@ -520,6 +482,55 @@ export function SettingsScreen({ navigation }: any) {
         </View>
       </PopupModal>
     </StaticSafeAreaView>
+  )
+}
+
+/** A labelled setting with its current value, and one button per choice. */
+function ChoiceSetting({
+  label,
+  value,
+  options,
+}: {
+  label: string
+  value: string
+  options: { label: string; active: boolean; onPress: () => void }[]
+}) {
+  return (
+    <>
+      <Row label={label} value={value} />
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        {options.map((o) => (
+          <Button
+            key={o.label}
+            label={o.label}
+            variant={o.active ? "primary" : "secondary"}
+            style={{ flex: 1 }}
+            onPress={o.onPress}
+          />
+        ))}
+      </View>
+    </>
+  )
+}
+
+function OnOffSetting({
+  label,
+  on,
+  onChange,
+}: {
+  label: string
+  on: boolean
+  onChange: (on: boolean) => void
+}) {
+  return (
+    <ChoiceSetting
+      label={label}
+      value={on ? "On" : "Off"}
+      options={[
+        { label: "On", active: on, onPress: () => onChange(true) },
+        { label: "Off", active: !on, onPress: () => onChange(false) },
+      ]}
+    />
   )
 }
 
@@ -622,14 +633,6 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 1.5,
     marginTop: theme.spacing[3],
-  },
-  card: {
-    backgroundColor: theme.colors.card,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing[4],
-    gap: theme.spacing[3],
   },
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   rowLabel: { color: theme.colors.muted, fontSize: theme.fontSize.sm },

@@ -12,6 +12,7 @@ import {
   type RemotePreview,
 } from "@lift/core"
 import { useAuth } from "../auth/AuthProvider"
+import { formatTimestamp } from "../format"
 
 /**
  * Tells the user, once, that a push was refused because the cloud moved ahead.
@@ -161,10 +162,4 @@ function buildMessage(preview: RemotePreview | null): string {
 
 function counts(workouts: number, sets: number): string {
   return `${workouts.toLocaleString()} workouts, ${sets.toLocaleString()} sets`
-}
-
-function formatTimestamp(iso: string): string {
-  const t = Date.parse(iso)
-  if (Number.isNaN(t)) return iso
-  return new Date(t).toLocaleString()
 }
