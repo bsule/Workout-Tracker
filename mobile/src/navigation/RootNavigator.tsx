@@ -68,14 +68,6 @@ const stackScreenOptions = {
 
 const navigationRef = createNavigationContainerRef()
 
-function todayString(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-function pad(n: number) {
-  return String(n).padStart(2, "0")
-}
-
 // Stub component used as the route target for the center "+" tab. The tab's
 // custom button intercepts the press and opens the picker sheet instead of
 // rendering this screen, but bottom-tab navigator still requires a component.

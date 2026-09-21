@@ -34,6 +34,7 @@ import { pressedStyle } from "../theme/pressable"
 import { useSettings } from "../settings/SettingsProvider"
 import { theme } from "../theme/theme"
 import { useCategoryStyles } from "../categories/CategoryStylesProvider"
+import { todayString, ymd } from "../dates"
 
 const WEEKDAY_LABELS_SUNDAY = ["S", "M", "T", "W", "T", "F", "S"]
 const WEEKDAY_LABELS_MONDAY = ["M", "T", "W", "T", "F", "S", "S"]
@@ -62,17 +63,6 @@ function ScreenWrap({
     )
   }
   return <StaticSafeAreaView>{children}</StaticSafeAreaView>
-}
-
-function todayString(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-function pad(n: number) {
-  return String(n).padStart(2, "0")
-}
-function ymd(y: number, m: number, d: number): string {
-  return `${y}-${pad(m)}-${pad(d)}`
 }
 
 function parseYear(date?: string): number {

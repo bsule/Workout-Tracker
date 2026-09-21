@@ -194,11 +194,6 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.md,
     fontWeight: "600",
   },
-  formulaLabel: {
-    color: theme.colors.muted,
-    fontSize: theme.fontSize.xs,
-    marginTop: 2,
-  },
   card: {
     backgroundColor: theme.colors.card,
     borderColor: "rgba(255,255,255,0.05)",

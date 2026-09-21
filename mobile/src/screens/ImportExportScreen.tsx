@@ -44,8 +44,9 @@ import {
 import { folderBridge, isBackupFolderAvailable } from "../backup/folderBridge"
 import { runBackup } from "../backup/runner"
 import { Button } from "../components/Button"
-import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { theme } from "../theme/theme"
+import { formatTimestamp } from "../format"
+import { Card } from "../components/Card"
 
 type PendingImport =
   | {
@@ -231,7 +232,9 @@ export function ImportExportScreen() {
   const importDisabled = busy != null && busy !== "import"
 
   return (
-    <StaticSafeAreaView>
+    // Pushed route with a native header, which already clears the status
+    // bar. StaticSafeAreaView would pad the top a second time.
+    <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <ScrollView contentContainerStyle={styles.wrap}>
         <Text style={styles.subtitle}>
           Back up your workouts, share them as a file, or restore from a
@@ -247,7 +250,7 @@ export function ImportExportScreen() {
         <BackupCard onError={setError} />
 
         <Text style={styles.section}>Export</Text>
-        <View style={styles.card}>
+        <Card>
           <View style={{ gap: theme.spacing[2] }}>
             <Text style={styles.rowTitle}>Lift JSON backup</Text>
             <Text style={styles.help}>
@@ -260,9 +263,9 @@ export function ImportExportScreen() {
             onPress={exportJson}
             disabled={exportDisabled}
           />
-        </View>
+        </Card>
 
-        <View style={styles.card}>
+        <Card>
           <View style={{ gap: theme.spacing[2] }}>
             <Text style={styles.rowTitle}>FitNotes-compatible DB</Text>
             <Text style={styles.help}>
@@ -275,10 +278,10 @@ export function ImportExportScreen() {
             onPress={exportFitnotesDb}
             disabled={exportDisabled}
           />
-        </View>
+        </Card>
 
         <Text style={styles.section}>Import</Text>
-        <View style={styles.card}>
+        <Card>
           <Text style={styles.help}>
             Pick a Lift JSON backup or a FitNotes Android CSV export. The format
             is detected automatically.
@@ -288,10 +291,10 @@ export function ImportExportScreen() {
             onPress={pickAndPreview}
             disabled={importDisabled}
           />
-        </View>
+        </Card>
 
         {pending && (
-          <View style={styles.card}>
+          <Card>
             <Text style={styles.rowTitle}>
               {pending.kind === "snapshot"
                 ? "Lift backup detected"
@@ -304,7 +307,7 @@ export function ImportExportScreen() {
                 {pending.customExerciseCount.toLocaleString()} custom exercises
                 · {pending.gymCount.toLocaleString()} gyms
                 {pending.exportedAt
-                  ? ` · exported ${formatExportedAt(pending.exportedAt)}`
+                  ? ` · exported ${formatTimestamp(pending.exportedAt)}`
                   : ""}
               </Text>
             ) : (
@@ -354,11 +357,11 @@ export function ImportExportScreen() {
                 disabled={busy === "import"}
               />
             </View>
-          </View>
+          </Card>
         )}
 
         {result && (
-          <View style={styles.card}>
+          <Card>
             <Text style={styles.rowTitle}>
               {result.imported.toLocaleString()} sets imported
             </Text>
@@ -380,7 +383,7 @@ export function ImportExportScreen() {
               </Text>
             )}
             <Button label="Done" onPress={clearResult} />
-          </View>
+          </Card>
         )}
 
         {busy === "import" && (
@@ -389,7 +392,7 @@ export function ImportExportScreen() {
           </View>
         )}
       </ScrollView>
-    </StaticSafeAreaView>
+    </View>
   )
 }
 
@@ -471,12 +474,12 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
 
   if (!user) {
     return (
-      <View style={styles.card}>
+      <Card>
         <Text style={styles.help}>
           Sign in to sync your workouts to the cloud and restore them on
           another device.
         </Text>
-      </View>
+      </Card>
     )
   }
 
@@ -621,7 +624,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
     busy != null || (quota != null && quota.remaining <= 0)
 
   return (
-    <View style={styles.card}>
+    <Card>
       <View style={{ gap: theme.spacing[2] }}>
         <Text style={styles.help}>
           Push this device's data to the cloud, or pull a previous backup down.
@@ -691,7 +694,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
           <Text style={styles.help}>
             Last saved{" "}
             {preview.exportedAt
-              ? formatExportedAt(preview.exportedAt)
+              ? formatTimestamp(preview.exportedAt)
               : "(unknown)"}
           </Text>
           <Text style={styles.help}>
@@ -717,7 +720,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
           </View>
         </View>
       )}
-    </View>
+    </Card>
   )
 }
 
@@ -785,28 +788,28 @@ function BackupCard({ onError }: { onError: (msg: string | null) => void }) {
 
   if (!state) {
     return (
-      <View style={styles.card}>
+      <Card>
         <ActivityIndicator color={theme.colors.muted} />
-      </View>
+      </Card>
     )
   }
 
   if (!isBackupFolderAvailable()) {
     return (
-      <View style={styles.card}>
+      <Card>
         <Text style={styles.rowTitle}>Available in custom builds</Text>
         <Text style={styles.help}>
           Saving backups to the Files app needs a custom development build —
           Expo Go can't load the iOS folder picker. Use Import / Export below
           for one-off backups in the meantime.
         </Text>
-      </View>
+      </Card>
     )
   }
 
   if (!state.bookmark) {
     return (
-      <View style={styles.card}>
+      <Card>
         <View style={{ gap: theme.spacing[2] }}>
           <Text style={styles.rowTitle}>Save backups to Files</Text>
           <Text style={styles.help}>
@@ -820,12 +823,12 @@ function BackupCard({ onError }: { onError: (msg: string | null) => void }) {
           onPress={setupBackups}
           disabled={busy != null}
         />
-      </View>
+      </Card>
     )
   }
 
   return (
-    <View style={styles.card}>
+    <Card>
       <View style={{ gap: theme.spacing[2] }}>
         <Text style={styles.rowTitle}>{state.folderLabel ?? "Backup folder"}</Text>
         <Text style={styles.help}>
@@ -849,7 +852,7 @@ function BackupCard({ onError }: { onError: (msg: string | null) => void }) {
           style={{ flex: 1 }}
         />
       </View>
-    </View>
+    </Card>
   )
 }
 
@@ -874,12 +877,6 @@ function looksLikeJson(text: string): boolean {
   return false
 }
 
-function formatExportedAt(iso: string): string {
-  const t = Date.parse(iso)
-  if (Number.isNaN(t)) return iso
-  return new Date(t).toLocaleString()
-}
-
 const styles = StyleSheet.create({
   wrap: {
     padding: theme.spacing[4],
@@ -898,14 +895,6 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 1.5,
     marginTop: theme.spacing[3],
-  },
-  card: {
-    backgroundColor: theme.colors.card,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing[4],
-    gap: theme.spacing[3],
   },
   rowTitle: {
     color: theme.colors.foreground,

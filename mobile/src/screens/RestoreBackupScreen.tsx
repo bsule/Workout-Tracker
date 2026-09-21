@@ -12,6 +12,8 @@ import { runBackup } from "../backup/runner"
 import { Button } from "../components/Button"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { theme } from "../theme/theme"
+import { formatTimestamp } from "../format"
+import { Card } from "../components/Card"
 
 export function RestoreBackupScreen({ onDismiss }: { onDismiss: () => void }) {
   const [state, setState] = useState<BackupState | null>(null)
@@ -124,7 +126,7 @@ export function RestoreBackupScreen({ onDismiss }: { onDismiss: () => void }) {
           or from a Files / iCloud Drive backup folder you set up before.
         </Text>
 
-        <View style={styles.card}>
+        <Card>
           <Text style={styles.rowTitle}>Sync from cloud</Text>
           <Text style={styles.help}>
             Pull the latest snapshot from your account on the Lift cloud.
@@ -135,7 +137,7 @@ export function RestoreBackupScreen({ onDismiss }: { onDismiss: () => void }) {
                 <Text style={styles.help}>
                   Last saved{" "}
                   {cloudPreview.exportedAt
-                    ? formatExportedAt(cloudPreview.exportedAt)
+                    ? formatTimestamp(cloudPreview.exportedAt)
                     : "(unknown)"}
                 </Text>
                 <Text style={styles.help}>
@@ -168,10 +170,10 @@ export function RestoreBackupScreen({ onDismiss }: { onDismiss: () => void }) {
               disabled={busy != null}
             />
           )}
-        </View>
+        </Card>
 
         {state.bookmark && (
-          <View style={styles.card}>
+          <Card>
             <Text style={styles.rowTitle}>{state.folderLabel ?? "Saved folder"}</Text>
             <Text style={styles.help}>
               Found a previously-saved backup folder. Restore from it?
@@ -184,10 +186,10 @@ export function RestoreBackupScreen({ onDismiss }: { onDismiss: () => void }) {
                 style={{ flex: 1 }}
               />
             </View>
-          </View>
+          </Card>
         )}
 
-        <View style={styles.card}>
+        <Card>
           <Text style={styles.rowTitle}>
             {state.bookmark ? "Pick a different folder" : "Pick backup folder"}
           </Text>
@@ -201,7 +203,7 @@ export function RestoreBackupScreen({ onDismiss }: { onDismiss: () => void }) {
             onPress={pickAndRestore}
             disabled={busy != null}
           />
-        </View>
+        </Card>
 
         {error && <Text style={styles.error}>{error}</Text>}
         {info && <Text style={styles.info}>{info}</Text>}
@@ -215,12 +217,6 @@ export function RestoreBackupScreen({ onDismiss }: { onDismiss: () => void }) {
       </ScrollView>
     </StaticSafeAreaView>
   )
-}
-
-function formatExportedAt(iso: string): string {
-  const t = Date.parse(iso)
-  if (Number.isNaN(t)) return iso
-  return new Date(t).toLocaleString()
 }
 
 const styles = StyleSheet.create({
@@ -239,14 +235,6 @@ const styles = StyleSheet.create({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.xl,
     fontWeight: "700",
-  },
-  card: {
-    backgroundColor: theme.colors.card,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing[4],
-    gap: theme.spacing[3],
   },
   rowTitle: {
     color: theme.colors.foreground,

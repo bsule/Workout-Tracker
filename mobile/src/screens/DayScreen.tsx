@@ -63,19 +63,7 @@ import {
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
 import { useActiveDateAndSetter } from "../state/activeDate"
-
-function todayString(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-function pad(n: number) {
-  return String(n).padStart(2, "0")
-}
-function shiftDateString(date: string, delta: number): string {
-  const d = new Date(date + "T00:00:00")
-  d.setDate(d.getDate() + delta)
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
+import { addDays, todayString } from "../dates"
 
 // ~6 year sliding window (3 each side of today). Generous enough that
 // the user effectively never hits the edge in normal use, and the
@@ -119,7 +107,7 @@ export function DayScreen({ navigation, route }: any) {
   }, [])
 
   const dateForIndex = useCallback(
-    (idx: number) => shiftDateString(anchorRef.current, idx - INITIAL_INDEX),
+    (idx: number) => addDays(anchorRef.current, idx - INITIAL_INDEX),
     []
   )
 
@@ -130,7 +118,7 @@ export function DayScreen({ navigation, route }: any) {
   const selectionMode = selectedIds.length > 0
 
   function shiftDay(delta: number) {
-    setDate(shiftDateString(date, delta))
+    setDate(addDays(date, delta))
   }
 
   const flatListRef = useRef<FlatList<number> | null>(null)
@@ -232,7 +220,7 @@ export function DayScreen({ navigation, route }: any) {
     [openNoteSheet]
   )
 
-  // MenuPopup holds this back until its fade-out has finished, so a sheet
+  // The menu is a system alert, and it is gone before this runs, so a sheet
   // opened here cannot land while the menu is still on screen.
   const onDateMenuAction = useCallback(
     (id: string) => {
@@ -976,13 +964,15 @@ function GymPickerModal({
     const name = newGym.trim()
     if (!name) return
     Keyboard.dismiss()
-    const exists = gymNames.some(
+    // Typing "golds" when "Golds" is saved picks the saved gym. Patching the
+    // typed text would add a second gym that differs only in case.
+    const existing = gymNames.find(
       (g) => g.toLowerCase() === name.toLowerCase()
     )
     onClose()
     deferMutation(() => {
-      if (!exists) api.createGym(name)
-      api.patchWorkout(workout.id, { gym: name })
+      if (!existing) api.createGym(name)
+      api.patchWorkout(workout.id, { gym: existing ?? name })
     })
   }
 
@@ -1003,9 +993,45 @@ function GymPickerModal({
 
   return (
     <OverlayCard opacity={opacity} visible={visible} onBackdropPress={onClose}>
-      <Text style={overlayCardStyles.title}>Gym</Text>
+      <View style={styles.gymHeader}>
+        <Text style={overlayCardStyles.title}>Gym</Text>
+        <Pressable
+          onPress={adding ? cancelAdd : onClose}
+          hitSlop={10}
+          style={({ pressed }) => pressedStyle(pressed)}
+        >
+          <Text style={styles.gymHeaderAction}>{adding ? "Cancel" : "Done"}</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.gymList}>
+        {/* "No gym" is a row of its own, so clearing the gym is a choice in
+            the list rather than a separate button under it. */}
+        <ScrollView
+          // Shorter while adding, so the input under it stays above the
+          // keyboard on a small phone.
+          style={[styles.gymListScroll, adding && styles.gymListScrollAdding]}
+          keyboardShouldPersistTaps="always"
+        >
+          <GymRow
+            label="No gym"
+            muted
+            selected={!selected}
+            first
+            onPress={selected ? clearGym : onClose}
+          />
+          {gymNames.map((name) => (
+            <GymRow
+              key={name}
+              label={name}
+              selected={name === selected}
+              onPress={() => selectGym(name)}
+            />
+          ))}
+        </ScrollView>
+
         {adding ? (
-          <>
+          <View style={[styles.gymRow, styles.gymRowDivider]}>
             <TextInput
               ref={newGymInputRef}
               value={newGym}
@@ -1016,79 +1042,80 @@ function GymPickerModal({
               autoCorrect={false}
               returnKeyType="done"
               onSubmitEditing={commitNew}
-              style={[overlayCardStyles.input, styles.gymSheetInput]}
+              style={styles.gymAddInput}
             />
-            <View style={overlayCardStyles.actions}>
-              <Button
-                label="Cancel"
-                variant="secondary"
-                onPress={cancelAdd}
-                style={{ flex: 1 }}
-              />
-              <Button
-                label="Add"
-                onPress={commitNew}
-                disabled={!newGym.trim()}
-                style={{ flex: 1 }}
-              />
-            </View>
-          </>
-        ) : (
-          <>
-            {gymNames.length === 0 ? (
-              <Text style={styles.gymSheetEmpty}>
-                No gyms yet - tap "Add gym" to create one.
-              </Text>
-            ) : (
-              <ScrollView
-                style={styles.gymSheetSuggestList}
-                keyboardShouldPersistTaps="always"
+            <Pressable
+              onPress={commitNew}
+              disabled={!newGym.trim()}
+              hitSlop={10}
+              style={({ pressed }) => pressedStyle(pressed)}
+            >
+              <Text
+                style={[
+                  styles.gymAddConfirm,
+                  !newGym.trim() && { color: theme.colors.muted },
+                ]}
               >
-                {gymNames.map((name) => {
-                  const isSelected = name === selected
-                  return (
-                    <Pressable
-                      key={name}
-                      onPress={() => selectGym(name)}
-                      style={({ pressed }) => [
-                        styles.gymSheetSuggestRow,
-                        pressed && { opacity: 0.7 },
-                        isSelected && styles.gymSheetSuggestRowSelected,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.gymSheetSuggestText,
-                          isSelected && styles.gymSheetSuggestTextSelected,
-                        ]}
-                      >
-                        {isSelected ? "✓  " : "    "}
-                        {name}
-                      </Text>
-                    </Pressable>
-                  )
-                })}
-              </ScrollView>
-            )}
-            <View style={overlayCardStyles.actions}>
-              <Button
-                label="Add gym"
-                variant="secondary"
-                onPress={startAdding}
-                style={{ flex: 1 }}
-              />
-              <Button label="Done" onPress={onClose} style={{ flex: 1 }} />
+                Add
+              </Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable
+            onPress={startAdding}
+            style={({ pressed }) => [
+              styles.gymRow,
+              styles.gymRowDivider,
+              pressed && styles.gymRowPressed,
+            ]}
+          >
+            <View style={styles.gymAddLabel}>
+              <Ionicons name="add" size={18} color={theme.colors.primary} />
+              <Text style={styles.gymAddText}>Add gym</Text>
             </View>
-            {workout.gym ? (
-              <Button
-                label="Clear gym"
-                variant="ghost"
-                onPress={clearGym}
-              />
-            ) : null}
-          </>
+          </Pressable>
         )}
+      </View>
     </OverlayCard>
+  )
+}
+
+function GymRow({
+  label,
+  selected,
+  muted = false,
+  first = false,
+  onPress,
+}: {
+  label: string
+  selected: boolean
+  muted?: boolean
+  first?: boolean
+  onPress: () => void
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.gymRow,
+        !first && styles.gymRowDivider,
+        pressed && styles.gymRowPressed,
+      ]}
+    >
+      <Text
+        style={[
+          styles.gymRowText,
+          muted && { color: theme.colors.muted },
+          selected && styles.gymRowTextSelected,
+        ]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+      {selected && (
+        <Ionicons name="checkmark" size={18} color={theme.colors.primary} />
+      )}
+    </Pressable>
   )
 }
 
@@ -1436,10 +1463,6 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.lg,
     overflow: "hidden",
   },
-  exerciseAccent: {
-    width: 4,
-    alignSelf: "stretch",
-  },
   exerciseInner: {
     flex: 1,
   },
@@ -1502,45 +1525,6 @@ const styles = StyleSheet.create({
     borderTopColor: "rgba(255,255,255,0.18)",
     borderTopWidth: 1,
   },
-  exSetRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: 8,
-    gap: theme.spacing[3],
-    borderBottomColor: theme.colors.foreground,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  exSetIcon: { width: 28, alignItems: "flex-start" },
-  exPlannedDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    borderColor: theme.colors.primary,
-    borderStyle: "dashed",
-    borderWidth: 1.5,
-  },
-  exSetIndex: {
-    width: 24,
-    color: theme.colors.muted,
-    fontSize: theme.fontSize.base,
-    fontWeight: "600",
-  },
-  exSetWeight: {
-    flex: 1,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.md,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  exSetUnit: { color: theme.colors.muted, fontSize: 12, fontWeight: "400" },
-  exSetReps: {
-    width: 50,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.md,
-    fontWeight: "700",
-    textAlign: "right",
-  },
   exerciseCardSelected: {
     ...StyleSheet.absoluteFill,
     borderColor: theme.colors.foreground,
@@ -1588,34 +1572,59 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.sm,
     fontWeight: "700",
   },
-  // Layered over overlayCardStyles.input, which carries the field's chrome.
-  gymSheetInput: { fontSize: theme.fontSize.base },
-  gymSheetSuggestList: {
-    maxHeight: 200,
+  gymHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  gymHeaderAction: {
+    color: theme.colors.primary,
+    fontSize: theme.fontSize.base,
+    fontWeight: "600",
+  },
+  gymList: {
+    flexShrink: 1,
     borderColor: theme.colors.border,
     borderWidth: 1,
     borderRadius: theme.radius.md,
+    overflow: "hidden",
   },
-  gymSheetSuggestRow: {
+  gymListScroll: { flexGrow: 0, flexShrink: 1, maxHeight: 264 },
+  gymListScrollAdding: { maxHeight: 132 },
+  gymRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[3],
+    minHeight: 44,
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: 10,
-    borderBottomColor: "rgba(255,255,255,0.04)",
-    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  gymSheetSuggestRowSelected: {
-    backgroundColor: "rgba(255,255,255,0.06)",
+  gymRowDivider: {
+    borderTopColor: theme.colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
-  gymSheetSuggestText: {
+  gymRowPressed: { backgroundColor: "rgba(255,255,255,0.06)" },
+  gymRowText: {
+    flex: 1,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
-  gymSheetSuggestTextSelected: {
-    fontWeight: "700",
+  gymRowTextSelected: { fontWeight: "600" },
+  gymAddLabel: { flexDirection: "row", alignItems: "center", gap: 6 },
+  gymAddText: {
+    color: theme.colors.primary,
+    fontSize: theme.fontSize.base,
+    fontWeight: "600",
   },
-  gymSheetEmpty: {
-    color: theme.colors.muted,
-    fontSize: theme.fontSize.sm,
-    fontStyle: "italic",
-    paddingVertical: theme.spacing[2],
+  gymAddInput: {
+    flex: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    paddingVertical: 10,
+  },
+  gymAddConfirm: {
+    color: theme.colors.primary,
+    fontSize: theme.fontSize.base,
+    fontWeight: "600",
   },
 })

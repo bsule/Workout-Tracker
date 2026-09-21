@@ -13,7 +13,6 @@ import { Ionicons } from "@expo/vector-icons"
 import type { Category } from "@lift/core"
 import { Button } from "../components/Button"
 import { PopupModal } from "../components/PopupModal"
-import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { LIST_ANIM } from "../anim"
 import { theme } from "../theme/theme"
 import {
@@ -86,7 +85,9 @@ export function CategoryStylesScreen() {
   }
 
   return (
-    <StaticSafeAreaView>
+    // Pushed route with a native header, which already clears the status
+    // bar. StaticSafeAreaView would pad the top a second time.
+    <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <ScrollView
         style={{ flex: 1, backgroundColor: theme.colors.background }}
         contentContainerStyle={styles.wrap}
@@ -170,7 +171,7 @@ export function CategoryStylesScreen() {
           if (editor?.mode === "edit") commitDelete(editor.category)
         }}
       />
-    </StaticSafeAreaView>
+    </View>
   )
 }
 
@@ -219,7 +220,6 @@ function CategoryEditorModal({
   // would cause stale state on prop change, so explicit effect.
   // Using useState with initial value, plus a manual reseed when `visible`
   // flips to true.
-  // (The pattern matches the NoteEditorSheet in SetLoggerScreen.)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useReseedOnOpen(visible, () => {
     setLabelDraft(currentLabel)

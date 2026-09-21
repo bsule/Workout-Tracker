@@ -12,14 +12,7 @@ import { NotePreview } from "./NotePreview"
 import { SetList } from "./SetList"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
-
-function todayString(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-function pad(n: number) {
-  return String(n).padStart(2, "0")
-}
+import { todayString } from "../dates"
 
 interface Props {
   date: string
@@ -46,7 +39,7 @@ export function DayWorkoutContent({ date, onPressExercise }: Props) {
         <View style={[styles.banner, isFuture ? styles.bannerFuture : styles.bannerToday]}>
           <View style={{ flex: 1, gap: 2 }}>
             <Text style={styles.bannerTitle}>
-              {isFuture ? "Planned workout" : "Planned workout"}
+              Planned workout
             </Text>
             <Text style={styles.bannerSub}>
               {isFuture
