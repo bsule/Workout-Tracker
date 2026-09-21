@@ -19,7 +19,7 @@ npm workspaces (`packages/*`, `frontend`, `mobile`, `cloudflare`). The package n
 | `mobile`     | `lift-mobile`  | Expo / React Native. Persists to the FS sandbox; auto-backs-up to a user-picked Files folder. |
 | `cloudflare` | (worker)       | Hono Worker. Auth in D1 (`lift-auth`), snapshot blob in R2 (`lift-snapshots`). Dev port **8787**. |
 
-Both clients default their API base to `http://localhost:8787/api`.
+Both clients fall back to `http://localhost:8787/api` in code. Mobile overrides it: `mobile/app.json` `extra.apiBaseUrl` points at the production worker (`lift-api.bilal-suleiman.workers.dev`), so a mobile build talks to production unless you change that value (for example to your LAN IP) for local dev.
 
 ## Commands
 
@@ -53,11 +53,11 @@ npm run dev                # concurrently runs web + mobile
 A **Vitest** suite at the repo root covers `@lift/core` — the shared brain — directly through its public `exports` subpaths (no build step; Vitest transpiles the raw `.ts` on the fly). Run from the root:
 
 ```bash
-npm test            # vitest run — one-shot, used in CI / before merging
+npm test            # vitest run, one-shot; run it before merging (no CI workflow runs it yet)
 npm run test:watch  # re-run on change
 ```
 
-What's covered: units conversion, blob serialize/migrate (schema v1→8), indexes, materialize (Brzycki 1RM, durations), queries (fuzzy match, history, calendar, day notes), top-weight records, every mutation, the PR / position-PR computation, FitNotes CSV import (incl. the real fixture), JSON export↔import round-trips, crash-log replay in `persist`, the device-local sync clock, and the `CloudflareTransport` wire protocol (mocked `fetch`). Tests live in `tests/`; shared store-reset and in-memory-storage helpers are in `tests/helpers/`.
+What's covered: units conversion, blob serialize/migrate (schema v1→8), indexes, materialize (Brzycki 1RM, durations), queries (fuzzy match, history, calendar, day notes), top-weight records, every mutation, the PR / position-PR computation, FitNotes CSV import (synthetic fixture), JSON export↔import round-trips, crash-log replay in `persist`, the device-local sync clock, the `CloudflareTransport` wire protocol (mocked `fetch`), demo-data seeding, and three pure-logic suites that import from `mobile/src` (`monthPaging`, `sameHistory`, `swipeHold`). `tests/README.md` lists every suite. Tests live in `tests/`; shared store-reset and in-memory-storage helpers are in `tests/helpers/`.
 
 The store is a module-level singleton — suites that touch it call `resetStore()` in `beforeEach` (see `tests/helpers/store.ts`), and import paths that flush inject an in-memory `BlobStorage` via `installMemoryStorage()`.
 
@@ -67,7 +67,7 @@ This suite tests the logic layer only. The two clients (React/React Native UI) a
 
 ## Architecture — the core store
 
-Everything important lives in `packages/core/src`. The two clients are thin shells around it. `frontend/lib/store/*` and `mobile/src/store/*` mostly **re-export** `@lift/core/store` (e.g. `frontend/lib/store/index.ts` is just `export * from "@lift/core/store"`).
+Everything important lives in `packages/core/src`. The two clients are thin shells around it. `frontend/lib/store/*` mostly **re-exports** `@lift/core/store` (e.g. `frontend/lib/store/index.ts` is just `export * from "@lift/core/store"`). Mobile imports `@lift/core` directly; `mobile/src/store/` holds only the storage adapter, the bootstrap, and the provider.
 
 ### Data flow
 
@@ -98,7 +98,7 @@ The core does **not** know how to persist. Hosts inject a `BlobStorage` factory 
 
 ### Schema migrations
 
-`store/schema.ts` has `SCHEMA_VERSION` (currently 8). On parse, `store/blob.ts:migrate()` upgrades older snapshots field-by-field. A migration that adds derived flags (e.g. v4's `is_position_pr`) triggers a full `recomputeAllPrs()` pass after hydrate. v5 copies non-empty `workout.notes` into `day_notes`, then blanks leftover `workout.notes` so a deleted day note cannot resurrect on export. v6 makes `workout.notes` canonical again as a per-session note; it blanks leftovers on the v5→v6 hop only (under v5 the field was dead, so any value on a v5 row is garbage). v7 adds `workout_exercise.note` and backfills it empty — new storage, nothing to lift from an older field. v8 changes no field at all: PR comparison moved from raw kg floats to `units.ts`'s `weightKey`, so every flag computed under the old rule is stale. The bump exists only to make hydrate run `recomputeAllPrs()`, so v8 has no branch in `migrate()`. **The blanking pass must never run on a current-version snapshot** — it would delete every workout note on the next boot. `tests/blob.test.ts` guards this. **When you change the snapshot shape, bump `SCHEMA_VERSION` and add a migration branch** — older clients/blobs in the wild will otherwise break.
+`store/schema.ts` has `SCHEMA_VERSION` (currently 8). On parse, `store/blob.ts:migrate()` upgrades older snapshots field-by-field. Any schema upgrade (`parsed.migrated` in `persist.ts`) makes hydrate run a full `recomputeAllPrs()` pass, which is how derived flags such as v4's `is_position_pr` get filled in. v5 copies non-empty `workout.notes` into `day_notes`, then blanks leftover `workout.notes` so a deleted day note cannot resurrect on export. v6 makes `workout.notes` canonical again as a per-session note; it blanks leftovers on the v5→v6 hop only (under v5 the field was dead, so any value on a v5 row is garbage). v7 adds `workout_exercise.note` and backfills it empty — new storage, nothing to lift from an older field. v8 changes no field at all: PR comparison moved from raw kg floats to `units.ts`'s `weightKey`, so every flag computed under the old rule is stale. The bump exists only to make hydrate run `recomputeAllPrs()`, so v8 has no branch in `migrate()`. **The blanking pass must never run on a current-version snapshot** — it would delete every workout note on the next boot. `tests/blob.test.ts` guards this. **When you change the snapshot shape, bump `SCHEMA_VERSION` and add a migration branch** — older clients/blobs in the wild will otherwise break.
 
 ### Sync (`store/../sync/`)
 
@@ -108,7 +108,7 @@ Mostly manual. The user triggers a round-trip from a Settings button. `sync/auto
 
 `sync/syncClock.ts` holds the device-local sync state: `lastSyncedAt`, plus the etag of a cloud version that is ahead and whether the user has already been told about it. It is deliberately **not** part of the `Snapshot`, because `serialize()` re-stamps `exported_at` on every push, so a timestamp inside the snapshot would dirty it forever. Hosts inject a `SyncClockStore` via `configureSyncClock(...)`, the same pattern as `BlobStorage`. Until a host injects one, reads are empty and writes do nothing. Every path that leaves local and cloud in agreement calls `markSynced()`.
 
-That one clock drives two things: the "last synced" label, and `maybeAutoSync()`. The latter is the only non-manual path. Both clients call it once after hydrate (`StoreProvider.tsx` on web, `store/bootstrap.ts` on mobile). It pushes when the last sync is over 3 days old, and it waits 6 hours before retrying a failed attempt. It skips outright when the store is not hydrated, when the snapshot has no workouts, when this device has never synced, or when a conflict is open — an automatic push must never overwrite the cloud copy with nothing. `markCloudNewer()` records a `412` so the app asks once per distinct cloud etag and never nags twice about the same one.
+That one clock drives two things: the "last synced" label, and `maybeAutoSync()`. The latter is the only non-manual path. Web calls it after hydrate, deferred to idle (`frontend/components/store/StoreProvider.tsx`). Mobile calls it after hydrate and again every time the app returns to the foreground (`mobile/src/store/bootstrap.ts`). It pushes when the last sync is over 3 days old, and it waits 6 hours before retrying a failed attempt. It skips outright when the store is not hydrated, when the snapshot has no workouts, when this device has never synced, or when a conflict is open — an automatic push must never overwrite the cloud copy with nothing. `markCloudNewer()` records a `412` so the app asks once per distinct cloud etag and never nags twice about the same one.
 
 The R2 etag is an opaque version cookie; treat it as such. The blob the worker stores is byte-identical to the local snapshot — clients diff/merge by full replace, not field-level.
 
@@ -126,4 +126,6 @@ Both clients have a parallel `ai/` layer (`frontend/lib/ai`, `mobile/src/ai`) �
 - `fflate`'s **synchronous** gzip API is used on purpose: the async variant spawns a Web Worker that doesn't exist in React Native.
 - Mobile uses `expo-file-system/legacy` deliberately; don't "upgrade" it to the class-based `File`/`Directory` API without reason.
 - Day notes live in `day_notes` (`getDayNote` / `setDayNote`; crash-log op `set_day_note`). Workout notes live in `workout.notes` (`setWorkoutNote`, which delegates to `patchWorkout`; crash-log op `patch_workout`). Note-only days are not calendar markers. JSON export is `version: 2`: `workouts[].notes` carries the session note and `day_notes[]` carries the day note. A `version: 1` payload put the day note on `workouts[].notes`, so the importer branches on the version. Exercise notes live in `workout_exercise.note` (`setExerciseNote`; crash-log op `set_exercise_note`) and are not copied by `copyFromWorkout` — the note describes a session the target day has not had yet. FitNotes CSV and `.fitnotesdb` have one Notes field per day, so `combinedNoteFor()` joins the day and session notes into it; there is no FitNotes field for an exercise note, so it is JSON-export only.
-- The empty-workout cleanup guards (`!w.notes` in `DayView.tsx`, `DayScreen.tsx`, and the two set-logger screens) keep a note-only workout alive on purpose. Do not drop the `notes` check from them.
+- The empty-workout cleanup guards (`!rawWorkout.notes` in `DayView.tsx` and `DayScreen.tsx`, `!w.notes` in the two set-logger screens) keep a note-only workout alive on purpose. Do not drop the `notes` check from them.
+- Mobile popups use `usePresence` (`mobile/src/anim/index.ts`) for the fade and `OverlayCard` (`mobile/src/components/OverlayCard.tsx`) for the backdrop and card. Defer store mutations past the fade with `deferPastAnimation`. The `mobile-popups-no-flicker` skill has the rules. Dropdown and overflow menus go through `MenuButton` / `MenuPopup`, which show the system `Alert.alert` (a UIMenu opened from the nav bar covers its own button on iOS 26). `react-native-modal` is still a dependency, but only `ExercisePickerSheet` uses it.
+- Mobile shared helpers: `mobile/src/dates.ts` (`todayString`, `ymd`, `addDays`) and `mobile/src/format.ts` (exercise subtitle, timestamps). Import these instead of writing another local copy; nine files used to each have their own `todayString`.
