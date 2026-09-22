@@ -30,16 +30,27 @@ export async function listRestorePoints(): Promise<RestoreMeta> {
 export async function restoreFromSlot(slot: RestorableSlot): Promise<void> {
   const storage = getActiveStorage()
   if (!storage) throw new Error("No local store is open.")
+  const checkAccount = () => {
+    if (getActiveStorage() !== storage || !getState().hydrated) {
+      throw new Error("The account changed during restore. Please try again.")
+    }
+  }
+  checkAccount()
   const bytes = await storage.readSlot(slot)
   if (!bytes) throw new Error("That restore point no longer exists.")
   // Parse before anything is written, so a damaged file changes nothing.
   const { migrated } = await parse(bytes)
+  checkAccount()
 
   const { snapshot } = getState()
   if (snapshot !== lastRestored) {
-    await storage.writeUndo(await serialize(snapshot), snapshotStats(snapshot))
+    const undo = await serialize(snapshot)
+    checkAccount()
+    await storage.writeUndo(undo, snapshotStats(snapshot))
   }
+  checkAccount()
   await storage.withDailySlotHeld(() => replaceSnapshotFromBytes(bytes))
+  checkAccount()
   // A copy from an older schema carries stale PR flags; hydrate would
   // recompute them, but this path does not go through hydrate.
   if (migrated) recomputeAllPrs()

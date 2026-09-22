@@ -1547,10 +1547,11 @@ export function SetLoggerScreen({ route, navigation }: any) {
           : null
         setEditingSetId(null)
         setEditingRestAnchorIso(null)
-        if (editingPlanned) startRestTimer(Date.now())
+        const loggedAt = Date.now()
+        if (editingPlanned) startRestTimer(loggedAt)
         setTimeout(() => {
           if (editingPlanned) {
-            logPlannedSet(id, { weight: w, reps: r })
+            logPlannedSet(id, { weight: w, reps: r, created_at: new Date(loggedAt).toISOString() })
           } else {
             api.updateSet(id, {
               weight: w,
@@ -1863,9 +1864,10 @@ export function SetLoggerScreen({ route, navigation }: any) {
           const w = s.weight
           const r = s.reps
           if (w == null || r == null) return
-          startRestTimer(Date.now())
+          const loggedAt = Date.now()
+          startRestTimer(loggedAt)
           requestAnimationFrame(() => {
-            logPlannedSet(s.id, { weight: w, reps: r })
+            logPlannedSet(s.id, { weight: w, reps: r, created_at: new Date(loggedAt).toISOString() })
           })
         }}
         onNotHit={(s) => {

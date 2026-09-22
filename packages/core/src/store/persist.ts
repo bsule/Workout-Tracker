@@ -18,7 +18,7 @@ let hydratePromise: Promise<void> | null = null
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 let pendingRecordingPaused = 0 // refcount; >0 disables crash log appends.
 let consecutiveFlushFailures = 0
-let flushInFlight = false
+let flushInFlight: Promise<void> | null = null
 // A replace (cloud pull, restore) swaps the snapshot out from under the flush
 // path. A flush must not write the outgoing snapshot after the new one lands:
 // one that starts during the replace skips (the replace writes anyway), and
@@ -78,7 +78,15 @@ export async function unload(): Promise<void> {
     clearTimeout(flushTimer)
     flushTimer = null
   }
-  if (getState().hydrated) await flushNow()
+  if (getState().hydrated) {
+    await flushNow()
+    // The save we joined may have started before the latest edits.
+    if (getState().local_dirty_since != null) await flushNow()
+  }
+  if (flushTimer) {
+    clearTimeout(flushTimer)
+    flushTimer = null
+  }
   storage = null
   storageKey = null
   hydratePromise = null
@@ -130,7 +138,9 @@ export async function hydrate(): Promise<void> {
     }
     const fellBack = snap != null && failed.length > 0
     if (!snap) {
-      if (foundBytes) console.error("No snapshot copy could be parsed, starting fresh")
+      if (foundBytes || failed.length > 0) {
+        throw new Error("No snapshot copy could be loaded. Existing data was left unchanged.")
+      }
       snap = emptySnapshot(newDeviceId())
     }
 
@@ -144,6 +154,7 @@ export async function hydrate(): Promise<void> {
     if (s !== storage) return
 
     if (fellBack) await s.discardSnapshotCopies?.(failed)
+    if (s !== storage) return
 
     markHydrated(snap)
 
@@ -215,12 +226,19 @@ function scheduleFlush(delay = FLUSH_DEBOUNCE_MS) {
  * QuotaExceededError or a transient transaction abort. Successful flushes
  * reset the failure counter.
  */
-export async function flushNow(): Promise<void> {
-  if (flushInFlight || replaceInFlight > 0) return
+export function flushNow(): Promise<void> {
+  if (flushInFlight) return flushInFlight
+  flushInFlight = performFlush().finally(() => {
+    flushInFlight = null
+  })
+  return flushInFlight
+}
+
+async function performFlush(): Promise<void> {
+  if (replaceInFlight > 0) return
   const s = ensureStorage()
   const { snapshot, hydrated } = getState()
   if (!hydrated) return
-  flushInFlight = true
   const generation = replaceGeneration
   try {
     const bytes = await serialize(snapshot)
@@ -229,8 +247,17 @@ export async function flushNow(): Promise<void> {
     // queued behind this write and wins.
     if (generation !== replaceGeneration) return
     await s.writeSnapshot(bytes, snapshotStats(snapshot))
+    // Edits made while the disk write awaited are absent from these bytes.
+    // Keep their log (and dirty state) until a later save includes them.
+    // A restore or account switch likewise owns the new state and its log.
+    if (s !== storage || generation !== replaceGeneration) return
+    if (getState().snapshot !== snapshot) {
+      scheduleFlush()
+      return
+    }
     await s.clearPending()
-    clearDirty()
+    if (s !== storage || generation !== replaceGeneration) return
+    if (getState().snapshot === snapshot) clearDirty()
     consecutiveFlushFailures = 0
     for (const fn of flushListeners) {
       try {
@@ -250,8 +277,6 @@ export async function flushNow(): Promise<void> {
       e
     )
     scheduleFlush(delay)
-  } finally {
-    flushInFlight = false
   }
 }
 
@@ -274,6 +299,9 @@ export function snapshotStats(snap: Snapshot): SnapshotStats {
  */
 export async function replaceSnapshotFromBytes(bytes: Uint8Array): Promise<void> {
   const s = ensureStorage()
+  const checkAccount = () => {
+    if (s !== storage) throw new Error("The account changed during snapshot replacement.")
+  }
   // Before any await: a flush timer firing, or a flush already serializing,
   // would otherwise write the outgoing snapshot over this one.
   replaceGeneration++
@@ -284,10 +312,12 @@ export async function replaceSnapshotFromBytes(bytes: Uint8Array): Promise<void>
   }
   try {
     const { snapshot } = await parse(bytes)
+    checkAccount()
     // The log holds edits to the outgoing snapshot. Cleared first, so a kill
     // after the write cannot replay them onto the new one at next boot.
     await s.clearPending()
     await s.writeSnapshot(bytes, snapshotStats(snapshot))
+    checkAccount()
     markHydrated(snapshot)
     clearDirty()
     consecutiveFlushFailures = 0

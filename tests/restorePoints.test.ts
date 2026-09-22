@@ -315,3 +315,36 @@ describe("restoreFromSlot", () => {
     expect(disk.files.has(DIR + "snapshot.bin.undo")).toBe(false)
   })
 })
+
+describe("restore account isolation", () => {
+  it("cancels a restore when accounts change while the file is being read", async () => {
+    setStorageFactory(createActiveStorage)
+    configure("users/other")
+    configure("users/tester")
+    loadSnapshot(withWorkouts(1))
+    await flushNow()
+    loadSnapshot(withWorkouts(2))
+    await flushNow()
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const original = RnFsStorage.prototype.readSlot
+    const spy = vi.spyOn(RnFsStorage.prototype, "readSlot").mockImplementation(async function (slot) {
+      const bytes = await original.call(this, slot)
+      await gate
+      return bytes
+    })
+    try {
+      const restoring = restoreFromSlot("bak")
+      configure("users/another")
+      await hydrate()
+      const before = new Map(disk.files)
+      release()
+      await expect(restoring).rejects.toThrow("account changed")
+      expect(currentSnapshot().workouts).toEqual([])
+      expect(disk.files).toEqual(before)
+    } finally {
+      release()
+      spy.mockRestore()
+    }
+  })
+})
