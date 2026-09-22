@@ -20,6 +20,7 @@ import type {
 } from "../store/schema"
 import { applyMutation, getState } from "../store/store"
 import type { Category, ExerciseKind } from "../types"
+import { exerciseNameLookup, normalizeExerciseName } from "./exerciseNames"
 
 export type ImportMode = "merge" | "replace"
 
@@ -127,12 +128,11 @@ export async function importFitnotesCsv(
 
   // Build snapshot deltas in plain arrays/maps; merge into the live snapshot
   // in a single applyMutation at the end. In replace mode we start from empty
-  // lookup maps so every CSV row produces a brand-new entity.
+  // lookup maps so every CSV row produces a brand-new entity, except that
+  // exercise names still resolve to built-in exercises.
   const snap = getState().snapshot
-  const exerciseByName = new Map<string, ExerciseRow>(
-    mode === "replace"
-      ? []
-      : snap.exercises.map((e) => [e.name.toLowerCase(), e])
+  const exerciseByName = exerciseNameLookup(
+    mode === "replace" ? [] : snap.exercises
   )
   const workoutByDate = new Map<string, WorkoutRow>(
     mode === "replace" ? [] : snap.workouts.map((w) => [w.date, w])
@@ -173,7 +173,7 @@ export async function importFitnotesCsv(
 
     try {
       const dateRaw = (row["Date"] || "").trim()
-      const exName = normalizeName(row["Exercise"] || "")
+      const exName = normalizeExerciseName(row["Exercise"] || "")
       if (!dateRaw || !exName) {
         errors.push({ row: lineNumber, message: "Missing date or exercise." })
         continue
@@ -188,7 +188,11 @@ export async function importFitnotesCsv(
       }
 
       const kindRaw = (row["Kind"] || "").trim().toLowerCase()
-      const kind: ExerciseKind = KIND_MAP[kindRaw] ?? "weight_reps"
+      // Only a Kind the file states is checked against a built-in's kind.
+      const statedKind: ExerciseKind | undefined = Object.prototype.hasOwnProperty.call(KIND_MAP, kindRaw)
+        ? KIND_MAP[kindRaw]
+        : undefined
+      const kind: ExerciseKind = statedKind ?? "weight_reps"
 
       let weightKg: number | null = parseNum(row["Weight (kg)"])
       if (weightKg == null || weightKg <= 0) {
@@ -235,7 +239,7 @@ export async function importFitnotesCsv(
       }
 
       // Resolve / create the exercise.
-      let exRow = exerciseByName.get(exName.toLowerCase())
+      let exRow = exerciseByName.find(exName, statedKind)
       if (!exRow) {
         const rawCat = (row["Category"] || "").trim().toLowerCase()
         const category: Category = (DEFAULT_CATEGORIES as string[]).includes(
@@ -250,7 +254,7 @@ export async function importFitnotesCsv(
           kind,
           is_custom: true,
         }
-        exerciseByName.set(exName.toLowerCase(), exRow)
+        exerciseByName.add(exRow)
         newExercises.push(exRow)
         exercisesCreated.add(exName)
       }
@@ -369,10 +373,6 @@ export async function importFitnotesCsv(
 }
 
 // ---- helpers ------------------------------------------------------------
-
-function normalizeName(s: string): string {
-  return s.replace(/\s+/g, " ").trim()
-}
 
 function parseNum(v: string | undefined): number | null {
   if (v == null) return null

@@ -6,7 +6,9 @@ import {
   importFitnotesCsv,
   FITNOTES_HEADERS,
 } from "@lift/core/import"
-import { installMemoryStorage, currentSnapshot, resetStore } from "./helpers/store"
+import { installMemoryStorage, currentSnapshot, loadSnapshot, resetStore } from "./helpers/store"
+import { blankSnapshot, exercise } from "./helpers/build"
+import { SEED_EXERCISES } from "@lift/core/store/seed"
 
 const HEADER = FITNOTES_HEADERS.join(",")
 
@@ -80,6 +82,101 @@ describe("importFitnotesCsv: parsing & conversions", () => {
     expect(
       currentSnapshot().exercises.some((e) => e.name === "Frobnicator Press")
     ).toBe(true)
+  })
+})
+
+describe("importFitnotesCsv: built-in exercises", () => {
+  const benchId = SEED_EXERCISES.find((e) => e.name === "Bench Press")!.id
+
+  for (const mode of ["merge", "replace"] as const) {
+    it(`logs a built-in name under the built-in exercise (${mode})`, async () => {
+      const result = await importFitnotesCsv(
+        csv(["2026-01-01,bench press,Chest,100,,5,,,,,wr"]),
+        { mode }
+      )
+      expect(result.exercisesCreated).toEqual([])
+      const snap = currentSnapshot()
+      expect(snap.exercises).toEqual([])
+      expect(snap.workout_exercises[0].exercise_id).toBe(benchId)
+    })
+  }
+})
+
+describe("importFitnotesCsv: kind and deleted exercises", () => {
+  const seedId = (name: string) => SEED_EXERCISES.find((e) => e.name === name)!.id
+  const exerciseOfRow = (i: number) => {
+    const snap = currentSnapshot()
+    const we = snap.workout_exercises.find((w) => w.id === snap.sets[i].workout_exercise_id)!
+    return (
+      snap.exercises.find((e) => e.id === we.exercise_id) ??
+      SEED_EXERCISES.find((e) => e.id === we.exercise_id)!
+    )
+  }
+
+  it("a time-only Plank gets its own time-only exercise, not the weight × reps built-in", async () => {
+    const result = await importFitnotesCsv(
+      csv([
+        "2026-01-01,Plank,Abs,,,,,,0:01:30,,t",
+        "2026-01-02,Plank,Abs,,,,,,0:02:00,,t",
+        "2026-01-03,Plank,Abs,20,,10,,,,,wr",
+      ]),
+      { mode: "replace" }
+    )
+    expect(result.exercisesCreated).toEqual(["Plank"])
+    const timed = exerciseOfRow(0)
+    expect(timed.kind).toBe("time_only")
+    expect(timed.id).not.toBe(seedId("Plank"))
+    // The second timed row reuses the custom row; the weighted one keeps the built-in.
+    expect(exerciseOfRow(1).id).toBe(timed.id)
+    expect(exerciseOfRow(2).id).toBe(seedId("Plank"))
+  })
+
+  it("a bodyweight Push-Up gets a bodyweight exercise", async () => {
+    await importFitnotesCsv(csv(["2026-01-01,Push-Up,Chest,,,20,,,,,br"]), { mode: "replace" })
+    expect(exerciseOfRow(0).kind).toBe("bodyweight_reps")
+    expect(exerciseOfRow(0).id).not.toBe(seedId("Push-Up"))
+  })
+
+  it("a row with no Kind still matches the built-in", async () => {
+    await importFitnotesCsv(csv(["2026-01-01,Plank,Abs,20,,10,,,,,"]), { mode: "replace" })
+    expect(exerciseOfRow(0).id).toBe(seedId("Plank"))
+  })
+
+  it("does not attach sets to a deleted built-in", async () => {
+    const benchId = seedId("Bench Press")
+    loadSnapshot({
+      ...blankSnapshot(),
+      exercises: [{ id: benchId, name: "Bench Press", category: "chest", kind: "weight_reps", is_custom: false, is_deleted: true }],
+    })
+    const result = await importFitnotesCsv(csv(["2026-01-01,Bench Press,Chest,100,,5,,,,,wr"]), { mode: "merge" })
+    expect(result.exercisesCreated).toEqual(["Bench Press"])
+    const ex = exerciseOfRow(0)
+    expect(ex.id).not.toBe(benchId)
+    expect(ex.is_deleted).toBeFalsy()
+  })
+
+  it("does not attach sets to a deleted custom exercise", async () => {
+    loadSnapshot({
+      ...blankSnapshot(),
+      exercises: [{ ...exercise(900, "Spoto Press", "chest"), is_deleted: true }],
+    })
+    await importFitnotesCsv(csv(["2026-01-01,Spoto Press,Chest,80,,5,,,,,wr"]), { mode: "merge" })
+    expect(exerciseOfRow(0).id).not.toBe(900)
+  })
+
+  it("matches names across spacing and Unicode forms", async () => {
+    const nfd = "Cafe\u0301 Curl"
+    await importFitnotesCsv(
+      csv([
+        "2026-01-01,Bench   Press,Chest,100,,5,,,,,wr",
+        `2026-01-02,${nfd.normalize("NFC")},Arms,20,,10,,,,,wr`,
+        `2026-01-03,${nfd.normalize("NFD")},Arms,20,,10,,,,,wr`,
+      ]),
+      { mode: "replace" }
+    )
+    expect(exerciseOfRow(0).id).toBe(seedId("Bench Press"))
+    expect(exerciseOfRow(1).id).toBe(exerciseOfRow(2).id)
+    expect(currentSnapshot().exercises).toHaveLength(1)
   })
 })
 
