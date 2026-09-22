@@ -19,7 +19,7 @@ export const geminiProvider: AIProvider = {
       const text = await res.text()
       if (res.status === 429) {
         throw new Error(
-          "Gemini rate-limited (429). Your free-tier quota for this model is exhausted — wait a minute and retry, or check quotas at aistudio.google.com.",
+          "Gemini rate-limited (429). Your free-tier quota for this model is exhausted. Wait a minute and retry, or check quotas at aistudio.google.com.",
         )
       }
       if (res.status === 403) {

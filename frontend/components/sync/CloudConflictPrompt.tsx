@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils"
  * Tells the user, once, that a push was refused because the cloud moved ahead.
  *
  * Nothing was overwritten — the server rejects a stale push on its If-Match
- * precondition (cloudflare/src/sync/routes.ts). But the automatic 3-day sync
+ * precondition (cloudflare/src/sync/routes.ts). But the automatic daily sync
  * runs at browser idle, so without this the refusal would be invisible until
  * the user happened to open Settings.
  *
@@ -114,7 +114,7 @@ export function CloudConflictPrompt() {
         setDone(
           applied
             ? "This device now matches the cloud."
-            : "Nothing to pull — the cloud is empty."
+            : "Nothing to pull. The cloud is empty."
         )
       } else {
         await autoSync.forcePush()

@@ -252,7 +252,7 @@ function FitNotesConfirmStep({
         </div>
         <p className="mt-1 text-emerald-100/90">
           {rowCount.toLocaleString()} sets ready to import. Distance, time,
-          notes, and exercise kind are preserved automatically — no column
+          notes, and exercise kind are preserved automatically. No column
           mapping needed.
         </p>
       </div>

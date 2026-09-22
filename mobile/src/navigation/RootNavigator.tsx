@@ -24,6 +24,10 @@ import { SetLoggerScreen } from "../screens/SetLoggerScreen"
 import { CategoryStylesScreen } from "../screens/CategoryStylesScreen"
 import { GymsScreen } from "../screens/GymsScreen"
 import { ImportExportScreen } from "../screens/ImportExportScreen"
+import { BackupRestoreScreen } from "../screens/BackupRestoreScreen"
+import { GeneralSettingsScreen } from "../screens/settings/GeneralSettingsScreen"
+import { SetLoggerSettingsScreen } from "../screens/settings/SetLoggerSettingsScreen"
+import { RestTimerSettingsScreen } from "../screens/settings/RestTimerSettingsScreen"
 // import { AiPlanScreen } from "../screens/AiPlanScreen" // AI disabled for now
 import { TabFadeIn } from "../components/TabFadeIn"
 
@@ -56,7 +60,7 @@ const screenOptions = {
 // Native-stack-only options. Forces the iOS back button to show only a
 // chevron, not the previous screen's title.
 // animationDuration shortens the iOS push from the ~350ms default so taps on
-// home-tab rows (Settings → CategoryStyles/Gyms/ImportExport, Exercises →
+// home-tab rows (Settings → General/SetLogger/RestTimer settings, CategoryStyles/Gyms/ImportExport/BackupRestore, Exercises →
 // ExerciseDetail/EditExercise, etc.) feel near-instant.
 const stackScreenOptions = {
   ...screenOptions,
@@ -292,6 +296,21 @@ export function RootNavigator() {
               options={{ title: "New exercise", presentation: "modal" }}
             />
             <Stack.Screen
+              name="GeneralSettings"
+              component={GeneralSettingsScreen}
+              options={{ title: "General" }}
+            />
+            <Stack.Screen
+              name="SetLoggerSettings"
+              component={SetLoggerSettingsScreen}
+              options={{ title: "Set logger" }}
+            />
+            <Stack.Screen
+              name="RestTimerSettings"
+              component={RestTimerSettingsScreen}
+              options={{ title: "Rest timer" }}
+            />
+            <Stack.Screen
               name="CategoryStyles"
               component={CategoryStylesScreen}
               options={{ title: "Categories" }}
@@ -305,6 +324,11 @@ export function RootNavigator() {
               name="ImportExport"
               component={ImportExportScreen}
               options={{ title: "Import / Export" }}
+            />
+            <Stack.Screen
+              name="BackupRestore"
+              component={BackupRestoreScreen}
+              options={{ title: "Backup & Restore" }}
             />
             {/* AI plan screen disabled for now.
             <Stack.Screen

@@ -85,7 +85,7 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
           <>
             <View style={styles.statsRow}>
               <Stat label="Workouts" value={String(totalWorkouts)} />
-              <Stat label="Last" value={lastDate ? formatRelative(lastDate) : "—"} />
+              <Stat label="Last" value={lastDate ? formatRelative(lastDate) : "-"} />
             </View>
 
             <Button label="Log a set" onPress={logToday} />

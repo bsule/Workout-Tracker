@@ -8,7 +8,7 @@ Local-first workout tracker. Plan routines, log weight/reps per set, watch your 
 |---------------|-----------------------------------------------------------------------------------------------------------|
 | `packages/core` | Shared store, sync, units, FitNotes import/export. Used by both `frontend` and `mobile`.                |
 | `frontend`    | Next.js 16 + React 19 + Tailwind. Persists to OPFS, with an IndexedDB fallback.                           |
-| `mobile`      | Expo / React Native. Persists to the app's filesystem sandbox; auto-backs-up to a user-picked Files folder. |
+| `mobile`      | Expo / React Native. Persists to the app's filesystem sandbox, with local restore points on the Backup & Restore page. |
 | `cloudflare`  | Hono Worker on Cloudflare. Auth in D1, snapshot blob in R2. Replaces the old Django backend.              |
 | `tests`       | Vitest suite for `@lift/core`. See [tests/README.md](tests/README.md).                                    |
 
@@ -45,7 +45,7 @@ npm install
 npm run start
 ```
 
-Use the Expo dev client / Expo Go to load it on a device or simulator.
+Use the Expo dev client / Expo Go to load it on a device or simulator. Expo Go cannot load the app's own native code, so the rest timer (Live Activity on iOS, ongoing notification on Android) does nothing there. Use a build to test it.
 
 To build an unsigned iOS `.ipa` via GitHub Actions and download it into `mobile/builds/`:
 
@@ -61,7 +61,7 @@ cd mobile
 npm run apk:gh
 ```
 
-Both require the `gh` CLI to be installed and authenticated; each build takes ~10–20 min. The iOS `.ipa` is unsigned — re-sign it with Sideloadly (or similar) and a free Apple ID before installing. The Android `.apk` is debug-signed and installs directly (`adb install <file>.apk`, or just open it on the device).
+Both require the `gh` CLI to be installed and authenticated; each build takes ~10–20 min. The iOS `.ipa` is unsigned — re-sign it with Sideloadly (or similar) and a free Apple ID before installing. The app contains one extension (`RestTimerWidget`, the Live Activity). Keep it when the signing tool asks; it uses one more App ID. The Android `.apk` is debug-signed and installs directly (`adb install <file>.apk`, or just open it on the device).
 
 You can also build through EAS instead of GitHub Actions (`npm run build:ios` / `npm run build:android`, plus `:prod` variants).
 

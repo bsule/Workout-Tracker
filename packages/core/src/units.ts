@@ -22,9 +22,9 @@ export function roundForDisplay(value: number, unit: WeightUnit): number {
 }
 
 /** Display a stored kg value in the user's unit, rounded sensibly.
- *  Null (cardio rows with no weight) renders as "—". */
+ *  Null (cardio rows with no weight) renders as "-". */
 export function formatWeight(kg: number | null | undefined, unit: WeightUnit): string {
-  if (kg == null) return "—"
+  if (kg == null) return "-"
   const v = roundForDisplay(fromKg(kg, unit), unit)
   return v.toFixed(v % 1 === 0 ? 0 : 1)
 }

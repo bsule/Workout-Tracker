@@ -29,7 +29,7 @@ const jetbrainsMono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "LIFT — Workout Tracker",
+  title: "LIFT: Workout Tracker",
   description: "Track every rep. Own every PR.",
 }
 
