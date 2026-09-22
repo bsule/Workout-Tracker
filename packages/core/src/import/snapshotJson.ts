@@ -20,6 +20,7 @@ import type {
 import { applyMutation, getState } from "../store/store"
 import type { Category, ExerciseKind } from "../types"
 import { DEFAULT_CATEGORIES } from "../types"
+import { exerciseNameLookup, normalizeExerciseName } from "./exerciseNames"
 import type { ImportMode, ImportResult } from "./fitnotesCsv"
 
 const VALID_KINDS: ExerciseKind[] = [
@@ -162,6 +163,12 @@ function normalizeKind(raw: string | undefined): ExerciseKind {
   return (VALID_KINDS as string[]).includes(k) ? (k as ExerciseKind) : "weight_reps"
 }
 
+/** The kind a file states, or undefined when it states none (or garbage). */
+function statedKind(raw: string | undefined): ExerciseKind | undefined {
+  const k = (raw || "").trim()
+  return (VALID_KINDS as string[]).includes(k) ? (k as ExerciseKind) : undefined
+}
+
 function nowIso(): string {
   return new Date().toISOString()
 }
@@ -200,13 +207,11 @@ export async function importSnapshotJson(
 
   const snap = getState().snapshot
 
-  // Build merge keys: exercise by lowercase name (matches FitNotes importer),
-  // workout by date+gym so a re-import of the same file is a no-op in merge
-  // mode.
-  const exerciseByName = new Map<string, ExerciseRow>(
-    mode === "replace"
-      ? []
-      : snap.exercises.map((e) => [e.name.toLowerCase(), e])
+  // Build merge keys: exercise by lowercase name, built-ins included (same as
+  // the FitNotes importer), workout by date+gym so a re-import of the same
+  // file is a no-op in merge mode.
+  const exerciseByName = exerciseNameLookup(
+    mode === "replace" ? [] : snap.exercises
   )
   const workoutByDateGym = new Map<string, WorkoutRow>(
     mode === "replace"
@@ -292,9 +297,9 @@ export async function importSnapshotJson(
   // resolved row instead of inferring `is_custom`.
   for (const ce of data.custom_exercises ?? []) {
     if (!ce || typeof ce.name !== "string") continue
-    const name = ce.name.trim()
+    const name = normalizeExerciseName(ce.name)
     if (!name) continue
-    if (exerciseByName.has(name.toLowerCase())) continue
+    if (exerciseByName.find(name, statedKind(ce.kind))) continue
     const cat = normalizeCategory(ce.category)
     const ex: ExerciseRow = {
       id: nextId(),
@@ -305,7 +310,7 @@ export async function importSnapshotJson(
       kind: normalizeKind(ce.kind),
       is_custom: true,
     }
-    exerciseByName.set(name.toLowerCase(), ex)
+    exerciseByName.add(ex)
     newExercises.push(ex)
     exercisesCreated.add(name)
   }
@@ -359,10 +364,10 @@ export async function importSnapshotJson(
         })
         continue
       }
-      const exName = we.exercise.name.trim()
+      const exName = normalizeExerciseName(we.exercise.name)
       if (!exName) continue
 
-      let exRow = exerciseByName.get(exName.toLowerCase())
+      let exRow = exerciseByName.find(exName, statedKind(we.exercise.kind))
       if (!exRow) {
         const cat = normalizeCategory(we.exercise.category)
         exRow = {
@@ -374,7 +379,7 @@ export async function importSnapshotJson(
           kind: normalizeKind(we.exercise.kind),
           is_custom: we.exercise.is_custom !== false,
         }
-        exerciseByName.set(exName.toLowerCase(), exRow)
+        exerciseByName.add(exRow)
         newExercises.push(exRow)
         exercisesCreated.add(exName)
       }
