@@ -3,7 +3,14 @@
 // live under "expo-file-system/legacy". The new class-based `File`/`Directory`
 // API isn't worth migrating to right now — it's the same persistence model.
 import * as FileSystem from "expo-file-system/legacy"
-import type { BlobStorage } from "@lift/core/store/storage"
+import type { BlobStorage, SnapshotStats } from "@lift/core/store/storage"
+import {
+  planRotation,
+  reconcileMeta,
+  type RestoreMeta,
+  type Slot,
+  type SlotInfo,
+} from "./snapshotRotation"
 
 const ROOT = FileSystem.documentDirectory + "lift/"
 
@@ -52,14 +59,36 @@ export class RnFsStorage implements BlobStorage {
   private readonly snapshotPath: string
   private readonly snapshotTmpPath: string
   private readonly snapshotBakPath: string
+  private readonly snapshotBak2Path: string
+  private readonly snapshotUndoPath: string
+  private readonly metaPath: string
   private readonly pendingPath: string
+  // Set while a restore writes its chosen copy, so the write does not also
+  // push a fresh file into the daily slot.
+  private holdDaily = false
 
   constructor(subPath: string) {
     this.dir = dirFor(subPath)
     this.snapshotPath = this.dir + "snapshot.bin"
     this.snapshotTmpPath = this.dir + "snapshot.bin.tmp"
     this.snapshotBakPath = this.dir + "snapshot.bin.bak"
+    this.snapshotBak2Path = this.dir + "snapshot.bin.bak2"
+    this.snapshotUndoPath = this.dir + "snapshot.bin.undo"
+    this.metaPath = this.dir + "restore-points.json"
     this.pendingPath = this.dir + "pending.log"
+  }
+
+  private pathFor(slot: Slot): string {
+    switch (slot) {
+      case "current":
+        return this.snapshotPath
+      case "bak":
+        return this.snapshotBakPath
+      case "bak2":
+        return this.snapshotBak2Path
+      case "undo":
+        return this.snapshotUndoPath
+    }
   }
 
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
@@ -68,28 +97,58 @@ export class RnFsStorage implements BlobStorage {
     return next
   }
 
+  // Live snapshot, then .bak, then .bak2. Returning a backup beats returning
+  // null: hydrate() treats no snapshot as "start fresh", losing history.
   async readSnapshot(): Promise<Uint8Array | null> {
-    // Live snapshot, then .bak. Returning the backup beats returning null:
-    // hydrate() treats an unreadable snapshot as "start fresh", losing history.
-    for (const path of [this.snapshotPath, this.snapshotBakPath]) {
-      const info = await FileSystem.getInfoAsync(path)
-      if (!info.exists) continue
+    for (const load of this.snapshotCandidates()) {
       try {
-        const b64 = await FileSystem.readAsStringAsync(path, {
-          encoding: FileSystem.EncodingType.Base64,
-        })
-        if (!b64) continue
-        return base64ToBytes(b64)
+        const bytes = await load()
+        if (bytes) return bytes
       } catch (e) {
-        console.error(`Failed to read snapshot at ${path}`, e)
+        console.error("Failed to read a snapshot copy", e)
       }
     }
     return null
   }
 
-  // Atomic: fill tmp, rotate current to .bak, move tmp into place — a kill
+  // hydrate() walks these itself, so a copy that reads but does not parse
+  // also falls back to the next one.
+  snapshotCandidates(): Array<() => Promise<Uint8Array | null>> {
+    return [this.snapshotPath, this.snapshotBakPath, this.snapshotBak2Path].map(
+      (path) => () => this.readPath(path)
+    )
+  }
+
+  // Same order as snapshotCandidates(). Each damaged copy becomes
+  // <name>.corrupt (replacing an older one), out of the rotation but kept.
+  async discardSnapshotCopies(indexes: number[]): Promise<void> {
+    const paths = [this.snapshotPath, this.snapshotBakPath, this.snapshotBak2Path]
+    await this.enqueue(async () => {
+      for (const i of indexes) {
+        const path = paths[i]
+        if (!path) continue
+        const info = await FileSystem.getInfoAsync(path)
+        if (!info.exists) continue
+        await FileSystem.deleteAsync(path + ".corrupt", { idempotent: true })
+        await FileSystem.moveAsync({ from: path, to: path + ".corrupt" })
+      }
+    })
+  }
+
+  private async readPath(path: string): Promise<Uint8Array | null> {
+    const info = await FileSystem.getInfoAsync(path)
+    if (!info.exists) return null
+    const b64 = await FileSystem.readAsStringAsync(path, {
+      encoding: FileSystem.EncodingType.Base64,
+    })
+    return b64 ? base64ToBytes(b64) : null
+  }
+
+  // Atomic: fill tmp, rotate the older files down, move tmp into place. A kill
   // never leaves a torn file, which flushNow() would then clear the log after.
-  async writeSnapshot(bytes: Uint8Array): Promise<void> {
+  // A kill between the moves can leave no snapshot.bin; readSnapshot() then
+  // falls back to .bak.
+  async writeSnapshot(bytes: Uint8Array, stats?: SnapshotStats): Promise<void> {
     await this.enqueue(async () => {
       await ensureDir(this.dir)
       await FileSystem.writeAsStringAsync(
@@ -97,8 +156,26 @@ export class RnFsStorage implements BlobStorage {
         bytesToBase64(bytes),
         { encoding: FileSystem.EncodingType.Base64 }
       )
-      const current = await FileSystem.getInfoAsync(this.snapshotPath)
-      if (current.exists) {
+      const meta = await this.loadMeta()
+      const plan = planRotation(
+        meta,
+        {
+          current: meta.current != null,
+          bak: meta.bak != null,
+          bak2: meta.bak2 != null,
+        },
+        stats,
+        new Date(),
+        { holdDaily: this.holdDaily }
+      )
+      if (plan.promote) {
+        await FileSystem.deleteAsync(this.snapshotBak2Path, { idempotent: true })
+        await FileSystem.moveAsync({
+          from: this.snapshotBakPath,
+          to: this.snapshotBak2Path,
+        })
+      }
+      if (meta.current) {
         await FileSystem.deleteAsync(this.snapshotBakPath, { idempotent: true })
         await FileSystem.moveAsync({
           from: this.snapshotPath,
@@ -109,7 +186,66 @@ export class RnFsStorage implements BlobStorage {
         from: this.snapshotTmpPath,
         to: this.snapshotPath,
       })
+      await this.saveMeta(plan.meta)
     })
+  }
+
+  /** One entry per restore point file on disk; see reconcileMeta(). */
+  private async loadMeta(): Promise<RestoreMeta> {
+    let stored: RestoreMeta = {}
+    try {
+      const info = await FileSystem.getInfoAsync(this.metaPath)
+      if (info.exists) {
+        stored = JSON.parse(
+          await FileSystem.readAsStringAsync(this.metaPath)
+        ) as RestoreMeta
+      }
+    } catch (e) {
+      console.error("Failed to read restore point metadata", e)
+    }
+    const mtimes: Partial<Record<Slot, number>> = {}
+    for (const slot of ["current", "bak", "bak2", "undo"] as const) {
+      const info = await FileSystem.getInfoAsync(this.pathFor(slot))
+      if (info.exists) mtimes[slot] = info.modificationTime * 1000
+    }
+    return reconcileMeta(stored, mtimes)
+  }
+
+  private async saveMeta(meta: RestoreMeta): Promise<void> {
+    await FileSystem.writeAsStringAsync(this.metaPath, JSON.stringify(meta))
+  }
+
+  /** What each restore point file holds, for the restore list. */
+  async listRestorePoints(): Promise<RestoreMeta> {
+    return this.enqueue(() => this.loadMeta())
+  }
+
+  async readSlot(slot: Slot): Promise<Uint8Array | null> {
+    return this.enqueue(() => this.readPath(this.pathFor(slot)))
+  }
+
+  /** Keeps the data a restore is about to replace, so the restore can be undone. */
+  async writeUndo(bytes: Uint8Array, stats: SnapshotStats): Promise<void> {
+    await this.enqueue(async () => {
+      await ensureDir(this.dir)
+      await FileSystem.writeAsStringAsync(
+        this.snapshotUndoPath,
+        bytesToBase64(bytes),
+        { encoding: FileSystem.EncodingType.Base64 }
+      )
+      const meta = await this.loadMeta()
+      await this.saveMeta({ ...meta, undo: stats })
+    })
+  }
+
+  /** Runs `fn` with the daily slot held: its writes rotate .bak but never .bak2. */
+  async withDailySlotHeld<T>(fn: () => Promise<T>): Promise<T> {
+    this.holdDaily = true
+    try {
+      return await fn()
+    } finally {
+      this.holdDaily = false
+    }
   }
 
   async appendPending(line: string): Promise<void> {
@@ -144,3 +280,17 @@ export class RnFsStorage implements BlobStorage {
     })
   }
 }
+
+let active: RnFsStorage | null = null
+
+/** The factory passed to setStorageFactory; remembers the signed-in user's adapter. */
+export function createActiveStorage(subPath: string): RnFsStorage {
+  active = new RnFsStorage(subPath)
+  return active
+}
+
+export function getActiveStorage(): RnFsStorage | null {
+  return active
+}
+
+export type { Slot, SlotInfo, RestoreMeta }

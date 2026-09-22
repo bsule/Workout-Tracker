@@ -1,5 +1,5 @@
 /**
- * The "last synced" clock and the 3-day auto-sync check.
+ * The "last synced" clock and the daily auto-sync check.
  *
  * The clock is device-local state held in @lift/core/sync/syncClock, written
  * by every sync path that leaves local and cloud in agreement. The check in
@@ -253,9 +253,9 @@ describe("maybeAutoSync", () => {
     expect(r).toEqual({ kind: "skipped", reason: "never-synced" })
   })
 
-  it("does nothing when the last sync is under 3 days old", async () => {
+  it("does nothing when the last sync is under a day old", async () => {
     loadSnapshot(snapshotWithData())
-    configureSyncClock(memoryClock(String(Date.now() - 2 * DAY)))
+    configureSyncClock(memoryClock(String(Date.now() - DAY + 60_000)))
     configureTransport()
     mockFetch(() => {
       throw new Error("must not reach the network")
@@ -264,9 +264,9 @@ describe("maybeAutoSync", () => {
     expect(r).toEqual({ kind: "skipped", reason: "not-due" })
   })
 
-  it("pushes once the clock is 3 days old, and resets it", async () => {
+  it("pushes once the clock is a day old, and resets it", async () => {
     loadSnapshot(snapshotWithData())
-    const store = memoryClock(String(Date.now() - 3 * DAY - 1000))
+    const store = memoryClock(String(Date.now() - DAY - 1000))
     configureSyncClock(store)
     configureTransport()
     mockFetch(okPush)

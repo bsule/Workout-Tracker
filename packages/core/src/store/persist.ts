@@ -1,9 +1,9 @@
-import { parse, serialize } from "./blob"
+import { parse, serialize, SnapshotTooNewError } from "./blob"
 import { newDeviceId } from "./ids"
 import { recomputePrsForExercises } from "./prs"
 import { emptySnapshot, type Snapshot } from "./schema"
-import type { BlobStorage } from "./storage/types"
-import { clearDirty, getState, markHydrated } from "./store"
+import type { BlobStorage, SnapshotStats } from "./storage/types"
+import { clearDirty, getState, markHydrated, markUnhydrated } from "./store"
 
 // Storage adapter is injected by the host app (web: IDB/OPFS, mobile: FS).
 type StorageFactory = (subPath: string) => BlobStorage
@@ -19,6 +19,12 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null
 let pendingRecordingPaused = 0 // refcount; >0 disables crash log appends.
 let consecutiveFlushFailures = 0
 let flushInFlight = false
+// A replace (cloud pull, restore) swaps the snapshot out from under the flush
+// path. A flush must not write the outgoing snapshot after the new one lands:
+// one that starts during the replace skips (the replace writes anyway), and
+// one that serialized before it began sees the generation move and skips.
+let replaceGeneration = 0
+let replaceInFlight = 0
 const flushListeners = new Set<() => void>()
 
 export function addFlushListener(fn: () => void): () => void {
@@ -55,9 +61,28 @@ export function configure(subPath: string) {
     clearTimeout(flushTimer)
     flushTimer = null
   }
+  const switching = storageKey !== null
   storage = storageFactory(subPath)
   storageKey = subPath
   hydratePromise = null
+  if (switching) markUnhydrated()
+}
+
+/**
+ * Saves and forgets the loaded store, for sign-out. Nothing stays in memory
+ * for the next user to see or for a flush or auto sync to write, and the
+ * next configure() and hydrate() load from disk, even for the same user.
+ */
+export async function unload(): Promise<void> {
+  if (flushTimer) {
+    clearTimeout(flushTimer)
+    flushTimer = null
+  }
+  if (getState().hydrated) await flushNow()
+  storage = null
+  storageKey = null
+  hydratePromise = null
+  markUnhydrated()
 }
 
 function ensureStorage(): BlobStorage {
@@ -77,19 +102,35 @@ export async function hydrate(): Promise<void> {
   if (hydratePromise) return hydratePromise
   hydratePromise = (async () => {
     const s = ensureStorage()
-    const bytes = await s.readSnapshot()
-    let snap: Snapshot
+    const loaders = s.snapshotCandidates?.() ?? [() => s.readSnapshot()]
+    let snap: Snapshot | null = null
     let migrated = false
-    if (bytes) {
+    // Copies that existed but did not load. Pending ops replay onto whichever
+    // copy loads, although they were logged against the newest one; an op
+    // that names a row the older copy lacks applies as is. The same is true
+    // of the adapter's fallback for a missing file.
+    const failed: number[] = []
+    let foundBytes = false
+    for (const [i, load] of loaders.entries()) {
       try {
+        const bytes = await load()
+        if (!bytes) continue
+        foundBytes = true
         const parsed = await parse(bytes)
         snap = parsed.snapshot
         migrated = parsed.migrated
+        break
       } catch (e) {
-        console.error("Failed to parse snapshot, starting fresh", e)
-        snap = emptySnapshot(newDeviceId())
+        // A newer build's data is not damaged. Loading an older copy instead
+        // and saving it would write over the newer data. Stay unloaded.
+        if (e instanceof SnapshotTooNewError) throw e
+        console.error("Failed to load a snapshot copy, trying the next one", e)
+        failed.push(i)
       }
-    } else {
+    }
+    const fellBack = snap != null && failed.length > 0
+    if (!snap) {
+      if (foundBytes) console.error("No snapshot copy could be parsed, starting fresh")
       snap = emptySnapshot(newDeviceId())
     }
 
@@ -97,6 +138,12 @@ export async function hydrate(): Promise<void> {
     if (pending.length > 0) {
       snap = applyPendingOps(snap, pending)
     }
+
+    // configure() switched users while this was reading: this data belongs
+    // to the old store and must not load into the new one.
+    if (s !== storage) return
+
+    if (fellBack) await s.discardSnapshotCopies?.(failed)
 
     markHydrated(snap)
 
@@ -107,12 +154,14 @@ export async function hydrate(): Promise<void> {
       recomputeAllPrs()
     }
 
-    if (pending.length > 0 || migrated) {
-      // Persist replayed state and clear the log.
+    if (pending.length > 0 || migrated || fellBack) {
+      // Persist replayed state and clear the log. After a fallback, write the
+      // loaded copy back as current at once: until then the damaged file is
+      // what the next launch would try first.
       await flushNow()
     } else {
       // Always make sure we have a snapshot on disk for next launch.
-      if (!bytes) await flushNow()
+      if (!foundBytes) await flushNow()
     }
 
   })()
@@ -167,14 +216,19 @@ function scheduleFlush(delay = FLUSH_DEBOUNCE_MS) {
  * reset the failure counter.
  */
 export async function flushNow(): Promise<void> {
-  if (flushInFlight) return
+  if (flushInFlight || replaceInFlight > 0) return
   const s = ensureStorage()
   const { snapshot, hydrated } = getState()
   if (!hydrated) return
   flushInFlight = true
+  const generation = replaceGeneration
   try {
     const bytes = await serialize(snapshot)
-    await s.writeSnapshot(bytes)
+    // Checked right before the write is queued: the storage adapters queue
+    // writes in call order, so a replace that started after this point is
+    // queued behind this write and wins.
+    if (generation !== replaceGeneration) return
+    await s.writeSnapshot(bytes, snapshotStats(snapshot))
     await s.clearPending()
     clearDirty()
     consecutiveFlushFailures = 0
@@ -201,6 +255,17 @@ export async function flushNow(): Promise<void> {
   }
 }
 
+/** Planned sets are not logged work, so they do not count. */
+export function snapshotStats(snap: Snapshot): SnapshotStats {
+  let sets = 0
+  for (const row of snap.sets) if (!row.is_planned) sets++
+  return {
+    savedAt: new Date().toISOString(),
+    workouts: snap.workouts.length,
+    sets,
+  }
+}
+
 /**
  * Replace the in-memory snapshot and on-disk storage with the given bytes
  * (typically pulled from the cloud). Clears the crash log because pending
@@ -209,15 +274,25 @@ export async function flushNow(): Promise<void> {
  */
 export async function replaceSnapshotFromBytes(bytes: Uint8Array): Promise<void> {
   const s = ensureStorage()
-  const { snapshot } = await parse(bytes)
-  await s.writeSnapshot(bytes)
-  await s.clearPending()
-  markHydrated(snapshot)
-  clearDirty()
-  consecutiveFlushFailures = 0
+  // Before any await: a flush timer firing, or a flush already serializing,
+  // would otherwise write the outgoing snapshot over this one.
+  replaceGeneration++
+  replaceInFlight++
   if (flushTimer) {
     clearTimeout(flushTimer)
     flushTimer = null
+  }
+  try {
+    const { snapshot } = await parse(bytes)
+    // The log holds edits to the outgoing snapshot. Cleared first, so a kill
+    // after the write cannot replay them onto the new one at next boot.
+    await s.clearPending()
+    await s.writeSnapshot(bytes, snapshotStats(snapshot))
+    markHydrated(snapshot)
+    clearDirty()
+    consecutiveFlushFailures = 0
+  } finally {
+    replaceInFlight--
   }
 }
 
@@ -409,7 +484,11 @@ function applyOne(snap: Snapshot, op: OpEnvelope): Snapshot {
                 ...s,
                 ...patch,
                 ...(flip
-                  ? { is_planned: false, created_at: new Date().toISOString() }
+                  ? {
+                      is_planned: false,
+                      // Older ops carry no time; the replay's is the best left.
+                      created_at: patch.created_at ?? new Date().toISOString(),
+                    }
                   : {}),
               }
             : s

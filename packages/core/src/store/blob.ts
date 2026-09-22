@@ -37,13 +37,20 @@ export async function parse(bytes: Uint8Array): Promise<ParseResult> {
   return migrate(obj)
 }
 
+/**
+ * The data was written by a newer build. Unlike a damaged file, it is fine:
+ * this build must not load an older copy in its place or write over it.
+ */
+export class SnapshotTooNewError extends Error {
+  constructor(readonly version: number) {
+    super(`Snapshot schema_version ${version} is newer than supported ${SCHEMA_VERSION}`)
+    this.name = "SnapshotTooNewError"
+  }
+}
+
 function migrate(snap: Snapshot): ParseResult {
   const v = snap.schema_version ?? 0
-  if (v > SCHEMA_VERSION) {
-    throw new Error(
-      `Snapshot schema_version ${v} is newer than supported ${SCHEMA_VERSION}`
-    )
-  }
+  if (v > SCHEMA_VERSION) throw new SnapshotTooNewError(v)
   let s = snap
   let migrated = v < SCHEMA_VERSION
   if (v < 2) {

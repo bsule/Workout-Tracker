@@ -21,7 +21,9 @@ export {
   hydrate as hydrateStore,
   removeFlushListener,
   runBatched,
+  unload as unloadStore,
 } from "./persist"
+export { SnapshotTooNewError } from "./blob"
 export { getState, useStore, useHydrated, batchMutations } from "./store"
 export {
   getPlannedWorkoutForToday,
