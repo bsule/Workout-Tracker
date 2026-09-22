@@ -193,6 +193,17 @@ describe("sets", () => {
     expect(logged?.is_planned).toBe(false)
     expect(logged?.weight).toBe(82)
   })
+
+  // The set logger passes the moment of the tap. Its rest timer, in the app
+  // and on the Lock Screen, counts from it, so the row must keep it exactly.
+  it("addSet and logPlannedSet keep a created_at the caller passes", () => {
+    const we = freshWe()
+    const at = "2026-09-21T10:00:00.123Z"
+    expect(M.addSet(we.id, { weight: 60, reps: 5, created_at: at }).created_at).toBe(at)
+    const planned = M.addSet(we.id, { weight: 80, reps: 5, is_planned: true })
+    const later = "2026-09-21T10:03:00.456Z"
+    expect(M.logPlannedSet(planned.id, { reps: 5, created_at: later })?.created_at).toBe(later)
+  })
 })
 
 describe("gyms", () => {

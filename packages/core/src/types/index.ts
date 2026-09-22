@@ -138,6 +138,13 @@ export interface UserSettings {
    *  exercise. Once the day has a logged set it switches to the top weights
    *  for the set position about to be logged. One flag gates both modes. */
   show_last_time?: boolean
+  /** Mobile only: when true (default), saving a set starts a count-up rest
+   *  timer outside the app (iOS Live Activity, Android ongoing
+   *  notification). The web app ignores it. */
+  rest_timer_activity?: boolean
+  /** Mobile only: seconds after the last set when the rest timer outside the
+   *  app goes away. Defaults to 360 (6:00). Valid range 30..900. */
+  rest_timer_cutoff_s?: number
   /** The active AI provider used by the AI Plan screen. Defaults to
    *  "openai" when unset. The matching API key is stored separately in
    *  secure storage (see mobile/src/ai/keys.ts). */

@@ -313,6 +313,9 @@ export interface AddSetInput {
   time_seconds?: number | null
   note?: string
   is_planned?: boolean
+  /** When the set was logged. Defaults to now; the set logger passes the
+   *  moment of the tap, which its rest timer counts from. */
+  created_at?: string
 }
 
 export function addSet(weId: number, input: AddSetInput): SetRow {
@@ -331,7 +334,7 @@ export function addSet(weId: number, input: AddSetInput): SetRow {
     was_position_pr: false,
     note: input.note ?? "",
     order: 0,
-    created_at: nowIso(),
+    created_at: input.created_at ?? nowIso(),
   }
   applyMutation((snap) => {
     const siblings = snap.sets.filter((s) => s.workout_exercise_id === weId)
@@ -350,8 +353,11 @@ export function addSet(weId: number, input: AddSetInput): SetRow {
 
 export function logPlannedSet(
   setId: number,
-  patch: { weight?: number; reps?: number; note?: string }
+  patch: { weight?: number; reps?: number; note?: string; created_at?: string }
 ): SetRow | null {
+  // Recorded in the op, so a crash-log replay keeps the time of the tap
+  // rather than stamping the time of the replay.
+  const at = patch.created_at ?? nowIso()
   let updated: SetRow | null = null
   applyMutation((snap) => {
     const idx = snap.sets.findIndex((s) => s.id === setId)
@@ -363,14 +369,14 @@ export function logPlannedSet(
       reps: patch.reps ?? cur.reps,
       note: patch.note ?? cur.note,
       is_planned: false,
-      created_at: nowIso(),
+      created_at: at,
     }
     updated = next
     const sets = snap.sets.slice()
     sets[idx] = next
     return recomputePrsForWe({ ...snap, sets }, cur.workout_exercise_id)
   })
-  recordPending({ op: "log_planned_set", setId, patch })
+  recordPending({ op: "log_planned_set", setId, patch: { ...patch, created_at: at } })
   return updated
 }
 

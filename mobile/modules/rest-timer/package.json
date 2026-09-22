@@ -1,0 +1,7 @@
+{
+  "name": "rest-timer",
+  "version": "0.0.1",
+  "description": "Rest timer outside the app: iOS Live Activity and Android ongoing notification.",
+  "main": "index.ts",
+  "private": true
+}
