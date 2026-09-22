@@ -17,7 +17,7 @@
  *
  * Every path here that leaves local and cloud in agreement calls
  * markSynced() (see syncClock.ts). That single clock drives the "last synced"
- * label and the 3-day check in maybeAutoSync(), so a manual "Sync now"
+ * label and the daily check in maybeAutoSync(), so a manual "Sync now"
  * resets the auto-sync timer with no extra wiring.
  */
 
@@ -155,7 +155,7 @@ export function getCachedQuota(): Quota | null {
 }
 
 /** Auto-sync fires when the clock is this old. */
-const AUTO_SYNC_PERIOD_MS = 3 * 24 * 60 * 60 * 1000
+const AUTO_SYNC_PERIOD_MS = 24 * 60 * 60 * 1000
 /** After a failed attempt, stay off the network for this long. */
 const AUTO_SYNC_RETRY_MS = 6 * 60 * 60 * 1000
 
@@ -179,7 +179,7 @@ export type AutoSyncResult =
   | { kind: "failed"; error: unknown }
 
 /**
- * Push if this device hasn't synced in 3 days. Hosts call this on app open
+ * Push if this device hasn't synced in a day. Hosts call this on app open
  * (web: after hydrate; mobile: after bootstrap and on AppState "active").
  *
  * Cheap to call often. After the first call of a session the clock is in

@@ -10,7 +10,7 @@
 import { emptySnapshot, type Snapshot } from "@lift/core/store/schema"
 import { getState, markHydrated } from "@lift/core/store/store"
 import { setStorageFactory } from "@lift/core/store/persist"
-import type { BlobStorage } from "@lift/core/store/storage"
+import type { BlobStorage, SnapshotStats } from "@lift/core/store/storage"
 
 /** Reset the singleton store back to a fresh empty snapshot. */
 export function resetStore(): Snapshot {
@@ -37,6 +37,8 @@ export function currentSnapshot(): Snapshot {
 export interface MemoryStorage extends BlobStorage {
   /** The last snapshot bytes written by flushNow(). */
   lastWritten: Uint8Array | null
+  /** The stats passed with that write. */
+  lastStats: SnapshotStats | undefined
   /** Pending crash-log lines not yet cleared. */
   pending: string[]
 }
@@ -46,13 +48,15 @@ export function memoryStorage(): MemoryStorage {
   const pending: string[] = []
   const store: MemoryStorage = {
     lastWritten: null,
+    lastStats: undefined,
     pending,
     async readSnapshot() {
       return snapshotBytes
     },
-    async writeSnapshot(bytes: Uint8Array) {
+    async writeSnapshot(bytes: Uint8Array, stats?: SnapshotStats) {
       snapshotBytes = bytes
       store.lastWritten = bytes
+      store.lastStats = stats
     },
     async appendPending(line: string) {
       pending.push(line)

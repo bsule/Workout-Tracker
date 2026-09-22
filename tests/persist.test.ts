@@ -1,20 +1,26 @@
-import { describe, it, expect, beforeEach, vi } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import {
   setStorageFactory,
   configure,
   hydrate,
   flushNow,
+  replaceSnapshotFromBytes,
   runBatched,
+  unload,
 } from "@lift/core/store/persist"
 import { serialize, parse } from "@lift/core/store/blob"
 import { emptySnapshot } from "@lift/core/store/schema"
 import * as M from "@lift/core/store/mutations"
+import { getState } from "@lift/core/store/store"
+import type { BlobStorage } from "@lift/core/store/storage"
 import {
   currentSnapshot,
+  loadSnapshot,
   memoryStorage,
   resetStore,
   type MemoryStorage,
 } from "./helpers/store"
+import { blankSnapshot, exercise, set, we, workout } from "./helpers/build"
 
 // A factory whose instances we keep a handle on, so each test can pre-seed and
 // inspect the bytes for its own namespaced sub-path.
@@ -58,6 +64,111 @@ describe("flushNow", () => {
 
     const { snapshot } = await parse(store.lastWritten!)
     expect(snapshot.exercises.some((e) => e.name === "Flushed Lift")).toBe(true)
+  })
+
+  it("passes workout and logged-set counts with the write, skipping planned sets", async () => {
+    const key = freshKey()
+    configure(key)
+    const snap = blankSnapshot()
+    snap.exercises = [exercise(1, "Bench")]
+    snap.workouts = [workout(1, "2026-09-20"), workout(2, "2026-09-21")]
+    snap.workout_exercises = [we(1, 1, 1), we(2, 2, 1)]
+    snap.sets = [
+      set(1, 1, { weight: 100, reps: 5 }),
+      set(2, 1, { weight: 100, reps: 5 }),
+      set(3, 2, { weight: 105, reps: 5, is_planned: true }),
+    ]
+    loadSnapshot(snap)
+
+    await flushNow()
+
+    const stats = storageFor(key).lastStats!
+    expect(stats.workouts).toBe(2)
+    expect(stats.sets).toBe(2)
+    expect(Number.isNaN(Date.parse(stats.savedAt))).toBe(false)
+  })
+})
+
+describe("replaceSnapshotFromBytes", () => {
+  it("clears the crash log before writing, so a kill between them cannot replay old edits onto the new data", async () => {
+    const key = freshKey()
+    const calls: string[] = []
+    const base = memoryStorage()
+    setStorageFactory(() => ({
+      ...base,
+      async writeSnapshot(b, st) {
+        calls.push("write")
+        return base.writeSnapshot(b, st)
+      },
+      async clearPending() {
+        calls.push("clear")
+        return base.clearPending()
+      },
+    }))
+    configure(key)
+    await replaceSnapshotFromBytes(await serialize(blankSnapshot()))
+    expect(calls).toEqual(["clear", "write"])
+  })
+
+  it("passes the counts of the snapshot it writes", async () => {
+    const key = freshKey()
+    configure(key)
+    const incoming = blankSnapshot()
+    incoming.exercises = [exercise(1, "Squat")]
+    incoming.workouts = [workout(1, "2026-09-19")]
+    incoming.workout_exercises = [we(1, 1, 1)]
+    incoming.sets = [set(1, 1, { weight: 140, reps: 3 })]
+
+    await replaceSnapshotFromBytes(await serialize(incoming))
+
+    expect(storageFor(key).lastStats).toMatchObject({ workouts: 1, sets: 1 })
+  })
+
+  it("a flush that starts while the replace is writing does not write the old snapshot after it", async () => {
+    // The storage holds each write until released, the way a slow disk write
+    // leaves the app free to run a flush timer or an AppState flushOnHide.
+    const written: Uint8Array[] = []
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => (release = r))
+    let queue: Promise<unknown> = Promise.resolve()
+    const slow: BlobStorage = {
+      async readSnapshot() {
+        return written.at(-1) ?? null
+      },
+      writeSnapshot(bytes) {
+        const next = queue.then(async () => {
+          await gate
+          written.push(bytes)
+        })
+        queue = next
+        return next
+      },
+      async appendPending() {},
+      async readPending() {
+        return []
+      },
+      async clearPending() {},
+    }
+    const key = freshKey()
+    setStorageFactory(() => slow)
+    configure(key)
+
+    const before = blankSnapshot()
+    before.exercises = [exercise(1, "Before")]
+    loadSnapshot(before)
+    const after = blankSnapshot()
+    after.exercises = [exercise(1, "After")]
+
+    const replacing = replaceSnapshotFromBytes(await serialize(after))
+    await Promise.resolve() // let the replace queue its write
+    await new Promise((r) => setTimeout(r, 0))
+    const flushing = flushNow()
+    release()
+    await Promise.all([replacing, flushing])
+
+    const last = await parse(written.at(-1)!)
+    expect(last.snapshot.exercises.map((e) => e.name)).toEqual(["After"])
+    expect(currentSnapshot().exercises.map((e) => e.name)).toEqual(["After"])
   })
 })
 
@@ -183,6 +294,25 @@ describe("hydrate: crash-log replay", () => {
     expect(currentSnapshot().workouts[0].notes).toBe("dropped to 3x5")
   })
 
+  it("replays a log_planned_set op with the time of the tap, not the time of the replay", async () => {
+    const key = freshKey()
+    configure(key)
+    const snap = blankSnapshot()
+    snap.exercises = [exercise(1, "Bench")]
+    snap.workouts = [workout(1, "2026-09-21")]
+    snap.workout_exercises = [we(1, 1, 1)]
+    snap.sets = [set(5, 1, { weight: 100, reps: 5, is_planned: true })]
+    const store = storageFor(key)
+    await store.writeSnapshot(await serialize(snap))
+    const at = "2026-09-21T10:00:00.000Z"
+    store.pending.push(JSON.stringify({ op: "log_planned_set", setId: 5, patch: { reps: 5, created_at: at } }))
+
+    await hydrate()
+    const row = currentSnapshot().sets.find((s) => s.id === 5)!
+    expect(row.is_planned).toBe(false)
+    expect(row.created_at).toBe(at)
+  })
+
   it("starts fresh (no throw) when storage is empty", async () => {
     const key = freshKey()
     configure(key)
@@ -254,6 +384,95 @@ describe("hydrate: crash-log replay", () => {
   })
 })
 
+describe("unload (sign-out)", () => {
+  it("saves, then drops the data from memory; the next load reads it back from disk", async () => {
+    const key = `users/${freshKey()}`
+    configure(key)
+    await hydrate()
+    M.createExercise({ name: "Saved on sign-out", category: "chest" })
+
+    await unload()
+    expect(getState().hydrated).toBe(false)
+    expect(currentSnapshot().exercises.some((e) => e.name === "Saved on sign-out")).toBe(false)
+
+    // Same user signs in again: a real load, not the cached one.
+    configure(key)
+    await hydrate()
+    expect(getState().hydrated).toBe(true)
+    expect(currentSnapshot().exercises.some((e) => e.name === "Saved on sign-out")).toBe(true)
+  })
+})
+
+describe("hydrate: damaged snapshot fallback", () => {
+  const garbage = new TextEncoder().encode("not a gzip stream")
+  // The damaged copies are logged on purpose; keep the run output clean.
+  beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => {})
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+
+  function withCandidates(copies: (Uint8Array | null)[]) {
+    const base = memoryStorage()
+    const loaded: number[] = []
+    const s: MemoryStorage & BlobStorage = Object.assign(base, {
+      snapshotCandidates: () =>
+        copies.map((c, i) => async () => {
+          loaded.push(i)
+          return c
+        }),
+    })
+    return { s, loaded }
+  }
+
+  async function named(name: string) {
+    const snap = emptySnapshot("d")
+    snap.exercises = [exercise(1, name)]
+    return serialize(snap)
+  }
+
+  it("loads the first copy that parses and writes it back as current", async () => {
+    const { s, loaded } = withCandidates([garbage, await named("From .bak"), await named("From .bak2")])
+    setStorageFactory(() => s)
+    configure(freshKey())
+    await hydrate()
+
+    expect(currentSnapshot().exercises.map((e) => e.name)).toEqual(["From .bak"])
+    expect(loaded).toEqual([0, 1]) // .bak2 never read
+    const written = await parse(s.lastWritten!)
+    expect(written.snapshot.exercises.map((e) => e.name)).toEqual(["From .bak"])
+  })
+
+  it("skips a missing newest copy the same way", async () => {
+    const { s } = withCandidates([null, await named("From .bak")])
+    setStorageFactory(() => s)
+    configure(freshKey())
+    await hydrate()
+    expect(currentSnapshot().exercises.map((e) => e.name)).toEqual(["From .bak"])
+  })
+
+  it("does not rewrite when the newest copy loads", async () => {
+    const { s, loaded } = withCandidates([await named("Current"), await named("Old")])
+    setStorageFactory(() => s)
+    configure(freshKey())
+    await hydrate()
+    expect(currentSnapshot().exercises.map((e) => e.name)).toEqual(["Current"])
+    expect(loaded).toEqual([0])
+    expect(s.lastWritten).toBeNull()
+  })
+
+  it("starts fresh, without overwriting anything, when no copy parses", async () => {
+    const { s } = withCandidates([garbage, garbage])
+    setStorageFactory(() => s)
+    configure(freshKey())
+    await hydrate()
+    expect(currentSnapshot().workouts).toEqual([])
+    expect(s.lastWritten).toBeNull()
+  })
+})
+
 describe("runBatched", () => {
   it("suppresses per-op crash-log appends during a bulk operation", async () => {
     const key = freshKey()
@@ -297,5 +516,64 @@ describe("configure: user switch", () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it("unloads the outgoing user's data until the incoming user's hydrate lands", async () => {
+    const keyA = `users/${freshKey()}`
+    const keyB = `users/${freshKey()}`
+    configure(keyA)
+    await hydrate()
+    M.createExercise({ name: "A-only exercise", category: "chest" })
+    expect(getState().hydrated).toBe(true)
+
+    configure(keyB)
+
+    // Not loaded: a flush (flushOnHide on an AppState change) must not write
+    // A's rows into B's file, and auto sync skips an unhydrated store.
+    expect(getState().hydrated).toBe(false)
+    await flushNow()
+    expect(storageFor(keyB).lastWritten).toBeNull()
+
+    await hydrate()
+    expect(getState().hydrated).toBe(true)
+    expect(currentSnapshot().exercises.some((e) => e.name === "A-only exercise")).toBe(false)
+  })
+
+  it("a hydrate that finishes after a switch does not load the old user's data", async () => {
+    const keyA = `users/${freshKey()}`
+    const keyB = `users/${freshKey()}`
+    const snapA = emptySnapshot("a")
+    snapA.exercises = [exercise(1, "A only")]
+    storageFor(keyA).writeSnapshot(await serialize(snapA))
+    // A's read is slow; B signs in while it is still running.
+    let releaseA: () => void = () => {}
+    const aRead = new Promise<void>((r) => (releaseA = r))
+    const slowA = storageFor(keyA)
+    const read = slowA.readSnapshot.bind(slowA)
+    slowA.readSnapshot = async () => {
+      await aRead
+      return read()
+    }
+
+    configure(keyA)
+    const hydratingA = hydrate()
+    configure(keyB)
+    const hydratingB = hydrate()
+    await hydratingB
+    releaseA()
+    await hydratingA
+
+    expect(currentSnapshot().exercises.some((e) => e.name === "A only")).toBe(false)
+    expect(storageFor(keyB).lastWritten && (await parse(storageFor(keyB).lastWritten!)).snapshot.exercises.some((e) => e.name === "A only")).toBeFalsy()
+  })
+
+  it("keeps the loaded data when the same user is configured again", async () => {
+    const key = `users/${freshKey()}`
+    configure(key)
+    await hydrate()
+    M.createExercise({ name: "Kept", category: "chest" })
+    configure(key)
+    expect(getState().hydrated).toBe(true)
+    expect(currentSnapshot().exercises.some((e) => e.name === "Kept")).toBe(true)
   })
 })

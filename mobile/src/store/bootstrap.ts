@@ -4,19 +4,27 @@ import {
   configureStore,
   hydrateStore,
   flushOnHide,
-  addFlushListener,
   autoSync,
+  unloadStore,
 } from "@lift/core"
-import { RnFsStorage } from "./storage"
-import {
-  configureBackupRunner,
-  runBackup,
-  scheduleDebouncedBackup,
-} from "../backup/runner"
+import { createActiveStorage } from "./storage"
+import { restTimer } from "../restTimer"
 
 let installed = false
 let lifecycleWired = false
-let currentUserKey = "anon"
+// A sign-out's save must finish before a sign-in configures the next store.
+let unloading: Promise<void> = Promise.resolve()
+
+/** Sign-out: end the rest timer, save the store, then drop it from memory.
+ *  The timer names the signed-out user's exercise, and no later set of theirs
+ *  will end or replace it. */
+export function unloadForSignOut(): Promise<void> {
+  restTimer.disable()
+  unloading = unloading.then(unloadStore).catch((e) => {
+    console.error("Failed to unload the store", e)
+  })
+  return unloading
+}
 
 /**
  * Idempotent install: registers the FS-backed storage adapter and wires the
@@ -26,45 +34,40 @@ let currentUserKey = "anon"
 export function installMobileStore() {
   if (installed) return
   installed = true
-  setStorageFactory((sub) => new RnFsStorage(sub))
-  configureBackupRunner({ getUsername: () => currentUserKey })
-  // Every successful flush of the in-memory snapshot triggers a debounced
-  // backup write to the user's Files folder (no-op if no folder configured).
-  addFlushListener(() => scheduleDebouncedBackup())
+  setStorageFactory(createActiveStorage)
   if (!lifecycleWired) {
     lifecycleWired = true
     AppState.addEventListener("change", (state) => {
       if (state !== "active") {
         flushOnHide()
       } else {
-        // Foregrounding: best-effort backup confirms the latest snapshot
-        // is mirrored to the user's Files folder.
-        void runBackup("open")
         scheduleAutoSync()
+        // iOS cannot end the rest timer while the app is suspended, so one
+        // past its cutoff can still be on the Lock Screen.
+        restTimer.reconcile()
       }
     })
   }
 }
 
 /**
- * Hydrates the store for a specific user (or "anon" before login). Reuses the
+ * Hydrates the store for a signed-in user. Reuses the
  * web's path scheme `users/<key>` so a single device snapshot is portable
  * via export/import or future R2 sync.
  */
 export async function bootstrapForUser(userKey: string) {
+  await unloading
   installMobileStore()
-  currentUserKey = userKey
   configureStore(`users/${userKey}`)
   await hydrateStore()
-  // Best-effort initial backup after hydration. The runner short-circuits if
-  // the user hasn't picked a folder yet, and the restore flow handles the
-  // empty-store case before this fires (RootNavigator gating).
-  void runBackup("open")
   scheduleAutoSync()
+  // After hydrate, because the rest timer settings live in the snapshot. On
+  // a cold start this picks up a timer the previous process left running.
+  restTimer.reconcile()
 }
 
 /**
- * Cloud sync catch-up: push if this device hasn't synced in 3 days.
+ * Cloud sync catch-up: push if this device hasn't synced in a day.
  *
  * Runs on cold start and on every foreground, which is often — that is fine.
  * After the first call the clock is in memory, so a "not due" answer is one

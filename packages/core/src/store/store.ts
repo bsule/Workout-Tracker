@@ -106,6 +106,17 @@ export function markHydrated(snap: Snapshot) {
   emit()
 }
 
+/**
+ * Back to the unloaded starting state. For a switch to another user's store:
+ * until the new hydrate lands, nothing may treat the outgoing user's data as
+ * loaded (a flush would write it into the new user's file, an auto sync would
+ * push it to the new user's cloud copy).
+ */
+export function markUnhydrated() {
+  state = initial()
+  emit()
+}
+
 export function clearDirty() {
   if (state.local_dirty_since == null) return
   state = { ...state, local_dirty_since: null }
