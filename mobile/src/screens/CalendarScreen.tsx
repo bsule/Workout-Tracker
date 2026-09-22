@@ -32,7 +32,7 @@ import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { useActiveDateAndSetter } from "../state/activeDate"
 import { pressedStyle } from "../theme/pressable"
 import { useSettings } from "../settings/SettingsProvider"
-import { theme } from "../theme/theme"
+import { theme, line, tint } from "../theme/theme"
 import { useCategoryStyles } from "../categories/CategoryStylesProvider"
 import { todayString, ymd } from "../dates"
 
@@ -657,11 +657,11 @@ const styles = StyleSheet.create({
     borderColor: "transparent",
   },
   cellToday: {
-    backgroundColor: "rgba(255,255,255,0.05)",
-    borderColor: "rgba(255,255,255,0.18)",
+    backgroundColor: tint(0.05),
+    borderColor: line(0.18),
   },
   cellSelected: {
-    backgroundColor: "rgba(255,255,255,0.10)",
+    backgroundColor: tint(0.10),
     borderColor: theme.colors.navAccent,
   },
   dayNum: {
@@ -727,7 +727,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: tint(0.04),
   },
   aiPlanBtn: {
     flexDirection: "row",
@@ -738,7 +738,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: tint(0.04),
   },
   goToDateText: {
     color: theme.colors.foreground,

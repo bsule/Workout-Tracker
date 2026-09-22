@@ -5,9 +5,9 @@
 // already-rendered styles. That's why the toggle in Settings prompts
 // the user to fully restart the app.
 //
-// To preserve light-mode parity, prefer reading `theme.colors.border`
-// or `theme.colors.muted` over hardcoded `"rgba(255,255,255,0.x)"`
-// literals when adding new styles.
+// Never hardcode `"rgba(255,255,255,0.x)"` for a fill or a hairline: it
+// disappears on the light palette. Use tint() / line() below, or a token
+// such as `theme.colors.border`.
 
 import { darkColors } from "./themeColors"
 
@@ -37,6 +37,24 @@ export const theme = {
 }
 
 export type Theme = typeof theme
+
+/** True when the light palette is active. */
+export function isLight(): boolean {
+  return theme.colors.overlayRgb !== "255,255,255"
+}
+
+/** A subtle translucent fill: white on dark, black on light. */
+export function tint(alpha: number): string {
+  return `rgba(${theme.colors.overlayRgb},${alpha})`
+}
+
+/** A translucent hairline or outline. Black lines on a white card read
+ *  fainter than white lines on a dark one at the same alpha, so the light
+ *  palette gets a stronger line with a floor. */
+export function line(alpha: number): string {
+  const a = isLight() ? Math.max(0.1, Math.min(1, alpha * 1.4)) : alpha
+  return `rgba(${theme.colors.overlayRgb},${Number(a.toFixed(3))})`
+}
 
 export function categoryColor(slug: string): string {
   return theme.colors.cat[slug] ?? theme.colors.muted

@@ -1,10 +1,19 @@
-import { useEffect, useState, type ReactNode } from "react"
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react"
 import { ActivityIndicator, Text, View } from "react-native"
 import { SnapshotTooNewError, useHydrated, useStore } from "@lift/core"
 import { useAuth } from "../auth/AuthProvider"
 import { theme } from "../theme/theme"
-import { RestoreBackupScreen } from "../screens/RestoreBackupScreen"
 import { bootstrapForUser, unloadForSignOut } from "./bootstrap"
+
+// Lazy so the screen and its components (Card, Button) do not create
+// their StyleSheets at app load. App.tsx imports this file before it
+// applies the stored theme mode, so an eager import froze those styles
+// in the dark palette even when the user picked light.
+const RestoreBackupScreen = lazy(() =>
+  import("../screens/RestoreBackupScreen").then((m) => ({
+    default: m.RestoreBackupScreen,
+  }))
+)
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
@@ -95,7 +104,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   if (showRestore) {
     return (
       <View key={activeKey} style={{ flex: 1 }}>
-        <RestoreBackupScreen onDismiss={() => setRestoreDismissedFor(userKey)} />
+        <Suspense
+          fallback={<View style={{ flex: 1, backgroundColor: theme.colors.background }} />}
+        >
+          <RestoreBackupScreen onDismiss={() => setRestoreDismissedFor(userKey)} />
+        </Suspense>
       </View>
     )
   }

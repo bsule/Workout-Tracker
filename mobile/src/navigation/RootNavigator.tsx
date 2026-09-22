@@ -8,7 +8,7 @@ import {
 import { createNativeStackNavigator } from "@react-navigation/native-stack"
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs"
 import { useAuth } from "../auth/AuthProvider"
-import { theme } from "../theme/theme"
+import { isLight, theme } from "../theme/theme"
 import { LoginScreen } from "../screens/LoginScreen"
 import { SignupScreen } from "../screens/SignupScreen"
 import { DayScreen } from "../screens/DayScreen"
@@ -368,7 +368,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   tabIconFocused: {
-    textShadowColor: "rgba(255,255,255,0.55)",
+    // A white glow on dark. A dark glow on the light palette reads as a blur.
+    textShadowColor: isLight() ? "transparent" : "rgba(255,255,255,0.55)",
     textShadowRadius: 8,
   },
   // Empty style — kept so we can spread the default tab button style and

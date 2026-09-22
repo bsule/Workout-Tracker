@@ -6,7 +6,7 @@ import { z } from "zod"
 import { useAuth } from "../auth/AuthProvider"
 import { ApiError } from "../auth/api"
 import { Button } from "../components/Button"
-import { theme } from "../theme/theme"
+import { theme, tint } from "../theme/theme"
 import {
   AuthInput,
   AuthScreenShell,
@@ -173,7 +173,7 @@ function PasswordStrength({ password }: { password: string }) {
               styles.strengthBar,
               {
                 backgroundColor:
-                  i <= score ? colors[score] : "rgba(255,255,255,0.08)",
+                  i <= score ? colors[score] : tint(0.08),
               },
             ]}
           />

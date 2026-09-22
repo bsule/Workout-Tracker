@@ -89,7 +89,7 @@ import { useStableValue } from "../hooks/useStableValue"
 import { PrIcon } from "../components/PrIcon"
 import { SetList as SharedSetList } from "../components/SetList"
 import { pressedStyle } from "../theme/pressable"
-import { theme } from "../theme/theme"
+import { theme, line, tint } from "../theme/theme"
 import { useSettings, useWeightUnit } from "../settings/SettingsProvider"
 import { todayString } from "../dates"
 import { restTimer } from "../restTimer"
@@ -299,7 +299,7 @@ function IndexCol({
   if (!hasLabel) {
     return (
       <View style={styles.setIndexCol}>
-        <Text style={[styles.setIndex, isPr && { color: "#e0c050" }]}>
+        <Text style={[styles.setIndex, isPr && { color: theme.colors.prText }]}>
           {display}
         </Text>
       </View>
@@ -312,7 +312,7 @@ function IndexCol({
       <Animated.Text
         style={[
           styles.setIndex,
-          isPr && { color: "#e0c050" },
+          isPr && { color: theme.colors.prText },
           { transform: [{ translateY: indexY }] },
         ]}
       >
@@ -3191,7 +3191,7 @@ function SvgLineChart({
                   x2={contentW}
                   y1={yFor(v)}
                   y2={yFor(v)}
-                  stroke="rgba(255,255,255,0.06)"
+                  stroke={line(0.06)}
                   strokeWidth={1}
                 />
               ))}
@@ -3247,7 +3247,7 @@ function SvgLineChart({
                 x2={xFor(activeIdx)}
                 y1={TOP_PAD}
                 y2={TOP_PAD + DRAW_H}
-                stroke="rgba(255,255,255,0.22)"
+                stroke={line(0.22)}
                 strokeWidth={1}
               />
             )}
@@ -3382,7 +3382,7 @@ export function SettingsPanel({ navigation }: { navigation: any }) {
 }
 
 // Gold, reused for the "best estimated 1RM" marker on the rep rows.
-const GOLD = "#facc15"
+const GOLD = theme.colors.gold
 
 // How the rep-record rows are ordered, and what the bar in each row measures.
 // The bar always tracks the active sort, so the list reads as one shape.
@@ -4712,7 +4712,7 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    backgroundColor: "rgba(255,255,255,0.02)",
+    backgroundColor: tint(0.02),
     gap: theme.spacing[2],
   },
   // Body layers stack on one another so each measures independently. Only the
@@ -4869,7 +4869,7 @@ const styles = StyleSheet.create({
   exerciseMeta: { color: theme.colors.muted, fontSize: theme.fontSize.xs, textTransform: "uppercase", letterSpacing: 1.2 },
   card: {
     backgroundColor: theme.colors.background,
-    borderColor: "rgba(255,255,255,0.12)",
+    borderColor: line(0.12),
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     padding: theme.spacing[5],
@@ -4900,7 +4900,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: theme.radius.md,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
+    borderColor: line(0.12),
     backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
@@ -4911,7 +4911,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: theme.radius.md,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
+    borderColor: line(0.12),
     backgroundColor: "transparent",
     color: theme.colors.foreground,
     fontSize: 24,
@@ -4944,7 +4944,7 @@ const styles = StyleSheet.create({
   },
   setListCard: {
     backgroundColor: theme.colors.background,
-    borderColor: "rgba(255,255,255,0.12)",
+    borderColor: line(0.12),
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     marginTop: theme.spacing[2],
@@ -4956,7 +4956,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingVertical: 6,
     paddingHorizontal: theme.spacing[3],
-    borderTopColor: "rgba(255,255,255,0.06)",
+    borderTopColor: line(0.06),
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   setRow: {
@@ -4972,7 +4972,7 @@ const styles = StyleSheet.create({
     gap: theme.spacing[3],
   },
   setRowDivider: {
-    borderBottomColor: "rgba(255,255,255,0.06)",
+    borderBottomColor: line(0.06),
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   // A plain fill across the row, in the same neutral grey the rest of the app
@@ -4982,7 +4982,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.border,
   },
   setRowPlanned: {
-    backgroundColor: "rgba(255,255,255,0.015)",
+    backgroundColor: tint(0.015),
   },
   dimText: {
     color: theme.colors.muted,
@@ -5006,8 +5006,8 @@ const styles = StyleSheet.create({
     borderColor: "rgba(62,230,192,0.35)",
   },
   plannedActionNotHit: {
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: tint(0.06),
+    borderColor: line(0.12),
   },
   plannedActionDelete: {
     backgroundColor: "rgba(239,68,68,0.14)",
@@ -5042,8 +5042,8 @@ const styles = StyleSheet.create({
     borderColor: "rgba(0,119,188,0.32)",
   },
   swipeActionNote: {
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: tint(0.06),
+    borderColor: line(0.12),
   },
   swipeActionDelete: {
     backgroundColor: "rgba(239,68,68,0.14)",
@@ -5129,15 +5129,15 @@ const styles = StyleSheet.create({
   emptyText: { color: theme.colors.muted, fontSize: theme.fontSize.sm },
   dayCard: {
     backgroundColor: theme.colors.background,
-    borderColor: "rgba(255,255,255,0.18)",
+    borderColor: line(0.18),
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     overflow: "hidden",
   },
   dayCardHeader: {
     padding: theme.spacing[3],
-    backgroundColor: "rgba(255,255,255,0.10)",
-    borderBottomColor: "rgba(255,255,255,0.18)",
+    backgroundColor: tint(0.10),
+    borderBottomColor: line(0.18),
     borderBottomWidth: 1,
     flexDirection: "row",
     alignItems: "center",
@@ -5166,7 +5166,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
     borderRadius: theme.radius.md,
-    backgroundColor: "rgba(255,255,255,0.02)",
+    backgroundColor: tint(0.02),
     padding: 4,
   },
   metricButton: {
@@ -5177,10 +5177,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   metricButtonActive: {
-    backgroundColor: "rgba(255,255,255,0.10)",
+    backgroundColor: tint(0.10),
   },
   metricButtonPressed: {
-    backgroundColor: "rgba(255,255,255,0.14)",
+    backgroundColor: tint(0.14),
     opacity: 0.92,
   },
   metricButtonText: {
@@ -5205,7 +5205,7 @@ const styles = StyleSheet.create({
   // it by a brighter border rather than by a lighter fill.
   chartCard: {
     backgroundColor: theme.colors.background,
-    borderColor: "rgba(255,255,255,0.12)",
+    borderColor: line(0.12),
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     padding: theme.spacing[4],
@@ -5293,7 +5293,7 @@ const styles = StyleSheet.create({
   chartStats: {
     flexDirection: "row",
     gap: 6,
-    borderTopColor: "rgba(255,255,255,0.06)",
+    borderTopColor: line(0.06),
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingTop: theme.spacing[3],
     marginTop: theme.spacing[3],
@@ -5312,8 +5312,8 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: theme.radius.md,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.05)",
-    backgroundColor: "rgba(255,255,255,0.02)",
+    borderColor: line(0.05),
+    backgroundColor: tint(0.02),
     paddingHorizontal: 8,
     paddingVertical: 8,
   },
@@ -5382,7 +5382,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[3],
     gap: theme.spacing[2],
-    borderBottomColor: "rgba(255,255,255,0.18)",
+    borderBottomColor: line(0.18),
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   // A full-width card, not a text strip: the collapsed row is a tap target, so
@@ -5433,7 +5433,7 @@ const styles = StyleSheet.create({
   repPrTable: {
     backgroundColor: theme.colors.card,
     borderRadius: theme.radius.lg,
-    borderColor: "rgba(255,255,255,0.05)",
+    borderColor: line(0.05),
     borderWidth: 1,
     overflow: "hidden",
   },

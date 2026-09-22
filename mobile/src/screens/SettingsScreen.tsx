@@ -26,7 +26,7 @@ import { Button } from "../components/Button"
 import { PopupModal } from "../components/PopupModal"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { EXPAND_ANIM } from "../anim"
-import { theme } from "../theme/theme"
+import { theme, tint } from "../theme/theme"
 import { useSettings, useWeightUnit } from "../settings/SettingsProvider"
 import { Card } from "../components/Card"
 import { formatCutoff } from "../restTimer"
@@ -519,7 +519,7 @@ const styles = StyleSheet.create({
   modalInput: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: tint(0.04),
     borderColor: theme.colors.border,
     borderWidth: 1,
     borderRadius: theme.radius.md,

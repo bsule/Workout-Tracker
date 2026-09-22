@@ -23,7 +23,11 @@ export function PrIcon({
       ]}
     >
       <Text
-        style={[styles.text, isPosition && styles.positionText]}
+        style={[
+          styles.text,
+          isPosition && styles.positionText,
+          historical && styles.historicalText,
+        ]}
         numberOfLines={1}
         allowFontScaling={false}
       >
@@ -35,19 +39,19 @@ export function PrIcon({
 
 const styles = StyleSheet.create({
   badge: {
-    backgroundColor: "#e0c050",
+    backgroundColor: theme.colors.pr,
     paddingHorizontal: 4,
     paddingVertical: 1,
     borderRadius: 3,
     alignSelf: "flex-start",
   },
-  historical: { backgroundColor: theme.colors.muted },
+  historical: { backgroundColor: theme.colors.prHistorical },
   position: {
     backgroundColor: "#4a90e2",
     paddingHorizontal: 3,
     paddingVertical: 0,
   },
-  positionHistorical: { backgroundColor: theme.colors.muted },
+  positionHistorical: { backgroundColor: theme.colors.prHistorical },
   text: {
     fontSize: 9,
     fontWeight: "800",
@@ -55,4 +59,5 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   positionText: { fontSize: 8, color: "#ffffff" },
+  historicalText: { color: theme.colors.prHistoricalText },
 })
