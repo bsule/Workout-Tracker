@@ -1,6 +1,6 @@
 # Rest timer on the Lock Screen and Dynamic Island
 
-Date: 2026-09-21. Status: approved design, not yet implemented.
+Date: 2026-09-21. Status: implemented. See "Changes during implementation" at the end.
 
 ## Summary
 
@@ -154,3 +154,18 @@ The only code that calls the module. Files:
 - `@bacons/apple-targets` without `appleTeamId` on an unsigned CI build: expected to work; verified in step 1 of the plan. If it fails, the fallback is to set a placeholder team id in `app.json` (CI ignores signing anyway).
 - AltStore counts the extension as one more App ID (10 per week on a free Apple ID). Acceptable for one app.
 - iOS past-cutoff freeze while suspended, described above.
+
+## Changes during implementation
+
+These differ from the design above. The code is the source of truth.
+
+- **`update` starts a timer when none is showing.** The user can swipe a Live Activity away. With the original "no-op when nothing is running" rule, the next set would show no timer until the cutoff passed. Android `start` and `update` are the same call.
+- **`isRunning()` became `current()`.** It returns `{ exerciseName, startedAt, endsAt }` or null. With only a boolean, `reconcile()` after a cold start would have ended a timer the previous process left, even while the user was still resting (iOS can kill a suspended app mid-rest). Now reconcile keeps a timer inside its cutoff and adopts it, so the next set updates it in place. Android keeps the three values in SharedPreferences to answer `current()`.
+- **`reconcile()` also runs after hydrate on cold start**, not only on foreground. The settings live in the snapshot, so it has to run after hydrate.
+- **`decide` split in two:** `decideOnSet` and `decideOnForeground`, both in `mobile/src/restTimer/plan.ts`.
+- **No `androidx.core` bump.** The Android 16 promotion flag is set through the extras key `android.requestPromotedOngoing`, which is what `setRequestPromotedOngoing` writes. This avoids a dependency change that cannot be compiled on a Mac without the Android SDK. `POST_NOTIFICATIONS` and `POST_PROMOTED_NOTIFICATIONS` are declared in the module's `AndroidManifest.xml`, not in `app.json`.
+- **Cutoff editor is a popup, not an inline field.** The Settings screen edits every other free-text value through an `EditableRow` that opens a `PopupModal`. The popup shows an error for text that is not a time and for values outside 0:30 to 15:00, instead of reverting silently. The row shows only while the feature is on.
+- **A "Since last set" caption** sits above the exercise name in the expanded island and on the Lock Screen (Android: the notification's content text). The compact island shows the LIFT mark (the tally strokes from `icon-source.svg`, drawn as a SwiftUI path) on the leading side and the time on the trailing side. The Lock Screen also shows the LIFT mark. The timer text is white everywhere; the green accent remains only on the island keyline.
+- **An edit of a planned set that logs it** (the "Not Hit" path) and the planned-set "Hit" action also start the timer. Both turn a planned set into a logged set.
+- **`enable()`** asks for the Android permission when the user turns the feature on.
+- **The widget target's bundle id** is `com.lift.mobile.resttimer`.

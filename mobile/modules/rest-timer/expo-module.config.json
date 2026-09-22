@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["RestTimerModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.resttimer.RestTimerModule"]
+  }
+}

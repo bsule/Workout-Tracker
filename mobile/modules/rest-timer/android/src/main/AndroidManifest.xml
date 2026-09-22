@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Android 13+: runtime permission, requested from JS (PermissionsAndroid). -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <!-- Android 16+: install-time permission that lets the ongoing timer pin
+       to the status bar as a Live Update. Ignored on older Android. -->
+  <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+</manifest>

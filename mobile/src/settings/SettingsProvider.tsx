@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react"
 import { useStore } from "@lift/core"
 import type { WeightUnit } from "@lift/core"
+import { restTimerSettings } from "../restTimer/plan"
 
 interface SettingsValue {
   weightUnit: WeightUnit
@@ -10,6 +11,10 @@ interface SettingsValue {
   showRestTime: boolean
   showTimeSinceLastSet: boolean
   showLastTime: boolean
+  /** Rest timer outside the app (Live Activity / Android notification). */
+  restTimerEnabled: boolean
+  /** Seconds after the last set when that timer goes away. */
+  restTimerCutoffS: number
 }
 
 const Ctx = createContext<SettingsValue | null>(null)
@@ -25,6 +30,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       showRestTime: settings.show_rest_time ?? true,
       showTimeSinceLastSet: settings.show_time_since_last_set ?? true,
       showLastTime: settings.show_last_time ?? true,
+      restTimerEnabled: restTimerSettings(settings).enabled,
+      restTimerCutoffS: restTimerSettings(settings).cutoffS,
     }),
     [
       settings.weight_unit,
@@ -34,6 +41,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       settings.show_rest_time,
       settings.show_time_since_last_set,
       settings.show_last_time,
+      settings.rest_timer_activity,
+      settings.rest_timer_cutoff_s,
     ]
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

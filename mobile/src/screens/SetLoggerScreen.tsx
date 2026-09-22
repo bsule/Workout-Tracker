@@ -92,6 +92,7 @@ import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
 import { useSettings, useWeightUnit } from "../settings/SettingsProvider"
 import { todayString } from "../dates"
+import { restTimer } from "../restTimer"
 import { SubTabBar, type SubTab } from "../components/SubTabBar"
 
 
@@ -1494,6 +1495,13 @@ export function SetLoggerScreen({ route, navigation }: any) {
     )
   }
 
+  // Starts or restarts the rest timer outside the app (Lock Screen, Dynamic
+  // Island, Android notification). Fire and forget. Only for a set that is
+  // logged, not an edit of a logged set or a planned set being authored.
+  function startRestTimer(atMs: number) {
+    if (we) restTimer.setLogged(we.exercise.name, atMs)
+  }
+
   function save() {
     Keyboard.dismiss()
     setError(null)
@@ -1539,6 +1547,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
           : null
         setEditingSetId(null)
         setEditingRestAnchorIso(null)
+        if (editingPlanned) startRestTimer(Date.now())
         setTimeout(() => {
           if (editingPlanned) {
             logPlannedSet(id, { weight: w, reps: r })
@@ -1577,7 +1586,14 @@ export function SetLoggerScreen({ route, navigation }: any) {
           // Logging against a planned set: same row, fade weight/reps update
           // would be jarring — skip animation.
           setOptimisticPlannedId(queued.id)
-          logPlannedSet(queued.id, { weight: isCardio ? weight : toKg(weight, unit), reps })
+          // One timestamp for the row and the timer outside the app.
+          const loggedAt = Date.now()
+          startRestTimer(loggedAt)
+          logPlannedSet(queued.id, {
+            weight: isCardio ? weight : toKg(weight, unit),
+            reps,
+            created_at: new Date(loggedAt).toISOString(),
+          })
         } else {
           // Optimistic placeholder: render an immediate fading-in row so the
           // user sees the row on the same frame as the click, then defer the
@@ -1604,10 +1620,14 @@ export function SetLoggerScreen({ route, navigation }: any) {
           // commit and snap. A deferral on a save that turns out not to move
           // the card costs ~190ms of store latency and nothing on screen.
           const cardMayResize = showLastTime
+          // One timestamp for the placeholder row (the in-app ticker's
+          // anchor) and the timer outside the app, so the two agree.
+          const savedAt = Date.now()
+          startRestTimer(savedAt)
           setPendingAdd({
             weight: w,
             reps: r,
-            key: Date.now(),
+            key: savedAt,
             baseLen: sets.length,
             baseIds: new Set(sets.map((s) => s.id)),
             isPr: pr.isPr,
@@ -1631,9 +1651,13 @@ export function SetLoggerScreen({ route, navigation }: any) {
           // it back past the collapse instead. Nothing visible waits on it:
           // the placeholder row is already on screen from the click frame.
           // Same trick as the edit-mode save above.
+          // The row keeps the time of the tap, not of this deferred commit:
+          // the in-app ticker counts from it, and so does the timer outside
+          // the app (startRestTimer above).
+          const createdAt = new Date(savedAt).toISOString()
           const runMutation = () => {
             if (wasResolved) {
-              api.addSet(wasResolved.weId, { weight: w, reps: r })
+              api.addSet(wasResolved.weId, { weight: w, reps: r, created_at: createdAt })
               return
             }
             if (!pending) return
@@ -1650,7 +1674,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
             // alone so they keep their own fade-ins.
             LayoutAnimation.configureNext(SHIFT_ANIM)
             setResolved(ids)
-            api.addSet(ids.weId, { weight: w, reps: r })
+            api.addSet(ids.weId, { weight: w, reps: r, created_at: createdAt })
           }
           if (cardMayResize) {
             deferPastAnimation(runMutation, LAST_TIME_COLLAPSE_MS)
@@ -1839,6 +1863,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
           const w = s.weight
           const r = s.reps
           if (w == null || r == null) return
+          startRestTimer(Date.now())
           requestAnimationFrame(() => {
             logPlannedSet(s.id, { weight: w, reps: r })
           })
@@ -1878,8 +1903,8 @@ function PlannedSetActionsModal({
   const title =
     set != null
       ? isCardio
-        ? `${set.weight ?? "—"} min × Lvl ${set.reps ?? "—"}`
-        : `${formatWeight(set.weight ?? undefined, unit)} ${unit} × ${set.reps ?? "—"}`
+        ? `${set.weight ?? "-"} min × Lvl ${set.reps ?? "-"}`
+        : `${formatWeight(set.weight ?? undefined, unit)} ${unit} × ${set.reps ?? "-"}`
       : ""
   return (
     <PopupModal
@@ -2887,7 +2912,7 @@ export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "
             <View>
               <Text style={styles.chartEyebrow}>{headerLabel}</Text>
               <View style={styles.chartValueRow}>
-                <Text style={styles.chartValue}>—</Text>
+                <Text style={styles.chartValue}>-</Text>
                 <Text style={styles.chartUnit}>{unit}</Text>
               </View>
             </View>
@@ -2899,7 +2924,7 @@ export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "
               <View style={[styles.statDot, { backgroundColor: theme.colors.primary }]} />
               <Text style={styles.chartLegendText}>{opt.label}</Text>
             </View>
-            <Text style={styles.chartLegendText}>—</Text>
+            <Text style={styles.chartLegendText}>-</Text>
           </View>
 
           <View style={styles.chartEmpty}>
@@ -2907,9 +2932,9 @@ export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "
           </View>
 
           <View style={styles.chartStats}>
-            <Stat label="Peak" value="—" unit={unit} accent="green" />
-            <Stat label="Average" value="—" unit={unit} accent="muted" />
-            <Stat label="Latest" value="—" unit={unit} accent="primary" />
+            <Stat label="Peak" value="-" unit={unit} accent="green" />
+            <Stat label="Average" value="-" unit={unit} accent="muted" />
+            <Stat label="Latest" value="-" unit={unit} accent="primary" />
           </View>
         </View>
 
@@ -3323,7 +3348,7 @@ function Stat({
 }
 
 function fmtMetric(value: number | undefined, _metric: Metric): string {
-  if (value == null || !Number.isFinite(value)) return "—"
+  if (value == null || !Number.isFinite(value)) return "-"
   return value.toFixed(value % 1 === 0 ? 0 : 1)
 }
 
@@ -4236,14 +4261,14 @@ const SetRow = memo(function SetRow({
           style={[styles.setWeight, s.is_planned && styles.dimText]}
         >
           {isCardio
-            ? s.weight ?? "—"
+            ? s.weight ?? "-"
             : formatWeight(s.weight, unit)}{" "}
           <Text style={styles.setUnit}>{isCardio ? "min" : unit}</Text>
         </Text>
         <Text
           style={[styles.setReps, s.is_planned && styles.dimText]}
         >
-          {isCardio ? `Lvl ${s.reps ?? "—"}` : s.reps ?? "—"}
+          {isCardio ? `Lvl ${s.reps ?? "-"}` : s.reps ?? "-"}
         </Text>
         {!isCardio && !s.is_planned && showOneRm && oneRm > 0 ? (
           <Text style={styles.oneRm}>
