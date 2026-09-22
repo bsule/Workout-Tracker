@@ -27,24 +27,17 @@ import { PopupModal } from "../components/PopupModal"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { EXPAND_ANIM } from "../anim"
 import { theme } from "../theme/theme"
-import {
-  currentMode,
-  setStoredMode,
-  type ThemeMode,
-} from "../theme/themeMode"
 import { useSettings, useWeightUnit } from "../settings/SettingsProvider"
-import { Card, cardStyle } from "../components/Card"
+import { Card } from "../components/Card"
+import { formatCutoff } from "../restTimer"
+import { NavRow, SettingsGroup } from "../components/SettingRows"
 
 type ProfileField = "username" | "email"
 
 export function SettingsScreen({ navigation }: any) {
   const { user, logout, updateProfile } = useAuth()
   const unit = useWeightUnit()
-  const { firstDayOfWeek, showPositionPrs, showRestTime, showTimeSinceLastSet } =
-    useSettings()
-  // Read once on mount; the toggle prompts for restart so we don't need
-  // a reactive subscription here.
-  const [themeMode, setThemeMode] = useState<ThemeMode>(currentMode())
+  const { firstDayOfWeek, restTimerEnabled, restTimerCutoffS } = useSettings()
 
   // A refused push shows a dot here, because the automatic sync that hit it
   // runs in the background and the choice lives on the Import / Export screen.
@@ -99,17 +92,6 @@ export function SettingsScreen({ navigation }: any) {
       { text: "Cancel", style: "cancel" },
       { text: "Log out", style: "destructive", onPress: logout },
     ])
-  }
-
-  async function chooseTheme(m: ThemeMode) {
-    if (m === themeMode) return
-    await setStoredMode(m)
-    setThemeMode(m)
-    Alert.alert(
-      "Restart required",
-      "Quit and reopen the app to apply the new theme.",
-      [{ text: "OK" }]
-    )
   }
 
   const [editingField, setEditingField] = useState<ProfileField | null>(null)
@@ -228,102 +210,51 @@ export function SettingsScreen({ navigation }: any) {
         <Card>
           <EditableRow
             label="Username"
-            value={user?.username ?? "—"}
+            value={user?.username ?? "-"}
             onPress={() => openEditor("username")}
           />
           <EditableRow
             label="Email"
-            value={user?.email ?? "—"}
+            value={user?.email ?? "-"}
             onPress={() => openEditor("email")}
           />
         </Card>
 
         <Text style={styles.section}>Preferences</Text>
-        <Card>
-          <ChoiceSetting
-            label="Weight unit"
-            value={unit.toUpperCase()}
-            options={[
-              {
-                label: "kg",
-                active: unit === "kg",
-                onPress: () => api.updateSettings({ weight_unit: "kg" }),
-              },
-              {
-                label: "lb",
-                active: unit === "lb",
-                onPress: () => api.updateSettings({ weight_unit: "lb" }),
-              },
-            ]}
+        <SettingsGroup inset>
+          <NavRow
+            icon="options-outline"
+            title="General"
+            subtitle={`${unit} · Week starts ${firstDayOfWeek === 1 ? "Monday" : "Sunday"}`}
+            onPress={() => navigation.navigate("GeneralSettings")}
           />
-
-          <ChoiceSetting
-            label="First day of week"
-            value={firstDayOfWeek === 1 ? "Monday" : "Sunday"}
-            options={[
-              {
-                label: "Sunday",
-                active: firstDayOfWeek === 0,
-                onPress: () => api.updateSettings({ first_day_of_week: 0 }),
-              },
-              {
-                label: "Monday",
-                active: firstDayOfWeek === 1,
-                onPress: () => api.updateSettings({ first_day_of_week: 1 }),
-              },
-            ]}
+          <NavRow
+            icon="barbell-outline"
+            title="Set logger"
+            subtitle="PRs, rest times, and timers in the set list"
+            onPress={() => navigation.navigate("SetLoggerSettings")}
           />
-
-          <ChoiceSetting
-            label="Theme"
-            value={themeMode === "light" ? "Light" : "Dark"}
-            options={[
-              {
-                label: "Dark",
-                active: themeMode === "dark",
-                onPress: () => chooseTheme("dark"),
-              },
-              {
-                label: "Light",
-                active: themeMode === "light",
-                onPress: () => chooseTheme("light"),
-              },
-            ]}
+          <NavRow
+            icon="timer-outline"
+            title="Rest timer"
+            subtitle={
+              restTimerEnabled
+                ? `On · Hides after ${formatCutoff(restTimerCutoffS)}`
+                : "Off"
+            }
+            onPress={() => navigation.navigate("RestTimerSettings")}
           />
-
-          <OnOffSetting
-            label="Per-set PRs"
-            on={showPositionPrs}
-            onChange={(v) => api.updateSettings({ show_position_prs: v })}
-          />
-
-          <OnOffSetting
-            label="Rest time between sets"
-            on={showRestTime}
-            onChange={(v) => api.updateSettings({ show_rest_time: v })}
-          />
-
-          <OnOffSetting
-            label="Time since last set"
-            on={showTimeSinceLastSet}
-            onChange={(v) => api.updateSettings({ show_time_since_last_set: v })}
-          />
-        </Card>
+        </SettingsGroup>
 
         <Text style={styles.section}>Categories</Text>
-        <Pressable
-          onPress={() => navigation.navigate("CategoryStyles")}
-          style={({ pressed }) => [cardStyle, pressed && { opacity: 0.7 }]}
-        >
-          <View style={styles.row}>
-            <Text style={styles.rowLabel}>Customize categories</Text>
-            <Ionicons
-              name="chevron-forward"
-              size={18}
-              color={theme.colors.muted}
-            />
-          </View>
-        </Pressable>
+        <SettingsGroup inset>
+          <NavRow
+            icon="color-palette-outline"
+            title="Customize categories"
+            subtitle="Names and colors"
+            onPress={() => navigation.navigate("CategoryStyles")}
+          />
+        </SettingsGroup>
 
         {/* AI settings disabled for now.
         <Text style={styles.section}>AI</Text>
@@ -372,37 +303,32 @@ export function SettingsScreen({ navigation }: any) {
         */}
 
         <Text style={styles.section}>Data</Text>
-        <Pressable
-          onPress={() => navigation.navigate("ImportExport")}
-          style={({ pressed }) => [cardStyle, pressed && { opacity: 0.7 }]}
-        >
-          <View style={styles.row}>
-            <Text style={styles.rowLabel}>Import / Export</Text>
-            <View style={styles.rowRight}>
-              {cloudConflict && <View style={styles.conflictDot} />}
-              <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={theme.colors.muted}
-              />
-            </View>
-          </View>
-        </Pressable>
+        <SettingsGroup inset>
+          <NavRow
+            icon="cloud-outline"
+            title="Backup & Restore"
+            subtitle="Cloud sync and restore points"
+            // Cloud sync lives on this screen, so an open conflict flags it.
+            badge={cloudConflict}
+            onPress={() => navigation.navigate("BackupRestore")}
+          />
+          <NavRow
+            icon="swap-vertical-outline"
+            title="Import / Export"
+            subtitle="Lift JSON and FitNotes files"
+            onPress={() => navigation.navigate("ImportExport")}
+          />
+        </SettingsGroup>
 
         <Text style={styles.section}>Gyms</Text>
-        <Pressable
-          onPress={() => navigation.navigate("Gyms")}
-          style={({ pressed }) => [cardStyle, pressed && { opacity: 0.7 }]}
-        >
-          <View style={styles.row}>
-            <Text style={styles.rowLabel}>Manage gyms</Text>
-            <Ionicons
-              name="chevron-forward"
-              size={18}
-              color={theme.colors.muted}
-            />
-          </View>
-        </Pressable>
+        <SettingsGroup inset>
+          <NavRow
+            icon="location-outline"
+            title="Manage gyms"
+            subtitle="Rename or remove saved gyms"
+            onPress={() => navigation.navigate("Gyms")}
+          />
+        </SettingsGroup>
 
         <Text style={styles.section}>Maintenance</Text>
         <Card>
@@ -485,63 +411,10 @@ export function SettingsScreen({ navigation }: any) {
   )
 }
 
-/** A labelled setting with its current value, and one button per choice. */
-function ChoiceSetting({
-  label,
-  value,
-  options,
-}: {
-  label: string
-  value: string
-  options: { label: string; active: boolean; onPress: () => void }[]
-}) {
-  return (
-    <>
-      <Row label={label} value={value} />
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        {options.map((o) => (
-          <Button
-            key={o.label}
-            label={o.label}
-            variant={o.active ? "primary" : "secondary"}
-            style={{ flex: 1 }}
-            onPress={o.onPress}
-          />
-        ))}
-      </View>
-    </>
-  )
-}
 
-function OnOffSetting({
-  label,
-  on,
-  onChange,
-}: {
-  label: string
-  on: boolean
-  onChange: (on: boolean) => void
-}) {
-  return (
-    <ChoiceSetting
-      label={label}
-      value={on ? "On" : "Off"}
-      options={[
-        { label: "On", active: on, onPress: () => onChange(true) },
-        { label: "Off", active: !on, onPress: () => onChange(false) },
-      ]}
-    />
-  )
-}
 
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.row}>
-      <Text style={styles.rowLabel}>{label}</Text>
-      <Text style={styles.rowValue}>{value}</Text>
-    </View>
-  )
-}
+
+
 
 function EditableRow({
   label,
@@ -637,13 +510,6 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   rowLabel: { color: theme.colors.muted, fontSize: theme.fontSize.sm },
   rowValue: { color: theme.colors.foreground, fontSize: theme.fontSize.base, fontWeight: "600" },
-  rowRight: { flexDirection: "row", alignItems: "center", gap: 8 },
-  conflictDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: theme.colors.destructive,
-  },
   rowValueGroup: {
     flexDirection: "row",
     alignItems: "center",

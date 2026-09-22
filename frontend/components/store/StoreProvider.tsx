@@ -60,7 +60,7 @@ export function StoreProvider({ children }: Props) {
 }
 
 /**
- * Once-per-load check: push if this device hasn't synced in 3 days.
+ * Once-per-load check: push if this device hasn't synced in a day.
  * Deferred to browser idle so serialize() (JSON.stringify + gzip, both
  * synchronous) can't stall the first paint. A no-op when not due, offline,
  * or signed out — see autoSync.maybeAutoSync().

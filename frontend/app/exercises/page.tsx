@@ -45,7 +45,7 @@ function ExercisesPageInner() {
           const ok = await confirm({
             title: "Already finished a workout today",
             message:
-              "You have a finished session for this date. Continuing will add this exercise to that same session — there's no separate two-a-day yet.",
+              "You have a finished session for this date. Continuing will add this exercise to that same session. There's no separate two-a-day yet.",
             confirmLabel: "Add to that session",
           })
           if (!ok) {

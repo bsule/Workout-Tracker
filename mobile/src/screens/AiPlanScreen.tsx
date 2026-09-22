@@ -315,7 +315,7 @@ export function AiPlanScreen({ navigation, route }: any) {
                           <Text key={i} style={styles.previewExercise}>
                             {ex.name}
                             {ex.sets.length > 0
-                              ? ` — ${ex.sets
+                              ? `: ${ex.sets
                                   .map((s) => formatSet(s, weightUnit))
                                   .join(", ")}`
                               : ""}

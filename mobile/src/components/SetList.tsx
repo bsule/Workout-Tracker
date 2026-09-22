@@ -61,7 +61,7 @@ export const SetList = memo(function SetList({ sets, showNotes }: Props) {
                 s.is_planned && { fontStyle: "italic", color: theme.colors.muted },
               ]}
             >
-              {s.reps ?? "—"}
+              {s.reps ?? "-"}
             </Text>
           </View>
           {showNotes && !s.is_planned && !!s.note && (

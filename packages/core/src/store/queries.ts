@@ -144,7 +144,7 @@ export function getExerciseHistoryQ(id: number): ExerciseHistoryDay[] {
       day.sets.push(...histSets)
       // Same exercise twice in one day: keep both notes rather than letting
       // the first row win silently.
-      if (note) day.note = day.note ? `${day.note} — ${note}` : note
+      if (note) day.note = day.note ? `${day.note} / ${note}` : note
     } else {
       byDate.set(w.date, { date: w.date, note, sets: histSets })
     }

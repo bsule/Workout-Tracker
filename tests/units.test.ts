@@ -67,8 +67,8 @@ describe("units: roundForDisplay", () => {
 })
 
 describe("units: formatWeight", () => {
-  it("renders an em-dash for null (cardio)", () => {
-    expect(formatWeight(null, "kg")).toBe("—")
+  it("renders a hyphen for null (cardio)", () => {
+    expect(formatWeight(null, "kg")).toBe("-")
   })
 
   it("drops the decimal for whole numbers", () => {

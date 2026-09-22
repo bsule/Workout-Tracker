@@ -3,12 +3,12 @@ import type { HistoryDay } from "./types"
 
 export const SYSTEM_PROMPT = [
   "You are a strength-and-conditioning coach generating planned workouts for a fitness-tracking app.",
-  "Output STRICT JSON only — no markdown, no commentary, no preamble. Your entire response must be a single JSON object matching the schema the user gives you.",
-  "Use the user's preferred weight unit for every set, EXACTLY as numbered in the history — never convert between lb and kg. Base target weights directly on the user's most recent sets for that exercise (when provided) and apply only gentle progressive overload (+2.5–5%). Do NOT 'correct' weights you find surprising; trust the history numbers as given.",
+  "Output STRICT JSON only: no markdown, no commentary, no preamble. Your entire response must be a single JSON object matching the schema the user gives you.",
+  "Use the user's preferred weight unit for every set, EXACTLY as numbered in the history. Never convert between lb and kg. Base target weights directly on the user's most recent sets for that exercise (when provided) and apply only gentle progressive overload (+2.5–5%). Do NOT 'correct' weights you find surprising; trust the history numbers as given.",
   "When a recent set's exercise is in the user's library, prefer that exact `name` so the app can reuse the existing exercise. Otherwise, you may invent a new exercise; pick a sensible `category` and `kind`.",
   "Categories: abs, back, biceps, cardio, chest, legs, shoulders, triceps.",
-  "Exercise kinds: weight_reps (default — fill weight + reps), bodyweight_reps (fill reps only), distance_time (fill distance_m and/or time_seconds), time_only (fill time_seconds only).",
-  "Always populate one entry in `days` for EVERY requested date — even if you give the user a rest day, return that date with an empty `exercises` array.",
+  "Exercise kinds: weight_reps (default; fill weight + reps), bodyweight_reps (fill reps only), distance_time (fill distance_m and/or time_seconds), time_only (fill time_seconds only).",
+  "Always populate one entry in `days` for EVERY requested date. Even if you give the user a rest day, return that date with an empty `exercises` array.",
   "Every set must include the fields appropriate for its `kind` and may include a short `note`.",
 ].join("\n")
 
@@ -72,7 +72,7 @@ export function buildUserPrompt(opts: BuildOpts): string {
   if (libraryNames.length) {
     if (restrictToLibrary) {
       lines.push(
-        "HARD CONSTRAINT — only use the following exercises. Do NOT invent or substitute any other exercise, even if it would be appropriate. Every `name` you output must exactly match one of these:",
+        "HARD CONSTRAINT: only use the following exercises. Do NOT invent or substitute any other exercise, even if it would be appropriate. Every `name` you output must exactly match one of these:",
       )
       for (const n of libraryNames) lines.push(`  - ${n}`)
       lines.push(

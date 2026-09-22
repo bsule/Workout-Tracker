@@ -1078,7 +1078,7 @@ function DataSection() {
 
         <DataCard
           title="Import"
-          description="Bring in workout history from a CSV. FitNotes Android exports are auto-detected — no column mapping needed."
+          description="Bring in workout history from a CSV. FitNotes Android exports are auto-detected. No column mapping needed."
           accent="emerald"
         >
           <Link

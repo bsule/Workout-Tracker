@@ -204,7 +204,7 @@ export function ExerciseChart({ history }: Props) {
   }
 
   function fmt(v: number) {
-    if (!Number.isFinite(v)) return "—"
+    if (!Number.isFinite(v)) return "-"
     return v.toFixed(v % 1 === 0 ? 0 : 1)
   }
 

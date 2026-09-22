@@ -415,8 +415,7 @@ export default function AiPlanPage() {
                           <span className="font-medium">{ex.name}</span>
                           {ex.sets.length > 0 && (
                             <span className="text-muted-foreground">
-                              {" "}
-                              —{" "}
+                              {": "}
                               {ex.sets
                                 .map((s) => formatSet(s, settings.weight_unit))
                                 .join(", ")}
