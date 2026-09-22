@@ -11,7 +11,7 @@ import { CategoryPill } from "./CategoryPill"
 import { NotePreview } from "./NotePreview"
 import { SetList } from "./SetList"
 import { pressedStyle } from "../theme/pressable"
-import { theme } from "../theme/theme"
+import { line, theme, tint } from "../theme/theme"
 import { todayString } from "../dates"
 
 interface Props {
@@ -123,13 +123,13 @@ const styles = StyleSheet.create({
   },
   bannerFuture: {
     borderColor: theme.colors.border,
-    backgroundColor: "rgba(255,255,255,0.02)",
+    backgroundColor: tint(0.02),
   },
   bannerTitle: { color: theme.colors.foreground, fontWeight: "700", fontSize: theme.fontSize.sm },
   bannerSub: { color: theme.colors.muted, fontSize: theme.fontSize.xs },
   exerciseCard: {
     backgroundColor: theme.colors.background,
-    borderColor: "rgba(255,255,255,0.18)",
+    borderColor: line(0.18),
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     overflow: "hidden",
@@ -141,8 +141,8 @@ const styles = StyleSheet.create({
     paddingLeft: theme.spacing[3],
     paddingRight: theme.spacing[2],
     paddingVertical: theme.spacing[3],
-    backgroundColor: "rgba(255,255,255,0.10)",
-    borderBottomColor: "rgba(255,255,255,0.18)",
+    backgroundColor: tint(0.1),
+    borderBottomColor: line(0.18),
     borderBottomWidth: 1,
   },
   exerciseTitleCol: { flex: 1, gap: 2 },

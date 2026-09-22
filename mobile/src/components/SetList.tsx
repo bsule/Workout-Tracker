@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { formatWeight } from "@lift/core"
 import { PrIcon } from "./PrIcon"
-import { theme } from "../theme/theme"
+import { theme, line } from "../theme/theme"
 import { useSettings, useWeightUnit } from "../settings/SettingsProvider"
 
 interface DisplaySet {
@@ -82,7 +82,7 @@ export const SetList = memo(function SetList({ sets, showNotes }: Props) {
 
 const styles = StyleSheet.create({
   setGroup: {
-    borderBottomColor: "rgba(255,255,255,0.18)",
+    borderBottomColor: line(0.18),
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   setRow: {

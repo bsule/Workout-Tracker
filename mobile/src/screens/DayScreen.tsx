@@ -61,7 +61,7 @@ import {
   usePresence,
 } from "../anim"
 import { pressedStyle } from "../theme/pressable"
-import { theme } from "../theme/theme"
+import { theme, line, tint } from "../theme/theme"
 import { useActiveDateAndSetter } from "../state/activeDate"
 import { addDays, todayString } from "../dates"
 
@@ -1356,7 +1356,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   summaryCard: {
-    backgroundColor: "rgba(255,255,255,0.02)",
+    backgroundColor: tint(0.02),
     borderColor: theme.colors.border,
     borderWidth: 1,
     borderRadius: theme.radius.lg,
@@ -1430,7 +1430,7 @@ const styles = StyleSheet.create({
   },
   bannerFuture: {
     borderColor: theme.colors.border,
-    backgroundColor: "rgba(255,255,255,0.02)",
+    backgroundColor: tint(0.02),
   },
   bannerTitle: { color: theme.colors.foreground, fontWeight: "700", fontSize: theme.fontSize.sm },
   bannerSub: { color: theme.colors.muted, fontSize: theme.fontSize.xs },
@@ -1458,7 +1458,7 @@ const styles = StyleSheet.create({
   exerciseCard: {
     flexDirection: "row",
     backgroundColor: theme.colors.background,
-    borderColor: "rgba(255,255,255,0.18)",
+    borderColor: line(0.18),
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     overflow: "hidden",
@@ -1474,7 +1474,7 @@ const styles = StyleSheet.create({
     paddingRight: theme.spacing[2],
     paddingTop: theme.spacing[3],
     paddingBottom: theme.spacing[3],
-    backgroundColor: "rgba(255,255,255,0.10)",
+    backgroundColor: tint(0.10),
   },
   exerciseTitleCol: { flex: 1, gap: 2 },
   exerciseNote: {
@@ -1497,7 +1497,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.06)",
+    backgroundColor: tint(0.06),
   },
   setCountChipPlanned: {
     backgroundColor: "transparent",
@@ -1522,7 +1522,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   exSetList: {
-    borderTopColor: "rgba(255,255,255,0.18)",
+    borderTopColor: line(0.18),
     borderTopWidth: 1,
   },
   exerciseCardSelected: {
@@ -1530,13 +1530,13 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.foreground,
     borderWidth: 1,
     borderRadius: theme.radius.lg - 1,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: tint(0.04),
   },
   selectionBar: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: theme.colors.background,
-    borderColor: "rgba(255,255,255,0.18)",
+    borderColor: line(0.18),
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     paddingHorizontal: theme.spacing[3],
@@ -1603,7 +1603,7 @@ const styles = StyleSheet.create({
     borderTopColor: theme.colors.border,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
-  gymRowPressed: { backgroundColor: "rgba(255,255,255,0.06)" },
+  gymRowPressed: { backgroundColor: tint(0.06) },
   gymRowText: {
     flex: 1,
     color: theme.colors.foreground,

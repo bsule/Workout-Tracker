@@ -18,7 +18,7 @@ import {
   restTimer,
 } from "../../restTimer"
 import { useSettings } from "../../settings/SettingsProvider"
-import { theme } from "../../theme/theme"
+import { theme, tint } from "../../theme/theme"
 import { settingsPageStyles } from "./GeneralSettingsScreen"
 
 export function RestTimerSettingsScreen() {
@@ -126,7 +126,7 @@ const styles = StyleSheet.create({
   input: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: tint(0.04),
     borderColor: theme.colors.border,
     borderWidth: 1,
     borderRadius: theme.radius.md,

@@ -16,7 +16,7 @@ import { localApi as api, useStore } from "@lift/core"
 import type { Gym } from "@lift/core"
 import { Button } from "../components/Button"
 import { EASE, LIST_ANIM } from "../anim"
-import { theme } from "../theme/theme"
+import { theme, tint } from "../theme/theme"
 import { Card } from "../components/Card"
 
 function animateGyms() {
@@ -431,7 +431,7 @@ const styles = StyleSheet.create({
     flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: tint(0.04),
     borderColor: theme.colors.border,
     borderWidth: 1,
     borderRadius: theme.radius.md,

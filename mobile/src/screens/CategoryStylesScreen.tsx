@@ -14,7 +14,7 @@ import type { Category } from "@lift/core"
 import { Button } from "../components/Button"
 import { PopupModal } from "../components/PopupModal"
 import { LIST_ANIM } from "../anim"
-import { theme } from "../theme/theme"
+import { theme, line, tint } from "../theme/theme"
 import {
   COLOR_PALETTE,
   useCategoryStyles,
@@ -328,7 +328,7 @@ const styles = StyleSheet.create({
     gap: theme.spacing[3],
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
-    borderBottomColor: "rgba(255,255,255,0.04)",
+    borderBottomColor: line(0.04),
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   swatch: {
@@ -356,7 +356,7 @@ const styles = StyleSheet.create({
   modalInput: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: tint(0.04),
     borderColor: theme.colors.border,
     borderWidth: 1,
     borderRadius: theme.radius.md,

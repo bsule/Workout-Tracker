@@ -7,7 +7,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native"
-import { theme } from "../theme/theme"
+import { theme, tint } from "../theme/theme"
 
 /**
  * The shell every popup in this app is built from: a dimmed backdrop that
@@ -122,7 +122,7 @@ export const overlayCardStyles = StyleSheet.create({
   /** A text input's chrome inside a card. Callers set their own font size. */
   input: {
     color: theme.colors.foreground,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: tint(0.04),
     borderColor: theme.colors.border,
     borderWidth: 1,
     borderRadius: theme.radius.md,

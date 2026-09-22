@@ -19,7 +19,7 @@ import {
   roundForDisplay,
   toKg,
 } from "@lift/core"
-import { theme } from "../theme/theme"
+import { theme, line, tint } from "../theme/theme"
 import { useWeightUnit } from "../settings/SettingsProvider"
 
 const PERCENT_TABLE = [95, 90, 85, 80, 75, 70, 65, 60]
@@ -169,7 +169,7 @@ const styles = StyleSheet.create({
   wrap: { padding: theme.spacing[4], gap: theme.spacing[4] },
   resultCard: {
     backgroundColor: theme.colors.card,
-    borderColor: "rgba(255,255,255,0.05)",
+    borderColor: line(0.05),
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     padding: theme.spacing[5],
@@ -196,7 +196,7 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: theme.colors.card,
-    borderColor: "rgba(255,255,255,0.05)",
+    borderColor: line(0.05),
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     padding: theme.spacing[5],
@@ -215,8 +215,8 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: theme.radius.md,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.05)",
-    backgroundColor: "rgba(255,255,255,0.03)",
+    borderColor: line(0.05),
+    backgroundColor: tint(0.03),
     alignItems: "center",
     justifyContent: "center",
   },
@@ -226,8 +226,8 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: theme.radius.md,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.05)",
-    backgroundColor: "rgba(255,255,255,0.03)",
+    borderColor: line(0.05),
+    backgroundColor: tint(0.03),
     color: theme.colors.foreground,
     fontSize: 24,
     fontWeight: "700",
@@ -243,7 +243,7 @@ const styles = StyleSheet.create({
   },
   percentCard: {
     backgroundColor: theme.colors.card,
-    borderColor: "rgba(255,255,255,0.05)",
+    borderColor: line(0.05),
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     padding: theme.spacing[4],
@@ -253,7 +253,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 8,
-    borderBottomColor: "rgba(255,255,255,0.05)",
+    borderBottomColor: line(0.05),
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   percentLabel: {

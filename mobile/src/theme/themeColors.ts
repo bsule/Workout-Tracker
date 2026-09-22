@@ -18,6 +18,18 @@ export const darkColors = {
   muted: "#9a9a9a",
   accent: "#3ee6c0",
   inputBg: "#161616",
+  // RGB of the translucent overlay used for subtle fills and hairlines:
+  // white on the dark palette, black on the light one. Read it through
+  // tint() / line() in theme.ts, not directly.
+  overlayRgb: "255,255,255",
+  // PR marks. `pr` is the gold badge fill, `prText` is gold used as text
+  // (a set number), and `prHistorical` is the fill of a past-PR badge.
+  pr: "#e0c050",
+  prText: "#e0c050",
+  prHistorical: "#9a9a9a",
+  prHistoricalText: "#1a1a1a",
+  // Gold for the best-1RM marker on the rep rows.
+  gold: "#facc15",
   cat: {
     abs: "#22d3ee",
     back: "#22c55e",
@@ -31,9 +43,6 @@ export const darkColors = {
 }
 
 // Light tokens mirror frontend/app/globals.css :root (dark stripped).
-// Many StyleSheets in the app still hardcode `rgba(255,255,255,0.x)`
-// for borders/dim text — those will look off in light mode until
-// migrated, which is acceptable for the first pass.
 export const lightColors: typeof darkColors = {
   background: "#fafafa",
   foreground: "#262626",
@@ -50,6 +59,12 @@ export const lightColors: typeof darkColors = {
   muted: "#666666",
   accent: "#0d9488",
   inputBg: "#f5f5f5",
+  overlayRgb: "0,0,0",
+  pr: "#e0b030",
+  prText: "#a16207",
+  prHistorical: "#e5e5e5",
+  prHistoricalText: "#525252",
+  gold: "#ca8a04",
   cat: {
     abs: "#0e7490",
     back: "#15803d",
