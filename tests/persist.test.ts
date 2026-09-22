@@ -463,13 +463,40 @@ describe("hydrate: damaged snapshot fallback", () => {
     expect(s.lastWritten).toBeNull()
   })
 
-  it("starts fresh, without overwriting anything, when no copy parses", async () => {
+  it("refuses to open an empty store when every existing copy is damaged", async () => {
     const { s } = withCandidates([garbage, garbage])
     setStorageFactory(() => s)
     configure(freshKey())
-    await hydrate()
-    expect(currentSnapshot().workouts).toEqual([])
+    await expect(hydrate()).rejects.toThrow("No snapshot copy could be loaded")
+    expect(getState().hydrated).toBe(false)
+    await flushNow()
     expect(s.lastWritten).toBeNull()
+  })
+
+  it("preserves files and pending edits when every read fails", async () => {
+    const s = memoryStorage()
+    s.pending.push('{"op":"set_day_note","date":"2026-09-21","text":"Keep me"}')
+    s.snapshotCandidates = () => [async () => { throw new Error("I/O failed") }]
+    setStorageFactory(() => s)
+    configure(freshKey())
+    await expect(hydrate()).rejects.toThrow("No snapshot copy could be loaded")
+    await flushNow()
+    expect(s.lastWritten).toBeNull()
+    expect(s.pending).toHaveLength(1)
+    expect(getState().hydrated).toBe(false)
+  })
+
+  it("does not fall back or write over a snapshot from a newer app", async () => {
+    const snap = emptySnapshot("newer-device")
+    snap.schema_version += 1
+    const { gzipSync, strToU8 } = await import("fflate")
+    const { s, loaded } = withCandidates([gzipSync(strToU8(JSON.stringify(snap))), await named("Old")])
+    setStorageFactory(() => s)
+    configure(freshKey())
+    await expect(hydrate()).rejects.toMatchObject({ name: "SnapshotTooNewError" })
+    expect(loaded).toEqual([0])
+    expect(s.lastWritten).toBeNull()
+    expect(getState().hydrated).toBe(false)
   })
 })
 
@@ -575,5 +602,132 @@ describe("configure: user switch", () => {
     configure(key)
     expect(getState().hydrated).toBe(true)
     expect(currentSnapshot().exercises.some((e) => e.name === "Kept")).toBe(true)
+  })
+})
+
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>((r) => { resolve = r })
+  return { promise, resolve }
+}
+
+describe("persistence interruption regressions", () => {
+  it("keeps edits made during a slow save in the crash log", async () => {
+    const base = memoryStorage()
+    const entered = deferred()
+    const release = deferred()
+    setStorageFactory(() => ({
+      ...base,
+      async writeSnapshot(bytes, stats) {
+        entered.resolve()
+        await release.promise
+        await base.writeSnapshot(bytes, stats)
+      },
+    }))
+    configure(freshKey())
+    loadSnapshot(blankSnapshot())
+    M.createExercise({ name: "Before save", category: "back" })
+    const saving = flushNow()
+    await entered.promise
+    M.createExercise({ name: "During save", category: "back" })
+    release.resolve()
+    await saving
+    expect(base.pending.some((line) => line.includes("During save"))).toBe(true)
+    expect(getState().local_dirty_since).not.toBeNull()
+    await flushNow()
+    expect(base.pending).toEqual([])
+    expect((await parse(base.lastWritten!)).snapshot.exercises.map((e) => e.name))
+      .toEqual(["Before save", "During save"])
+  })
+
+  it("does not load a completed restore into a different account", async () => {
+    const base = memoryStorage()
+    const entered = deferred()
+    const release = deferred()
+    const oldKey = freshKey()
+    setStorageFactory((key) => key === oldKey ? {
+      ...base,
+      async writeSnapshot(bytes, stats) {
+        entered.resolve()
+        await release.promise
+        await base.writeSnapshot(bytes, stats)
+      },
+    } : storageFor(key))
+    configure(oldKey)
+    const incoming = blankSnapshot()
+    incoming.exercises = [exercise(1, "Old account")]
+    const replacing = replaceSnapshotFromBytes(await serialize(incoming))
+    await entered.promise
+    configure(freshKey())
+    await hydrate()
+    release.resolve()
+    await expect(replacing).rejects.toThrow("account changed")
+    expect(currentSnapshot().exercises).toEqual([])
+  })
+
+  it("rechecks the account after quarantining damaged copies", async () => {
+    const entered = deferred()
+    const release = deferred()
+    const oldKey = freshKey()
+    const incoming = blankSnapshot()
+    incoming.exercises = [exercise(1, "Old account")]
+    const bytes = await serialize(incoming)
+    setStorageFactory((key) => key === oldKey ? {
+      ...memoryStorage(),
+      snapshotCandidates: () => [
+        async () => new Uint8Array([1, 2, 3]),
+        async () => bytes,
+      ],
+      async discardSnapshotCopies() {
+        entered.resolve()
+        await release.promise
+      },
+    } : storageFor(key))
+    const log = vi.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      configure(oldKey)
+      const loading = hydrate()
+      await entered.promise
+      configure(freshKey())
+      await hydrate()
+      release.resolve()
+      await loading
+      expect(currentSnapshot().exercises).toEqual([])
+    } finally {
+      release.resolve()
+      log.mockRestore()
+    }
+  })
+})
+
+describe("sign-out during a save", () => {
+  it("waits for the active save and persists newer batched edits before unloading", async () => {
+    const base = memoryStorage()
+    const entered = deferred()
+    const release = deferred()
+    const key = freshKey()
+    setStorageFactory(() => ({
+      ...base,
+      async writeSnapshot(bytes, stats) {
+        entered.resolve()
+        await release.promise
+        await base.writeSnapshot(bytes, stats)
+      },
+    }))
+    configure(key)
+    loadSnapshot(blankSnapshot())
+    M.createExercise({ name: "First", category: "back" })
+    const saving = flushNow()
+    await entered.promise
+    await runBatched(() => M.createExercise({ name: "Latest", category: "back" }))
+    const signingOut = unload()
+    release.resolve()
+    await Promise.all([saving, signingOut])
+    expect(getState().hydrated).toBe(false)
+    expect((await parse(base.lastWritten!)).snapshot.exercises.map((e) => e.name))
+      .toEqual(["First", "Latest"])
+    configure(key)
+    await hydrate()
+    expect(currentSnapshot().exercises.map((e) => e.name)).toEqual(["First", "Latest"])
   })
 })
