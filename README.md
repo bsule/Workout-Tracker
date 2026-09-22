@@ -1,6 +1,6 @@
 # Workout Tracker
 
-Local-first workout tracker. Plan routines, log weight/reps per set, watch your estimated 1RM trend, import from / export to FitNotes. The web and mobile apps share a single TypeScript core and sync through a Cloudflare Worker.
+Local-first workout tracker, inspired by FitNotes. Plan routines, log weight/reps per set, watch your estimated 1RM trend, import from / export to FitNotes. The web and mobile apps share a single TypeScript core and sync through a Cloudflare Worker.
 
 ## Layout
 
