@@ -21,6 +21,7 @@ import {
   clearSyncClock,
   configureSyncClock,
   sync as syncModule,
+  unloadStore,
 } from "@lift/core"
 import {
   readStoredEtag,
@@ -133,6 +134,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   )
 
   const logout = useCallback(async () => {
+    try {
+      await unloadStore()
+    } catch (e) {
+      console.error("Failed to unload store on logout:", e)
+    }
     try {
       await api.logout()
     } catch {

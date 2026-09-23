@@ -8,13 +8,21 @@ import {
   Download,
   Loader2,
   Moon,
+  Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Sparkles,
   Sun,
   Trash2,
   Upload,
+  X,
 } from "lucide-react"
+import {
+  COLOR_PALETTE,
+  useCategoryStyles,
+} from "@/components/categories/CategoryStylesProvider"
+import type { Category } from "@/types"
 import { AI_PROVIDERS } from "@/lib/ai"
 import { clearApiKey, getApiKey, setApiKey } from "@/lib/ai/keys"
 import type { AIProviderId } from "@lift/core"
@@ -69,6 +77,7 @@ export default function SettingsPage() {
 
       <AccountSection username={user.username} email={user.email} onSaved={refreshUser} />
       <DisplaySection />
+      <CategoriesSection />
       <AiSection />
       <GymsSection />
       <CloudSyncSection />
@@ -752,6 +761,24 @@ function DisplaySection() {
     } finally { setBusy(null) }
   }
 
+  async function changeTimeSinceLastSet(v: string) {
+    setBusy("timesince"); setError(null)
+    try {
+      await update({ show_time_since_last_set: v === "1" })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed.")
+    } finally { setBusy(null) }
+  }
+
+  async function changeLastTime(v: string) {
+    setBusy("lasttime"); setError(null)
+    try {
+      await update({ show_last_time: v === "1" })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed.")
+    } finally { setBusy(null) }
+  }
+
   return (
     <Section title="Display" description="Affects how weights, the calendar, and colors look across the app.">
       <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
@@ -833,8 +860,270 @@ function DisplaySection() {
           />
           {busy === "rest" && <p className="mt-1 text-xs text-muted-foreground">Saving…</p>}
         </div>
+        <div>
+          <FieldLabel>Time since last set</FieldLabel>
+          <Dropdown
+            value={(settings.show_time_since_last_set ?? true) ? "1" : "0"}
+            onChange={changeTimeSinceLastSet}
+            options={[
+              { value: "1", label: "Show live timer under set list" },
+              { value: "0", label: "Hide" },
+            ]}
+          />
+          {busy === "timesince" && <p className="mt-1 text-xs text-muted-foreground">Saving…</p>}
+        </div>
+        <div>
+          <FieldLabel>Last time & records card</FieldLabel>
+          <Dropdown
+            value={(settings.show_last_time ?? true) ? "1" : "0"}
+            onChange={changeLastTime}
+            options={[
+              { value: "1", label: "Show under set list" },
+              { value: "0", label: "Hide" },
+            ]}
+          />
+          {busy === "lasttime" && <p className="mt-1 text-xs text-muted-foreground">Saving…</p>}
+        </div>
       </div>
       {error && <StatusLine kind="error" msg={error} />}
+    </Section>
+  )
+}
+
+function CategoriesSection() {
+  const {
+    categories,
+    labels,
+    colors,
+    setLabel,
+    setColor,
+    resetCategory,
+    isDefault,
+    addCategory,
+    removeCategory,
+  } = useCategoryStyles()
+  const confirm = useConfirm()
+  const [editing, setEditing] = useState<Category | null>(null)
+  const [draftLabel, setDraftLabel] = useState("")
+  const [adding, setAdding] = useState(false)
+  const [newLabel, setNewLabel] = useState("")
+  const [newColor, setNewColor] = useState(COLOR_PALETTE[0])
+  const [error, setError] = useState<string | null>(null)
+
+  function openEdit(c: Category) {
+    setEditing(c)
+    setDraftLabel(labels[c] ?? c)
+    setAdding(false)
+    setError(null)
+  }
+
+  function saveEdit() {
+    if (!editing) return
+    const trimmed = draftLabel.trim()
+    if (!trimmed) {
+      setError("Label cannot be empty.")
+      return
+    }
+    setLabel(editing, trimmed)
+    setEditing(null)
+    setError(null)
+  }
+
+  function handleReset(c: Category) {
+    resetCategory(c)
+    if (editing === c) {
+      setDraftLabel(labels[c] ?? c)
+    }
+  }
+
+  async function handleDelete(c: Category) {
+    if (isDefault(c)) return
+    const ok = await confirm({
+      title: `Delete category "${labels[c]}"?`,
+      message: "Exercises in this category will keep their history, but you should reassign their category.",
+      destructive: true,
+      confirmLabel: "Delete",
+    })
+    if (!ok) return
+    removeCategory(c)
+    if (editing === c) setEditing(null)
+  }
+
+  function handleAdd() {
+    const trimmed = newLabel.trim()
+    if (!trimmed) {
+      setError("Category name is required.")
+      return
+    }
+    const slug = addCategory(trimmed, newColor)
+    if (!slug) {
+      setError("Category with this name or slug already exists.")
+      return
+    }
+    setNewLabel("")
+    setNewColor(COLOR_PALETTE[Math.floor(Math.random() * COLOR_PALETTE.length)])
+    setAdding(false)
+    setError(null)
+  }
+
+  return (
+    <Section title="Categories" description="Customize category names and colors across the app.">
+      <div className="space-y-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {categories.map((c) => {
+            const isEditing = editing === c
+            const label = labels[c] ?? c
+            const hex = colors[c]
+            const isBuiltin = isDefault(c)
+            return (
+              <div
+                key={c}
+                className={cn(
+                  "rounded-lg border border-white/10 bg-white/[.02] p-3 transition-colors",
+                  isEditing && "border-primary/50 bg-white/[.04]"
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span
+                      className="size-3.5 rounded-full shrink-0"
+                      style={{ backgroundColor: hex ?? `var(--color-${c}, #888)` }}
+                    />
+                    <span className="text-sm font-medium truncate">{label}</span>
+                    {isBuiltin ? (
+                      <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-muted-foreground shrink-0">
+                        Default
+                      </span>
+                    ) : (
+                      <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary shrink-0">
+                        Custom
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => (isEditing ? setEditing(null) : openEdit(c))}
+                      className="rounded p-1 text-muted-foreground hover:bg-white/10 hover:text-foreground"
+                      aria-label={isEditing ? "Close" : `Edit ${label}`}
+                    >
+                      {isEditing ? <X className="size-3.5" /> : <Pencil className="size-3.5" />}
+                    </button>
+                    {isBuiltin ? (
+                      <button
+                        type="button"
+                        onClick={() => handleReset(c)}
+                        title="Reset label and color"
+                        className="rounded p-1 text-muted-foreground hover:bg-white/10 hover:text-foreground"
+                        aria-label={`Reset ${label}`}
+                      >
+                        <RotateCcw className="size-3.5" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(c)}
+                        className="rounded p-1 text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
+                        aria-label={`Delete ${label}`}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {isEditing && (
+                  <div className="mt-3 pt-3 border-t border-white/5 space-y-3">
+                    <div>
+                      <label className="text-xs text-muted-foreground">Label</label>
+                      <input
+                        type="text"
+                        value={draftLabel}
+                        onChange={(e) => setDraftLabel(e.target.value)}
+                        className="mt-1 w-full rounded-md border border-white/10 bg-white/[.04] px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">Color</label>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {COLOR_PALETTE.map((pColor) => (
+                          <button
+                            key={pColor}
+                            type="button"
+                            onClick={() => setColor(c, pColor)}
+                            className={cn(
+                              "size-5 rounded-full border transition-transform",
+                              hex === pColor ? "scale-125 border-white ring-2 ring-primary/40" : "border-transparent hover:scale-110"
+                            )}
+                            style={{ backgroundColor: pColor }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <Button size="sm" variant="outline" onClick={() => setEditing(null)}>
+                        Done
+                      </Button>
+                      <Button size="sm" onClick={saveEdit}>
+                        Save
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {adding ? (
+          <div className="rounded-lg border border-primary/40 bg-white/[.03] p-4 space-y-3">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-primary">New Category</h4>
+            <div>
+              <label className="text-xs text-muted-foreground">Name</label>
+              <input
+                type="text"
+                value={newLabel}
+                placeholder="e.g. Calisthenics"
+                onChange={(e) => setNewLabel(e.target.value)}
+                className="mt-1 w-full rounded-md border border-white/10 bg-white/[.04] px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary/50"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Color</label>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {COLOR_PALETTE.map((pColor) => (
+                  <button
+                    key={pColor}
+                    type="button"
+                    onClick={() => setNewColor(pColor)}
+                    className={cn(
+                      "size-5 rounded-full border transition-transform",
+                      newColor === pColor ? "scale-125 border-white ring-2 ring-primary/40" : "border-transparent hover:scale-110"
+                    )}
+                    style={{ backgroundColor: pColor }}
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button size="sm" variant="outline" onClick={() => setAdding(false)}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleAdd}>
+                Create Category
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button variant="outline" size="sm" onClick={() => setAdding(true)} className="gap-1.5">
+            <Plus className="size-3.5" />
+            Add Category
+          </Button>
+        )}
+
+        {error && <StatusLine kind="error" msg={error} />}
+      </div>
     </Section>
   )
 }

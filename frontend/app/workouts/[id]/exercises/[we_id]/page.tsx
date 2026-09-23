@@ -19,16 +19,24 @@ import {
   setExerciseNote,
 } from "@/lib/store"
 import { FullPageLoader, LoadingBlock } from "@/components/ui/Spinner"
+import { Button } from "@/components/ui/button"
+import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { getWorkoutQ, getExerciseHistoryQ } from "@/lib/store/queries"
 import { useAuth } from "@/components/auth/AuthProvider"
 import { CategoryDot } from "@/components/exercises/CategoryBadge"
+import { useCategoryStyles } from "@/components/categories/CategoryStylesProvider"
+import {
+  useShowLastTime,
+  useWeightUnit,
+} from "@/components/settings/SettingsProvider"
 import { ExerciseNoteField } from "@/components/workouts/ExerciseNoteField"
 import { SetLogger } from "@/components/workouts/SetLogger"
+import { LastTimePanel } from "@/components/workouts/LastTimePanel"
 import { ExerciseChart } from "@/components/workouts/ExerciseChart"
 import { ExerciseHistory } from "@/components/workouts/ExerciseHistory"
 import { ExerciseSummary } from "@/components/workouts/ExerciseSummary"
 import { cn } from "@/lib/utils"
-import type { ExerciseHistoryDay } from "@/types"
+import type { Category, Exercise, ExerciseHistoryDay } from "@/types"
 
 type Tab = "track" | "chart" | "summary" | "history" | "settings"
 
@@ -41,6 +49,8 @@ export default function ExerciseLoggerPage({
   const router = useRouter()
   const { user, loading } = useAuth()
   const hydrated = useHydrated()
+  const unit = useWeightUnit()
+  const showLastTime = useShowLastTime()
   // Subscribe to the snapshot reference so we re-render on any mutation.
   // Materialization is done via useMemo below — calling getWorkoutQ inside
   // useStore directly would trip useSyncExternalStore's getSnapshot cache.
@@ -148,13 +158,25 @@ export default function ExerciseLoggerPage({
         history === null ? (
           <LoadingBlock />
         ) : (
-          <SetLogger
-            workoutExerciseId={we.id}
-            sets={we.sets}
-            fallback={getPreviousFirstSet(allHistory, workout?.date)}
-            isPlanned={workout?.status === "planned"}
-            prevWorkoutLastSetIso={getPriorExerciseLastSetIso(workout, we.id)}
-          />
+          <div className="space-y-6">
+            <SetLogger
+              workoutExerciseId={we.id}
+              sets={we.sets}
+              fallback={getPreviousTopSet(allHistory, workout?.date)}
+              isPlanned={workout?.status === "planned"}
+              prevWorkoutLastSetIso={getPriorExerciseLastSetIso(workout, we.id)}
+            />
+            {showLastTime && workout && (
+              <LastTimePanel
+                days={allHistory}
+                currentDate={workout.date}
+                nextPosition={we.sets.filter((s) => !s.is_planned).length + 1}
+                isWeightReps={we.exercise.kind === "weight_reps"}
+                unit={unit}
+                onShowMore={() => setTab("summary")}
+              />
+            )}
+          </div>
         )
       )}
 
@@ -185,41 +207,169 @@ export default function ExerciseLoggerPage({
         )
       )}
 
-      {tab === "settings" && <ExerciseSettingsPanel />}
+      {tab === "settings" && we && (
+        <ExerciseSettingsPanel
+          exercise={we.exercise}
+          onDeleted={() => {
+            router.replace(workout ? `/workouts/date/${workout.date}` : "/workouts")
+          }}
+        />
+      )}
     </div>
   )
 }
 
-function ExerciseSettingsPanel() {
+function ExerciseSettingsPanel({
+  exercise,
+  onDeleted,
+}: {
+  exercise: Exercise
+  onDeleted: () => void
+}) {
+  const confirm = useConfirm()
+  const { categories, labels } = useCategoryStyles()
+  const [name, setName] = useState(exercise.name)
+  const [category, setCategory] = useState<Category>(exercise.category)
+  const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault()
+    const trimmed = name.trim()
+    if (!trimmed) {
+      setError("Name cannot be empty.")
+      return
+    }
+    setSaving(true)
+    setError(null)
+    setSaved(false)
+    try {
+      await api.patchExercise(exercise.id, { name: trimmed, category })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save exercise")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDelete() {
+    const ok = await confirm({
+      title: `Delete "${exercise.name}"?`,
+      message:
+        (exercise.workouts_count ?? 0) > 0
+          ? `Past workouts that logged "${exercise.name}" will keep their history, but it will be removed from your exercise list.`
+          : `"${exercise.name}" will be permanently removed.`,
+      destructive: true,
+      confirmLabel: "Delete Exercise",
+    })
+    if (!ok) return
+    setDeleting(true)
+    try {
+      await api.deleteExercise(exercise.id)
+      onDeleted()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete exercise")
+      setDeleting(false)
+    }
+  }
+
   return (
-    <div className="space-y-3">
-      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-        Tools
-      </p>
-      <Link
-        href="/one-rep-max"
-        className="group flex items-start gap-3 rounded-xl border border-white/10 bg-white/[.02] p-4 hover:border-white/20 hover:bg-white/[.04] transition-colors"
-      >
-        <div className="flex-1">
-          <p className="text-sm font-semibold text-foreground">
-            1 Rep Max Calculator
-          </p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Plug in any weight × reps to estimate your 1RM and a percentage
-            table.
-          </p>
+    <div className="space-y-6">
+      <form onSubmit={handleSave} className="space-y-4 rounded-xl border border-white/10 bg-white/[.02] p-5">
+        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+          Exercise Details
+        </p>
+
+        <div>
+          <label className="text-xs font-medium text-muted-foreground">Name</label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="mt-1 w-full rounded-md border border-white/10 bg-white/[.04] px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+          />
         </div>
-        <ChevronLeft className="size-4 rotate-180 text-muted-foreground group-hover:text-foreground transition-colors" />
-      </Link>
+
+        <div>
+          <label className="text-xs font-medium text-muted-foreground">Category</label>
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value as Category)}
+            className="mt-1 w-full rounded-md border border-white/10 bg-white/[.04] px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+          >
+            {categories.map((c) => (
+              <option key={c} value={c} className="bg-neutral-900 text-foreground">
+                {labels[c] ?? c}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {error && <p className="text-xs text-destructive">{error}</p>}
+
+        <div className="flex items-center justify-between pt-1">
+          <Button type="submit" size="sm" disabled={saving}>
+            {saving ? "Saving…" : saved ? "Saved!" : "Save Changes"}
+          </Button>
+        </div>
+      </form>
+
+      <div className="space-y-3">
+        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+          Tools
+        </p>
+        <Link
+          href="/one-rep-max"
+          className="group flex items-start gap-3 rounded-xl border border-white/10 bg-white/[.02] p-4 hover:border-white/20 hover:bg-white/[.04] transition-colors"
+        >
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-foreground">
+              1 Rep Max Calculator
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Plug in any weight × reps to estimate your 1RM and a percentage table.
+            </p>
+          </div>
+          <ChevronLeft className="size-4 rotate-180 text-muted-foreground group-hover:text-foreground transition-colors" />
+        </Link>
+      </div>
+
+      <div className="space-y-3 pt-2">
+        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-destructive/80">
+          Danger Zone
+        </p>
+        <div className="rounded-xl border border-destructive/20 bg-destructive/[.03] p-4 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-foreground">Delete this exercise</p>
+            <p className="text-xs text-muted-foreground">
+              Removes it from your exercise list.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            disabled={deleting}
+            onClick={handleDelete}
+          >
+            {deleting ? "Deleting…" : "Delete"}
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }
 
 /**
- * Most recent prior workout's first set, used to pre-fill the SetLogger when
- * the current day has no sets logged yet.
+ * Most recent prior workout's top set (heaviest weight, earliest on a tie),
+ * used to pre-fill the SetLogger when the current day has no sets logged yet.
+ * Matches mobile's prefill.
  */
-function getPreviousFirstSet(
+function getPreviousTopSet(
   history: ExerciseHistoryDay[],
   currentDate: string | undefined
 ): { weight: number; reps: number } | null {
@@ -235,9 +385,9 @@ function getPreviousFirstSet(
         s.weight != null && s.reps != null,
     )
     .sort((a, b) => a.order - b.order || a.id - b.id)
-  const first = ordered[0]
-  if (!first) return null
-  return { weight: first.weight, reps: first.reps }
+  if (!ordered.length) return null
+  const top = ordered.reduce((best, s) => (s.weight > best.weight ? s : best))
+  return { weight: top.weight, reps: top.reps }
 }
 
 function getPriorExerciseLastSetIso(
