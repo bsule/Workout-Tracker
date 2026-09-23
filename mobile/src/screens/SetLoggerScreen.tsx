@@ -4524,7 +4524,7 @@ const SetList = memo(function SetList({
           No sets logged yet. Log your first set above.
         </Text>
       </View>
-      {showTimeSinceLastSet && emptyAnchorMs != null && (
+      {showTimeSinceLastSet && (
         <RestTicker anchorMs={emptyAnchorMs} onReset={onTimerReset} onStop={onTimerStop} />
       )}
     </View>
@@ -4623,7 +4623,7 @@ const SetList = memo(function SetList({
           />
         )
       })}
-      {showTimeSinceLastSet && listAnchorMs != null && (
+      {showTimeSinceLastSet && (
         <RestTicker anchorMs={listAnchorMs} onReset={onTimerReset} onStop={onTimerStop} />
       )}
     </View>}

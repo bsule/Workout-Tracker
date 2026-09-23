@@ -25,30 +25,49 @@ const TINT_MS = 700
 /** Past this the user is presumed not mid-workout and the line is noise. */
 const HIDE_AFTER_S = 1800
 
+function elapsedS(anchorMs: number): number {
+  return Math.max(0, Math.floor((Date.now() - anchorMs) / 1000))
+}
+
 /**
  * The set logger's ticking "Xs since last set" / "Xm Ys since last set"
  * line. A tap opens Reset timer / Stop timer, each with its own motion.
- * `anchorMs` is what it counts from (tickerAnchor in restTimer/plan.ts).
+ * `anchorMs` is what it counts from (tickerAnchor in restTimer/plan.ts);
+ * null means there is nothing to count from.
+ *
+ * The parent keeps this mounted and the line hides itself, so that losing
+ * the anchor (deleting the set it counted from, the 30 minute cutoff) shuts
+ * the line with the same motion as Stop timer instead of dropping it in one
+ * frame.
  */
 export function RestTicker({
   anchorMs,
   onReset,
   onStop,
 }: {
-  anchorMs: number
+  anchorMs: number | null
   onReset: () => void
   onStop: () => void
 }) {
+  const shown = anchorMs != null && elapsedS(anchorMs) <= HIDE_AFTER_S
+  // True once the line has fully shut and renders nothing.
+  const [closed, setClosed] = useState(!shown)
+  // What the label counts from while the line shuts on a null anchor.
+  const lastAnchor = useRef(anchorMs)
+  if (anchorMs != null) lastAnchor.current = anchorMs
+
   // Re-renders 10x/sec; the displayed value reads Date.now() at render time
   // (NOT captured state), so any momentary JS-thread stall during a
   // mutation/persist can only delay the visible second-flip by up to
-  // ~100ms before the next tick re-reads the clock. Empty deps keep the
-  // interval alive across anchorMs changes.
+  // ~100ms before the next tick re-reads the clock. Keyed on `closed` only,
+  // so the interval stays alive across anchorMs changes. A shut line only
+  // opens again on a new anchor, which is a prop change, so it needs no tick.
   const [, force] = useState(0)
   useEffect(() => {
+    if (closed) return
     const id = setInterval(() => force((c) => c + 1), 100)
     return () => clearInterval(id)
-  }, [])
+  }, [closed])
 
   // Opacity and translateY on the native driver. The tint is a color, which
   // the native driver cannot animate, so it lives on the inner Text alone.
@@ -63,13 +82,14 @@ export function RestTicker({
   const [collapsing, setCollapsing] = useState(false)
   // A second pick while one motion is running would stack the two.
   const busy = useRef(false)
-  // Set once Stop has shut the line. The parent normally unmounts it then,
-  // but a set whose created_at is later than the stop (synced from a device
+  // Set once Stop has shut the line. The anchor normally goes null then and
+  // the line stays shut, but a set whose created_at is later than the stop (synced from a device
   // with a fast clock) keeps it on screen at zero height. The next anchor is
   // a newly saved set, so open the line again for it.
   const stopped = useRef(false)
   useEffect(() => {
-    if (!stopped.current) return
+    // A null anchor is Stop landing; the effect below keeps the line shut.
+    if (!stopped.current || anchorMs == null) return
     stopped.current = false
     opacity.setValue(1)
     shiftY.setValue(0)
@@ -90,27 +110,69 @@ export function RestTicker({
     [opacity, shiftY, tint, collapse]
   )
 
+  const leave = useCallback(
+    (ms: number, toY: number) =>
+      Animated.parallel([
+        Animated.timing(opacity, { toValue: 0, duration: ms, easing: EASE.in, useNativeDriver: true }),
+        Animated.timing(shiftY, { toValue: toY, duration: ms, easing: EASE.in, useNativeDriver: true }),
+      ]),
+    [opacity, shiftY]
+  )
+  // The Stop timer motion, also used when the anchor goes away on its own.
+  const shut = useCallback(() => {
+    setCollapsing(true)
+    return Animated.parallel([
+      Animated.timing(collapse, {
+        toValue: 0,
+        duration: STOP_MS,
+        easing: EASE.inOut,
+        useNativeDriver: false,
+      }),
+      leave(STOP_FADE_MS, -ROLL_PX / 2),
+    ])
+  }, [collapse, leave])
+
+  // The anchor went away (its set was deleted, or 30 minutes passed): shut
+  // the line like Stop timer. A new anchor opens it again at rest, with no
+  // motion, the same as a line that mounts.
+  const hiding = useRef(false)
+  useEffect(() => {
+    if (shown) {
+      if (!closed && !hiding.current) return
+      hiding.current = false
+      stopped.current = false
+      busy.current = false
+      collapse.stopAnimation()
+      opacity.setValue(1)
+      shiftY.setValue(0)
+      collapse.setValue(1)
+      setCollapsing(false)
+      setClosed(false)
+      return
+    }
+    if (closed || hiding.current) return
+    hiding.current = true
+    // Stop timer already shut it; the null anchor is that landing.
+    if (stopped.current) {
+      setClosed(true)
+      return
+    }
+    busy.current = true
+    shut().start(({ finished }) => {
+      // Not finished: a new anchor reopened the line mid-motion, or the
+      // screen is leaving.
+      if (!finished || !hiding.current) return
+      setClosed(true)
+    })
+  }, [shown, closed, shut, opacity, shiftY, collapse])
+
   const onSelect = useCallback(
     (id: string) => {
       if (id !== "reset" && id !== "stop") return
       if (busy.current) return
       busy.current = true
-      const leave = (ms: number, toY: number) =>
-        Animated.parallel([
-          Animated.timing(opacity, { toValue: 0, duration: ms, easing: EASE.in, useNativeDriver: true }),
-          Animated.timing(shiftY, { toValue: toY, duration: ms, easing: EASE.in, useNativeDriver: true }),
-        ])
       if (id === "stop") {
-        setCollapsing(true)
-        Animated.parallel([
-          Animated.timing(collapse, {
-            toValue: 0,
-            duration: STOP_MS,
-            easing: EASE.inOut,
-            useNativeDriver: false,
-          }),
-          leave(STOP_FADE_MS, -ROLL_PX / 2),
-        ]).start(() => {
+        shut().start(() => {
           busy.current = false
           stopped.current = true
           // Already zero height, so dropping the line moves nothing.
@@ -140,11 +202,11 @@ export function RestTicker({
         }).start()
       })
     },
-    [opacity, shiftY, tint, collapse, onReset, onStop]
+    [opacity, shiftY, tint, leave, shut, onReset, onStop]
   )
 
-  const elapsed = Math.max(0, Math.floor((Date.now() - anchorMs) / 1000))
-  if (elapsed > HIDE_AFTER_S) return null
+  if (closed || lastAnchor.current == null) return null
+  const elapsed = elapsedS(lastAnchor.current)
   let label: string
   if (elapsed < 60) {
     label = `${elapsed}s`
