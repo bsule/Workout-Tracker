@@ -17,9 +17,10 @@ let unloading: Promise<void> = Promise.resolve()
 
 /** Sign-out: end the rest timer, save the store, then drop it from memory.
  *  The timer names the signed-out user's exercise, and no later set of theirs
- *  will end or replace it. */
+ *  will end or replace it. A manual reset or stop goes with it. */
 export function unloadForSignOut(): Promise<void> {
   restTimer.disable()
+  restTimer.clearMark()
   unloading = unloading.then(unloadStore).catch((e) => {
     console.error("Failed to unload the store", e)
   })

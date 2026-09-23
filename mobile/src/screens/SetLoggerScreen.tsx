@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react"
 import {
@@ -68,6 +69,7 @@ import { PopupModal } from "../components/PopupModal"
 import { HoldPressable } from "../components/HoldPressable"
 import { MenuButton, MenuPopup, type MenuAction } from "../components/MenuPopup"
 import { NotePreview } from "../components/NotePreview"
+import { RestTicker } from "../components/RestTicker"
 import { NoteReveal } from "../components/NoteReveal"
 import { NoteSheet } from "../components/NoteSheet"
 import { OverlayCard, overlayCardStyles } from "../components/OverlayCard"
@@ -92,7 +94,7 @@ import { pressedStyle } from "../theme/pressable"
 import { theme, line, tint } from "../theme/theme"
 import { useSettings, useWeightUnit } from "../settings/SettingsProvider"
 import { todayString } from "../dates"
-import { restTimer } from "../restTimer"
+import { lastSetAnchorMs, restTimer, tickerAnchor } from "../restTimer"
 import { SubTabBar, type SubTab } from "../components/SubTabBar"
 
 
@@ -145,33 +147,6 @@ function predictPrFlags(
     }
   }
   return { isPr, isPosPr, position }
-}
-
-// Ticking "Xs since last set" / "Xm Ys since last set" label. Hides when
-// elapsed > 30 min — at that point the user is presumed not mid-workout
-// anymore and the indicator is noise. Updates once a second.
-function TimeSinceLastSet({ anchorMs }: { anchorMs: number }) {
-  // Tick 10x/sec; the displayed value reads Date.now() at render time
-  // (NOT captured state), so any momentary JS-thread stall during a
-  // mutation/persist can only delay the visible second-flip by up to
-  // ~100ms before the next tick re-reads the clock. Empty deps keep the
-  // interval alive across anchorMs changes.
-  const [, force] = useState(0)
-  useEffect(() => {
-    const id = setInterval(() => force((c) => c + 1), 100)
-    return () => clearInterval(id)
-  }, [])
-  const elapsed = Math.max(0, Math.floor((Date.now() - anchorMs) / 1000))
-  if (elapsed > 1800) return null
-  let label: string
-  if (elapsed < 60) {
-    label = `${elapsed}s`
-  } else {
-    const m = Math.floor(elapsed / 60)
-    const s = elapsed % 60
-    label = `${m}m ${s}s`
-  }
-  return <Text style={styles.timeSinceLastSet}>{label} since last set</Text>
 }
 
 function formatRest(prevIso: string | null | undefined, curIso: string): string | null {
@@ -1772,6 +1747,8 @@ export function SetLoggerScreen({ route, navigation }: any) {
               showRestTime={showRestTime}
               showTimeSinceLastSet={showTimeSinceLastSet}
               prevWorkoutLastSetIso={prevWorkoutLastSetIso}
+              exerciseName={we.exercise.name}
+              workoutDate={workout.date}
               selectedIds={selectedIds}
               pendingAdd={pendingAdd}
               leavingIds={leavingIds}
@@ -4464,6 +4441,8 @@ const SetList = memo(function SetList({
   showRestTime,
   showTimeSinceLastSet,
   prevWorkoutLastSetIso,
+  exerciseName,
+  workoutDate,
   selectedIds,
   pendingAdd,
   leavingIds,
@@ -4484,6 +4463,8 @@ const SetList = memo(function SetList({
   showRestTime: boolean
   showTimeSinceLastSet: boolean
   prevWorkoutLastSetIso: string | null
+  exerciseName: string
+  workoutDate: string
   selectedIds: number[]
   pendingAdd: {
     weight: number
@@ -4512,7 +4493,30 @@ const SetList = memo(function SetList({
   useEffect(() => () => swipeHold.releaseAll(), [swipeHold])
 
   const emptying = !pendingAdd && sets.every((set) => leavingIds.has(set.id))
-  const emptyAnchorMs = prevWorkoutLastSetIso ? Date.parse(prevWorkoutLastSetIso) : NaN
+  // A manual reset or stop from the ticker's menu. Not a set: it only moves
+  // what the ticker counts from (tickerAnchor), and only on this workout's day.
+  const timerMark = useSyncExternalStore(restTimer.subscribeMark, restTimer.getMark)
+  const onTimerReset = useCallback(
+    () => restTimer.reset(exerciseName, workoutDate),
+    [exerciseName, workoutDate]
+  )
+  const onTimerStop = useCallback(() => restTimer.stop(workoutDate), [workoutDate])
+  // With every row leaving, the empty state counts from the other exercise's
+  // last set, not from a row on its way out.
+  const emptyAnchorMs = tickerAnchor(
+    lastSetAnchorMs({ pendingAddMs: null, sets: [], fallbackIso: prevWorkoutLastSetIso }),
+    timerMark,
+    workoutDate
+  )
+  const listAnchorMs = tickerAnchor(
+    lastSetAnchorMs({
+      pendingAddMs: pendingAdd?.key ?? null,
+      sets,
+      fallbackIso: prevWorkoutLastSetIso,
+    }),
+    timerMark,
+    workoutDate
+  )
   const emptyContent = (
     <View>
       <View style={[styles.card, { borderStyle: "dashed", alignItems: "center" }]}>
@@ -4520,8 +4524,8 @@ const SetList = memo(function SetList({
           No sets logged yet. Log your first set above.
         </Text>
       </View>
-      {showTimeSinceLastSet && Number.isFinite(emptyAnchorMs) && (
-        <TimeSinceLastSet anchorMs={emptyAnchorMs} />
+      {showTimeSinceLastSet && emptyAnchorMs != null && (
+        <RestTicker anchorMs={emptyAnchorMs} onReset={onTimerReset} onStop={onTimerStop} />
       )}
     </View>
   )
@@ -4619,33 +4623,9 @@ const SetList = memo(function SetList({
           />
         )
       })}
-      {showTimeSinceLastSet && (() => {
-        // Anchor the rest-timer to whichever is most recent: a pending-add
-        // (user just clicked Save and the real row hasn't landed yet — its
-        // `key` is Date.now() at click time), the last logged set on the
-        // current exercise, or — if neither exists — the latest logged set
-        // from any other exercise in this workout. The last fallback keeps
-        // the ticker alive when the user switches exercises before logging
-        // anything on the new one.
-        let anchorMs: number | null = null
-        if (pendingAdd) {
-          anchorMs = pendingAdd.key
-        } else {
-          for (let i = sets.length - 1; i >= 0; i--) {
-            const s = sets[i]
-            if (s.is_planned) continue
-            const parsed = Date.parse(s.created_at)
-            if (Number.isFinite(parsed)) anchorMs = parsed
-            break
-          }
-          if (anchorMs == null && prevWorkoutLastSetIso) {
-            const parsed = Date.parse(prevWorkoutLastSetIso)
-            if (Number.isFinite(parsed)) anchorMs = parsed
-          }
-        }
-        if (anchorMs == null) return null
-        return <TimeSinceLastSet anchorMs={anchorMs} />
-      })()}
+      {showTimeSinceLastSet && listAnchorMs != null && (
+        <RestTicker anchorMs={listAnchorMs} onReset={onTimerReset} onStop={onTimerStop} />
+      )}
     </View>}
     </SetListEmptyTransition>
   )
@@ -4949,15 +4929,6 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.lg,
     marginTop: theme.spacing[2],
     overflow: "hidden",
-  },
-  timeSinceLastSet: {
-    color: theme.colors.muted,
-    fontSize: theme.fontSize.xs,
-    textAlign: "center",
-    paddingVertical: 6,
-    paddingHorizontal: theme.spacing[3],
-    borderTopColor: line(0.06),
-    borderTopWidth: StyleSheet.hairlineWidth,
   },
   setRow: {
     paddingHorizontal: theme.spacing[3],
