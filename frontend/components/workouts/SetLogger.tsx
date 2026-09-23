@@ -11,16 +11,19 @@ import {
 } from "lucide-react"
 import { PrIcon } from "@/components/workouts/PrIcon"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { Button } from "@/components/ui/button"
-import { localApi as api, logPlannedSet } from "@/lib/store"
+import { localApi as api, logPlannedSet, estimateOneRm } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { defaultStep, formatWeight, fromKg, roundForDisplay, toKg } from "@/lib/units"
 import {
+  useShowOneRm,
   useShowPositionPrs,
   useShowRestTime,
+  useShowTimeSinceLastSet,
   useWeightUnit,
 } from "@/components/settings/SettingsProvider"
+import { RestTicker } from "@/components/workouts/RestTicker"
 import type { WorkoutSet } from "@/types"
 
 interface Props {
@@ -33,16 +36,18 @@ interface Props {
   repsStep?: number
   /** When true, sets are saved as planned targets (workout.status === "planned"). */
   isPlanned?: boolean
-  /** ISO timestamp of the last logged set on the most recent prior workout day
-   *  for this exercise. Used to compute rest time before the first set of the
-   *  current workout. */
+  /** ISO timestamp of the latest logged set from any other exercise in this
+   *  workout. Used to compute rest time before this exercise's first set. */
   prevWorkoutLastSetIso?: string | null
 }
 
 function formatRest(prevIso: string | null | undefined, curIso: string): string | null {
   if (!prevIso) return null
   const diff = (Date.parse(curIso) - Date.parse(prevIso)) / 1000
-  if (!Number.isFinite(diff) || diff <= 30) return null
+  // Same 30-min cap as mobile: a longer gap isn't rest between sets (e.g. set
+  // 1 anchored to another exercise logged hours earlier in the day), so
+  // suppress the label instead of showing "1951m".
+  if (!Number.isFinite(diff) || diff <= 30 || diff > 1800) return null
   if (diff < 60) return `${Math.round(diff)}s`
   const m = Math.floor(diff / 60)
   const s = Math.round(diff % 60)
@@ -76,6 +81,20 @@ export function SetLogger({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const showTimeSinceLastSet = useShowTimeSinceLastSet()
+  const newestLoggedSet = [...sets].reverse().find((s) => !s.is_planned)
+  const newestIso = newestLoggedSet?.created_at ?? prevWorkoutLastSetIso ?? null
+  const baseAnchorMs = newestIso ? Date.parse(newestIso) : null
+  const [resetAnchorMs, setResetAnchorMs] = useState<{ forIso: string | null; at: number } | null>(null)
+
+  const activeAnchorMs = useMemo(() => {
+    if (!baseAnchorMs) return null
+    if (resetAnchorMs && resetAnchorMs.forIso === newestIso) {
+      return resetAnchorMs.at
+    }
+    return baseAnchorMs
+  }, [baseAnchorMs, resetAnchorMs, newestIso])
+
   async function save() {
     setError(null)
     if (reps <= 0) {
@@ -87,6 +106,7 @@ export function SetLogger({
       return
     }
     setSaving(true)
+    const tapTime = new Date().toISOString()
     try {
       if (isPlanned) {
         // Workout is still planned — record this as another target set.
@@ -102,11 +122,13 @@ export function SetLogger({
           logPlannedSet(nextPlanned.id, {
             weight: toKg(weight, unit),
             reps,
+            created_at: tapTime,
           })
         } else {
           await api.addSet(workoutExerciseId, {
             weight: toKg(weight, unit),
             reps,
+            created_at: tapTime,
           })
         }
       }
@@ -124,7 +146,7 @@ export function SetLogger({
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div className="rounded-2xl border border-white/10 bg-card/60 p-5 sm:p-6 shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset]">
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
           <NumericField
@@ -171,6 +193,13 @@ export function SetLogger({
           </p>
         )}
       </div>
+
+      {showTimeSinceLastSet && !isPlanned && activeAnchorMs && (
+        <RestTicker
+          anchorMs={activeAnchorMs}
+          onReset={() => setResetAnchorMs({ forIso: newestIso, at: Date.now() })}
+        />
+      )}
 
       <SetList
         sets={sets}
@@ -311,9 +340,10 @@ function SetRow({
   const unit = useWeightUnit()
   const showPositionPrs = useShowPositionPrs()
   const showRestTime = useShowRestTime()
+  const showOneRm = useShowOneRm()
   const [editing, setEditing] = useState(false)
-  const [weight, setWeight] = useState(roundForDisplay(fromKg(set.weight, unit), unit))
-  const [reps, setReps] = useState<number>(set.reps ?? 0)
+  const [weight, setWeight] = useState(0)
+  const [reps, setReps] = useState(0)
   const [busy, setBusy] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const [noteOpen, setNoteOpen] = useState(false)
@@ -323,6 +353,21 @@ function SetRow({
   // after Not hit do Edit + Delete reveal.
   const [missMode, setMissMode] = useState(false)
   const isPlannedRow = canHit && set.is_planned
+
+  const oneRm = useMemo(() => {
+    if (set.is_planned || set.weight == null || set.reps == null) return 0
+    return estimateOneRm(set.weight, set.reps)
+  }, [set.is_planned, set.weight, set.reps])
+
+  // Seed the edit fields from the set as it is now. Seeding once at mount
+  // went stale when the row's set changed underneath it (a target logged
+  // with a new weight), and saving the edit then wrote the old values back.
+  function startEdit() {
+    setWeight(roundForDisplay(fromKg(set.weight, unit), unit))
+    setReps(set.reps ?? 0)
+    setEditError(null)
+    setEditing(true)
+  }
 
   async function save() {
     if (reps <= 0) {
@@ -357,7 +402,11 @@ function SetRow({
     if (set.weight == null || set.reps == null) return
     setBusy(true)
     try {
-      logPlannedSet(set.id, { weight: set.weight, reps: set.reps })
+      logPlannedSet(set.id, {
+        weight: set.weight,
+        reps: set.reps,
+        created_at: new Date().toISOString(),
+      })
     } finally {
       setBusy(false)
     }
@@ -481,11 +530,16 @@ function SetRow({
           </span>
           <span
             className={cn(
-              "text-right text-xl font-semibold tabular-nums",
+              "text-right text-xl font-semibold tabular-nums flex flex-col items-end leading-tight",
               set.is_planned && "italic text-muted-foreground"
             )}
           >
             <span className="font-mono">{set.reps}</span>
+            {showOneRm && oneRm > 0 && !set.is_planned && (
+              <span className="font-mono text-[9px] font-normal tabular-nums text-muted-foreground/70">
+                {formatWeight(oneRm, unit)} 1RM
+              </span>
+            )}
           </span>
         </div>
         {hasNote && !noteOpen && (
@@ -516,7 +570,7 @@ function SetRow({
         {isPlannedRow && missMode && (
           <div className="flex items-center justify-end gap-2 px-4 pb-2.5">
             <button
-              onClick={() => setEditing(true)}
+              onClick={startEdit}
               className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2.5 py-1 text-xs font-semibold text-muted-foreground hover:bg-white/10 hover:text-foreground"
             >
               <Pencil className="size-3.5" />
@@ -543,7 +597,7 @@ function SetRow({
         {!isPlannedRow && (
           <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
             <button
-              onClick={() => setEditing(true)}
+              onClick={startEdit}
               className="rounded-md bg-card/90 p-1.5 text-muted-foreground hover:bg-white/10 hover:text-foreground"
               aria-label="Edit set"
             >

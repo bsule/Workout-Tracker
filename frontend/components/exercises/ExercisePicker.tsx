@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Check, Pencil, Plus, Search, Trash2, X } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { fuzzyMatch, localApi as api } from "@/lib/store"
 import { type Category, type Exercise } from "@/types"
 import { categoryVar, cn } from "@/lib/utils"
@@ -27,26 +27,28 @@ export function ExercisePicker({ mode = "browse", onPick }: Props) {
   const [activeCats, setActiveCats] = useState<Set<Category>>(new Set())
   const [editingId, setEditingId] = useState<number | null>(null)
   const [draftName, setDraftName] = useState("")
+  const [draftCategory, setDraftCategory] = useState<Category>("chest")
   const [savingId, setSavingId] = useState<number | null>(null)
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       const data = await api.listExercises({ sort: "last_performed" })
       setExercises(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load")
     }
-  }
+  }, [])
 
   useEffect(() => {
     queueMicrotask(() => {
       void load()
     })
-  }, [])
+  }, [load])
 
   function startEdit(ex: Exercise) {
     setEditingId(ex.id)
     setDraftName(ex.name)
+    setDraftCategory(ex.category)
     setError(null)
   }
 
@@ -61,14 +63,14 @@ export function ExercisePicker({ mode = "browse", onPick }: Props) {
       setError("Exercise name is required.")
       return
     }
-    if (name === ex.name) {
+    if (name === ex.name && draftCategory === ex.category) {
       cancelEdit()
       return
     }
     setSavingId(ex.id)
     setError(null)
     try {
-      await api.patchExercise(ex.id, { name })
+      await api.patchExercise(ex.id, { name, category: draftCategory })
       cancelEdit()
       await load()
     } catch (e) {
@@ -193,8 +195,12 @@ export function ExercisePicker({ mode = "browse", onPick }: Props) {
                     <ExerciseRowEditor
                       ex={e}
                       value={draftName}
+                      category={draftCategory}
+                      categories={categories}
+                      labels={labels}
                       busy={savingId === e.id}
                       onChange={setDraftName}
+                      onCategoryChange={setDraftCategory}
                       onSave={() => saveEdit(e)}
                       onCancel={cancelEdit}
                     />
@@ -243,21 +249,40 @@ export function ExercisePicker({ mode = "browse", onPick }: Props) {
 function ExerciseRowEditor({
   ex,
   value,
+  category,
+  categories,
+  labels,
   busy,
   onChange,
+  onCategoryChange,
   onSave,
   onCancel,
 }: {
   ex: Exercise
   value: string
+  category: Category
+  categories: Category[]
+  labels: Record<Category, string>
   busy: boolean
   onChange: (value: string) => void
+  onCategoryChange: (c: Category) => void
   onSave: () => void
   onCancel: () => void
 }) {
   return (
     <>
-      <CategoryDot category={ex.category} />
+      <select
+        value={category}
+        disabled={busy}
+        onChange={(event) => onCategoryChange(event.target.value as Category)}
+        className="rounded-md border border-white/10 bg-white/[.04] px-2 py-1.5 text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+      >
+        {categories.map((c) => (
+          <option key={c} value={c} className="bg-neutral-900 text-foreground">
+            {labels[c] ?? c}
+          </option>
+        ))}
+      </select>
       <input
         type="text"
         value={value}

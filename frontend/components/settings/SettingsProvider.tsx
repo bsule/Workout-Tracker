@@ -61,3 +61,17 @@ export function useShowRestTime(): boolean {
   const v = useSettings().settings.show_rest_time
   return v == null ? true : v
 }
+
+/** Whether to show a live ticking time-since-last-set timer on the
+ *  log-set page. Defaults to true. */
+export function useShowTimeSinceLastSet(): boolean {
+  const v = useSettings().settings.show_time_since_last_set
+  return v == null ? true : v
+}
+
+/** Whether to show the Last time / set position records card under
+ *  the set list. Defaults to true. */
+export function useShowLastTime(): boolean {
+  const v = useSettings().settings.show_last_time
+  return v == null ? true : v
+}

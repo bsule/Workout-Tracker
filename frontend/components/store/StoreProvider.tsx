@@ -6,6 +6,7 @@ import { FullPageLoader } from "@/components/ui/Spinner"
 import {
   configureStore,
   hydrateStore,
+  unloadStore,
   useHydrated,
 } from "@/lib/store"
 import { installWebStore } from "@/lib/store/setupWebStore"
@@ -26,23 +27,32 @@ export function StoreProvider({ children }: Props) {
     if (loading) return
     let cancelled = false
     installWebStore()
-    configureStore(`users/${userKey}`)
-    hydrateStore()
-      .then(() => {
+
+    async function init() {
+      try {
+        if (activeKey && activeKey !== userKey) {
+          await unloadStore()
+        }
+        if (cancelled) return
+        configureStore(`users/${userKey}`)
+        await hydrateStore()
         if (cancelled) return
         setActiveKey(userKey)
         // "anon" is the signed-out namespace; maybeAutoSync also no-ops
         // without a configured transport.
         if (userKey !== "anon") scheduleAutoSync()
-      })
-      .catch((e) => {
+      } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
-      })
+      }
+    }
+
+    void init()
+
     return () => {
       cancelled = true
       cancelAutoSync()
     }
-  }, [loading, userKey])
+  }, [loading, userKey, activeKey])
 
   if (error) {
     console.error("Local store error:", error)

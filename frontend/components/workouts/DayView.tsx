@@ -7,6 +7,7 @@ import { PrIcon } from "@/components/workouts/PrIcon"
 import { useMemo, useState } from "react"
 import {
   localApi as api,
+  deleteWorkout,
   lastSetTimeOf,
   startPlannedWorkout,
   useHydrated,
@@ -120,6 +121,28 @@ export function DayView({ date }: Props) {
     }
   }
 
+  async function handleDeleteWorkout() {
+    if (!workout) return
+    const hasSets = workout.exercises.some((e) => e.sets.length > 0)
+    const ok = await confirm({
+      title: "Delete this workout?",
+      message: hasSets
+        ? "This will delete this workout and all of its logged sets."
+        : "This workout will be deleted.",
+      destructive: true,
+      confirmLabel: "Delete workout",
+    })
+    if (!ok) return
+    setBusy(true)
+    try {
+      deleteWorkout(workout.id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete workout")
+    } finally {
+      setBusy(false)
+    }
+  }
+
 
   return (
     <div className="space-y-5">
@@ -182,7 +205,7 @@ export function DayView({ date }: Props) {
             </div>
           )}
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pt-1">
             <Link
               href={`/exercises?pickFor=${workout.id}`}
               className="inline-flex items-center justify-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/20 transition-colors"
@@ -190,6 +213,16 @@ export function DayView({ date }: Props) {
               <Plus className="size-4" />
               Add Exercise
             </Link>
+
+            <button
+              type="button"
+              onClick={handleDeleteWorkout}
+              disabled={busy}
+              className="inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors disabled:opacity-50"
+            >
+              <Trash2 className="size-3.5" />
+              Delete workout
+            </button>
           </div>
         </>
       )}
