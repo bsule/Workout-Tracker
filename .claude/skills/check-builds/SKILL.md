@@ -5,19 +5,22 @@ description: Run the build/type/lint checks for this monorepo and fix what break
 
 # Build & Type Checker (Workout-Tracker monorepo)
 
-The automated safety net is a root **Vitest** suite covering `@lift/core` plus per-workspace
-type/lint/build checks. The clients and the Worker have no tests, so for those the type/lint/build
-checks are all you get. The commands differ per workspace and are easy to get wrong — run the right
-one for each package you touched, fix failures, re-run until clean.
+The automated safety net is a root **Vitest** suite covering `@lift/core` and some pure logic in
+`mobile/src`, plus per-workspace type/lint/build checks. The React/React Native UI and the Worker
+have no tests, so for those the type/lint/build checks are all you get. The commands differ per
+workspace and are easy to get wrong. Run the right one for each package you touched, fix failures,
+re-run until clean.
 
 ## Tests (root)
 
 ```bash
-npm test            # vitest run — covers @lift/core (the shared brain)
+npm test            # vitest run: covers @lift/core (the shared brain) and mobile/src logic
 ```
 
-Run this whenever you touch `packages/core`. It is the only real behavioral check in the repo,
-and it's fast — don't skip it in favor of type-checking alone.
+Run this whenever you touch `packages/core`, or a `mobile/src` file a suite imports
+(`tests/README.md` lists them: rest timer, restore points, snapshot rotation, sign-out, month
+paging, and more). It is the only real behavioral check in the repo, and it's fast. Don't skip it
+in favor of type-checking alone.
 
 ## Per-workspace checks
 
@@ -57,7 +60,8 @@ cd packages/core && npx tsc --noEmit -p tsconfig.json
 Only run checks for what you changed:
 - Changed `packages/core` → run **`npm test`** first, then **frontend `tsc`** and **mobile typecheck** (both consume it).
 - Changed `frontend` → frontend `tsc` + `lint` (+ `build` for a final pass).
-- Changed `mobile` → mobile `typecheck`.
+- Changed `mobile` → mobile `typecheck`, plus **`npm test`** if a suite imports the changed file
+  (`grep -rl "mobile/src/<path>" tests/`).
 - Changed `cloudflare` → cloudflare `typecheck`.
 
 ## Fix loop

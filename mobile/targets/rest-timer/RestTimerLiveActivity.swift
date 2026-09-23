@@ -126,7 +126,9 @@ struct RestTimerLiveActivity: Widget {
           .frame(maxWidth: 36)
           .minimumScaleFactor(0.6)
       }
-      .keylineTint(accent)
+      // A soft white keyline. iOS sets its width; it shows only over dark
+      // app content.
+      .keylineTint(.white.opacity(0.5))
     }
   }
 }

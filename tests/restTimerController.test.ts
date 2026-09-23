@@ -132,6 +132,81 @@ describe("rest timer controller", () => {
     expect(native.calls).toEqual([])
   })
 
+  const DAY = "2026-09-22"
+
+  it("reset restarts the showing timer from now without a set", async () => {
+    const c = await load()
+    c.setLogged("Squat", T0)
+    await settle()
+    vi.setSystemTime(T0 + 60_000)
+    c.reset("Squat", DAY)
+    await settle()
+    expect(native.calls).toEqual(["start Squat", "update Squat"])
+    expect(native.shown).toEqual({
+      exerciseName: "Squat",
+      startedAt: T0 + 60_000,
+      endsAt: T0 + 60_000 + 360_000,
+    })
+    expect(c.getMark()).toEqual({ kind: "reset", atMs: T0 + 60_000, date: DAY })
+  })
+
+  it("reset starts a timer when none is showing", async () => {
+    const c = await load()
+    c.reset("Squat", DAY)
+    await settle()
+    expect(native.calls).toEqual(["start Squat"])
+  })
+
+  it("reset only moves the in-app mark when the feature is off", async () => {
+    const c = await load({ rest_timer_activity: false })
+    c.reset("Squat", DAY)
+    await settle()
+    expect(native.calls).toEqual([])
+    expect(c.getMark()?.kind).toBe("reset")
+  })
+
+  it("stop ends the timer and a later set starts a new one", async () => {
+    const c = await load()
+    c.setLogged("Squat", T0)
+    c.stop(DAY)
+    await settle()
+    expect(native.calls).toEqual(["start Squat", "end"])
+    expect(c.getMark()).toEqual({ kind: "stop", atMs: T0, date: DAY })
+    vi.setSystemTime(T0 + 30_000)
+    c.setLogged("Squat", T0 + 30_000)
+    await settle()
+    expect(native.calls).toEqual(["start Squat", "end", "start Squat"])
+  })
+
+  it("clearMark forgets a reset or stop and notifies once", async () => {
+    const c = await load()
+    let hits = 0
+    c.subscribeMark(() => hits++)
+    c.stop(DAY)
+    c.clearMark()
+    c.clearMark()
+    expect(c.getMark()).toBeNull()
+    expect(hits).toBe(2)
+  })
+
+  it("turning the feature off keeps a stop in the app", async () => {
+    const c = await load()
+    c.stop(DAY)
+    c.disable()
+    expect(c.getMark()?.kind).toBe("stop")
+  })
+
+  it("notifies mark subscribers", async () => {
+    const c = await load()
+    let hits = 0
+    const off = c.subscribeMark(() => hits++)
+    c.reset("Squat", DAY)
+    c.stop(DAY)
+    off()
+    c.reset("Squat", DAY)
+    expect(hits).toBe(2)
+  })
+
   it("ends the showing timer when turned off", async () => {
     const c = await load()
     c.setLogged("Row", T0)

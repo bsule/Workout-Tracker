@@ -1,6 +1,7 @@
 /**
- * Mobile sign-out (mobile/src/store/bootstrap.ts): the rest timer ends, and
- * the store is saved and dropped from memory.
+ * Mobile sign-out (mobile/src/store/bootstrap.ts): the rest timer ends, its
+ * manual reset/stop is forgotten, and the store is saved and dropped from
+ * memory.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -14,6 +15,7 @@ vi.mock("expo-file-system/legacy", () => ({ documentDirectory: "file:///docs/" }
 vi.mock("../mobile/src/restTimer", () => ({
   restTimer: {
     disable: () => calls.push("timer ended"),
+    clearMark: () => calls.push("timer mark cleared"),
     reconcile: () => {},
   },
 }))
@@ -31,7 +33,7 @@ beforeEach(() => {
 })
 
 describe("unloadForSignOut", () => {
-  it("ends the rest timer, saves the data, and drops it from memory", async () => {
+  it("ends the rest timer and its mark, saves the data, and drops it from memory", async () => {
     const storage = memoryStorage()
     setStorageFactory(() => storage)
     configure(`users/sign-out-${Math.random()}`)
@@ -40,7 +42,7 @@ describe("unloadForSignOut", () => {
 
     await unloadForSignOut()
 
-    expect(calls).toEqual(["timer ended"])
+    expect(calls).toEqual(["timer ended", "timer mark cleared"])
     expect(getState().hydrated).toBe(false)
     const saved = await parse(storage.lastWritten!)
     expect(saved.snapshot.exercises.some((e) => e.name === "Logged before sign-out")).toBe(true)
@@ -52,6 +54,6 @@ describe("unloadForSignOut", () => {
 
   it("is safe with no store loaded (a signed-out cold start)", async () => {
     await expect(unloadForSignOut()).resolves.toBeUndefined()
-    expect(calls).toEqual(["timer ended"])
+    expect(calls).toEqual(["timer ended", "timer mark cleared"])
   })
 })

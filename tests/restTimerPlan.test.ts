@@ -10,8 +10,10 @@ import {
   decideOnForeground,
   decideOnSet,
   formatCutoff,
+  lastSetAnchorMs,
   parseCutoff,
   restTimerSettings,
+  tickerAnchor,
 } from "../mobile/src/restTimer/plan"
 
 describe("rest timer settings", () => {
@@ -96,6 +98,74 @@ describe("decideOnSet", () => {
   it("ends a showing timer when the feature is off, else does nothing", () => {
     expect(decideOnSet({ endsAt: now + 1 }, now, false)).toBe("end")
     expect(decideOnSet(null, now, false)).toBe("none")
+  })
+})
+
+describe("tickerAnchor", () => {
+  const set = 1_000_000
+  const day = "2026-09-22"
+
+  it("counts from the last set when there is no mark", () => {
+    expect(tickerAnchor(set, null, day)).toBe(set)
+    expect(tickerAnchor(null, null, day)).toBeNull()
+  })
+
+  it("counts from a reset made after the last set", () => {
+    expect(tickerAnchor(set, { kind: "reset", atMs: set + 5000, date: day }, day)).toBe(set + 5000)
+  })
+
+  it("hides after a stop made after the last set", () => {
+    expect(tickerAnchor(set, { kind: "stop", atMs: set + 5000, date: day }, day)).toBeNull()
+  })
+
+  it("lets a set saved after the mark take over", () => {
+    expect(tickerAnchor(set, { kind: "reset", atMs: set - 5000, date: day }, day)).toBe(set)
+    expect(tickerAnchor(set, { kind: "stop", atMs: set - 5000, date: day }, day)).toBe(set)
+  })
+
+  it("ignores a mark made on another workout day", () => {
+    const other = "2026-09-21"
+    expect(tickerAnchor(set, { kind: "reset", atMs: set + 5000, date: day }, other)).toBe(set)
+    expect(tickerAnchor(null, { kind: "reset", atMs: set + 5000, date: day }, other)).toBeNull()
+    expect(tickerAnchor(set, { kind: "stop", atMs: set + 5000, date: day }, other)).toBe(set)
+    expect(tickerAnchor(set, { kind: "reset", atMs: set + 5000, date: day }, null)).toBe(set)
+  })
+})
+
+describe("lastSetAnchorMs", () => {
+  const iso = (ms: number) => new Date(ms).toISOString()
+  const T = Date.UTC(2026, 8, 22, 12, 0, 0)
+  const logged = (ms: number) => ({ is_planned: false, created_at: iso(ms) })
+  const planned = (ms: number) => ({ is_planned: true, created_at: iso(ms) })
+
+  it("prefers a set that was just saved", () => {
+    expect(lastSetAnchorMs({ pendingAddMs: T + 9, sets: [logged(T)], fallbackIso: null })).toBe(T + 9)
+  })
+
+  it("uses the newest logged row, skipping planned rows after it", () => {
+    const sets = [logged(T), logged(T + 60_000), planned(T + 999_000)]
+    expect(lastSetAnchorMs({ pendingAddMs: null, sets, fallbackIso: iso(T - 5) })).toBe(T + 60_000)
+  })
+
+  it("treats a missing is_planned as logged", () => {
+    const sets = [{ created_at: iso(T) }]
+    expect(lastSetAnchorMs({ pendingAddMs: null, sets, fallbackIso: null })).toBe(T)
+  })
+
+  it("falls back to another exercise's last set", () => {
+    const sets = [planned(T)]
+    expect(lastSetAnchorMs({ pendingAddMs: null, sets, fallbackIso: iso(T - 5) })).toBe(T - 5)
+    expect(lastSetAnchorMs({ pendingAddMs: null, sets: [], fallbackIso: iso(T - 5) })).toBe(T - 5)
+  })
+
+  it("does not reach past an unreadable newest row to an older one", () => {
+    const sets = [logged(T), { is_planned: false, created_at: "junk" }]
+    expect(lastSetAnchorMs({ pendingAddMs: null, sets, fallbackIso: iso(T - 5) })).toBe(T - 5)
+  })
+
+  it("is null with nothing to count from", () => {
+    expect(lastSetAnchorMs({ pendingAddMs: null, sets: [], fallbackIso: null })).toBeNull()
+    expect(lastSetAnchorMs({ pendingAddMs: null, sets: [], fallbackIso: "junk" })).toBeNull()
   })
 })
 

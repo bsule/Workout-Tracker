@@ -88,3 +88,64 @@ export function decideOnForeground(
   if (!enabled) return "end"
   return now >= shown.endsAt ? "end" : "none"
 }
+
+/** A manual reset or stop from the "since last set" menu. Device-local and
+ *  in memory only: it is never a set and never enters the snapshot. `date`
+ *  is the workout day (YYYY-MM-DD) it was made on; other days ignore it. */
+export interface TimerMark {
+  kind: "reset" | "stop"
+  atMs: number
+  date: string
+}
+
+/**
+ * What the in-app "since last set" ticker counts from on the workout for
+ * `date`. `setAnchorMs` is the last logged set (or null). A mark made on
+ * another day is ignored, so a reset today does not start a count on an old
+ * workout. A set saved after the mark wins, so the next real set takes over
+ * as usual. Otherwise a reset counts from the reset, and a stop hides the
+ * ticker (null).
+ */
+export function tickerAnchor(
+  setAnchorMs: number | null,
+  mark: TimerMark | null,
+  date: string | null
+): number | null {
+  if (!mark || mark.date !== date) return setAnchorMs
+  if (setAnchorMs != null && setAnchorMs > mark.atMs) return setAnchorMs
+  return mark.kind === "reset" ? mark.atMs : null
+}
+
+/**
+ * The last logged set the "since last set" ticker counts from, before any
+ * manual reset or stop (tickerAnchor applies that). In order:
+ * - `pendingAddMs`: a set the user just saved whose row has not landed yet;
+ * - the newest logged row in `sets` (planned rows carry a synthetic
+ *   created_at and never anchor rest);
+ * - `fallbackIso`: the latest logged set of another exercise in the same
+ *   workout, so the ticker keeps running when the user switches exercises
+ *   before logging anything on the new one.
+ */
+export function lastSetAnchorMs({
+  pendingAddMs,
+  sets,
+  fallbackIso,
+}: {
+  pendingAddMs: number | null
+  sets: readonly { is_planned?: boolean; created_at: string }[]
+  fallbackIso: string | null
+}): number | null {
+  if (pendingAddMs != null) return pendingAddMs
+  for (let i = sets.length - 1; i >= 0; i--) {
+    const s = sets[i]
+    if (s.is_planned) continue
+    const parsed = Date.parse(s.created_at)
+    // Only the newest logged row counts: an unreadable timestamp there means
+    // no anchor from this exercise, not a fall-through to an older row.
+    if (Number.isFinite(parsed)) return parsed
+    break
+  }
+  if (!fallbackIso) return null
+  const parsed = Date.parse(fallbackIso)
+  return Number.isFinite(parsed) ? parsed : null
+}

@@ -4,7 +4,12 @@
 import { PermissionsAndroid, Platform } from "react-native"
 import { getState } from "@lift/core"
 import { isRestTimerAvailable, restTimerBridge } from "./bridge"
-import { decideOnForeground, decideOnSet, restTimerSettings } from "./plan"
+import {
+  decideOnForeground,
+  decideOnSet,
+  restTimerSettings,
+  type TimerMark,
+} from "./plan"
 
 /** The timer this process last showed. Null until the first set or the
  *  first reconcile(), which reads what the OS still has on screen. */
@@ -30,20 +35,67 @@ function settings() {
 /** Call when a set is saved (not edited). `atMs` must match the time the
  *  in-app ticker counts from, so the two agree to the second. */
 export function setLogged(exerciseName: string, atMs: number) {
+  enqueue(() => showFrom(exerciseName, atMs))
+}
+
+async function showFrom(exerciseName: string, atMs: number) {
+  const { enabled, cutoffS } = settings()
+  const action = decideOnSet(shown, Date.now(), enabled)
+  if (action === "none") return
+  if (action === "end") {
+    shown = null
+    await restTimerBridge.end()
+    return
+  }
+  if (!(await notificationsAllowed())) return
+  const input = { exerciseName, startedAt: atMs, endsAt: atMs + cutoffS * 1000 }
+  if (action === "update") await restTimerBridge.update(input)
+  else await restTimerBridge.start(input)
+  shown = { endsAt: input.endsAt }
+}
+
+// The last manual reset or stop, for the in-app ticker (plan.ts tickerAnchor).
+// Held in memory only: a relaunch falls back to the last logged set.
+let mark: TimerMark | null = null
+const markListeners = new Set<() => void>()
+
+function setMark(next: TimerMark | null) {
+  mark = next
+  for (const l of markListeners) l()
+}
+
+/** For useSyncExternalStore. */
+export function getMark(): TimerMark | null {
+  return mark
+}
+
+export function subscribeMark(listener: () => void): () => void {
+  markListeners.add(listener)
+  return () => markListeners.delete(listener)
+}
+
+/** Forget a manual reset or stop. Call on sign-out, so the signed-out
+ *  user's mark cannot hide or move the next account's ticker. */
+export function clearMark() {
+  if (mark) setMark(null)
+}
+
+/** Restart the count from now, in the app and outside it, without logging
+ *  a set (a warm-up the user does not want recorded). `date` is the workout
+ *  day the user is on; only that day's ticker follows the mark. */
+export function reset(exerciseName: string, date: string) {
+  const now = Date.now()
+  setMark({ kind: "reset", atMs: now, date })
+  enqueue(() => showFrom(exerciseName, now))
+}
+
+/** End the timer outside the app and hide the in-app ticker on `date`'s
+ *  workout until the next saved set. */
+export function stop(date: string) {
+  setMark({ kind: "stop", atMs: Date.now(), date })
   enqueue(async () => {
-    const { enabled, cutoffS } = settings()
-    const action = decideOnSet(shown, Date.now(), enabled)
-    if (action === "none") return
-    if (action === "end") {
-      shown = null
-      await restTimerBridge.end()
-      return
-    }
-    if (!(await notificationsAllowed())) return
-    const input = { exerciseName, startedAt: atMs, endsAt: atMs + cutoffS * 1000 }
-    if (action === "update") await restTimerBridge.update(input)
-    else await restTimerBridge.start(input)
-    shown = { endsAt: input.endsAt }
+    shown = null
+    await restTimerBridge.end()
   })
 }
 

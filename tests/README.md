@@ -44,9 +44,9 @@ core. They import those files by relative path. They render no components.
 | `monthPaging.test.ts` | calendar month geometry and paging offsets |
 | `sameHistory.test.ts` | history-equality check that skips mobile re-renders |
 | `swipeHold.test.ts` | `SwipeHold`, which defers a commit until a swipe ends |
-| `restTimerPlan.test.ts` | rest timer rules: cutoff parse/format/clamp, start vs. update vs. end, settings defaults and blob round-trip, that the two `RestTimerAttributes.swift` copies match, and source guards on the iOS cutoff (armed for an adopted timer, ends only its own activity) |
-| `restTimerController.test.ts` | rest timer controller call order against a mocked native bridge and `react-native` (Android permission) |
-| `signOut.test.ts` | mobile sign-out: the rest timer ends, and the store is saved and dropped from memory |
+| `restTimerPlan.test.ts` | rest timer rules: cutoff parse/format/clamp, start vs. update vs. end, settings defaults and blob round-trip, that the two `RestTimerAttributes.swift` copies match, source guards on the iOS cutoff (armed for an adopted timer, ends only its own activity), and what the "since last set" ticker counts from (`lastSetAnchorMs`, and `tickerAnchor` after a manual reset or stop, which only applies on the workout day it was made on) |
+| `restTimerController.test.ts` | rest timer controller call order against a mocked native bridge and `react-native` (Android permission), and Reset timer / Stop timer (native calls, the in-memory mark, `clearMark`) |
+| `signOut.test.ts` | mobile sign-out: the rest timer ends and its reset/stop mark is cleared, and the store is saved and dropped from memory |
 | `snapshotRotation.test.ts` | mobile restore point rotation: `.bak` every write, `.bak2` only after 24 hours, the hold during a restore, the undo entry kept through a rotation, and stale labels dropped by mtime |
 | `restorePoints.test.ts` | `RnFsStorage` against an in-memory `expo-file-system`: the real file moves over a day of saves, labels, the `.bak`/`.bak2` read fallback (including a `snapshot.bin` that reads but does not decode), and `restoreFromSlot()` (daily slot held, undo taken from memory, damaged file changes nothing, account switch cancels the restore) |
 
