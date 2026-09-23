@@ -52,9 +52,11 @@ export function RestTicker({
   const shown = anchorMs != null && elapsedS(anchorMs) <= HIDE_AFTER_S
   // True once the line has fully shut and renders nothing.
   const [closed, setClosed] = useState(!shown)
-  // What the label counts from while the line shuts on a null anchor.
-  const lastAnchor = useRef(anchorMs)
-  if (anchorMs != null) lastAnchor.current = anchorMs
+  // What the label counts from while the line shuts: the last anchor it
+  // showed. Deleting the newest set can hand over an older set past the
+  // cutoff, and counting from that would flash its time on the way out.
+  const lastAnchor = useRef(shown ? anchorMs : null)
+  if (shown) lastAnchor.current = anchorMs
 
   // Re-renders 10x/sec; the displayed value reads Date.now() at render time
   // (NOT captured state), so any momentary JS-thread stall during a
@@ -83,9 +85,10 @@ export function RestTicker({
   // A second pick while one motion is running would stack the two.
   const busy = useRef(false)
   // Set once Stop has shut the line. The anchor normally goes null then and
-  // the line stays shut, but a set whose created_at is later than the stop (synced from a device
-  // with a fast clock) keeps it on screen at zero height. The next anchor is
-  // a newly saved set, so open the line again for it.
+  // the line stays shut, but a set whose created_at is later than the stop
+  // (synced from a device with a fast clock) keeps it on screen at zero
+  // height. The next anchor is a newly saved set, so open the line again
+  // for it.
   const stopped = useRef(false)
   useEffect(() => {
     // A null anchor is Stop landing; the effect below keeps the line shut.
