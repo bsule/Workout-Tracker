@@ -26,7 +26,7 @@ runs eslint.
 ## Notable paths
 
 - `app/` — App Router pages and layouts.
-- `components/` — UI primitives (`ui/`), feature components, providers (`auth/`, `settings/`, `categories/`).
+- `components/` — UI primitives (`ui/`), feature components, providers (`auth/`, `settings/`, `categories/`). `workouts/` holds the set logger, the "since last set" `RestTicker`, and the `LastTimePanel` (last session plus top weights by set position).
 - `lib/api.ts` — auth + profile network calls only. Everything else is local.
 - `lib/store/` — mostly re-exports `@lift/core/store`. `setupWebStore.ts` injects the browser storage adapter; `storage/` holds the OPFS and IndexedDB backends.
 - `lib/syncStorage.ts` — device-local sync state (R2 etag, "last synced") in localStorage. Best-effort: writes may throw in private mode.
