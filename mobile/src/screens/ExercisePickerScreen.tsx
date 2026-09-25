@@ -1,3 +1,4 @@
+import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
   FlatList,
@@ -13,7 +14,6 @@ import { Ionicons } from "@expo/vector-icons"
 import { SafeAreaView } from "react-native-safe-area-context"
 import {
   listExercisesQ,
-  useStore,
 } from "@lift/core"
 import type { Exercise } from "@lift/core"
 import { useActiveDate } from "../state/activeDate"
@@ -89,7 +89,7 @@ function PickView({
   const [search, setSearch] = useState("")
   const [category, setCategory] = useState<string | null>(null)
   const searchRef = useRef<TextInput>(null)
-  const snapshot = useStore((s) => s.snapshot)
+  const snapshot = useScreenSnapshot()
   // Defer the exercise-list query + FlatList until the picker's slide-in
   // animation has fully settled. listExercisesQ iterates every exercise and
   // annotates each with workouts_count + last_performed by joining through

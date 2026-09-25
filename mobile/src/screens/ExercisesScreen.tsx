@@ -1,3 +1,4 @@
+import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import { useMemo, useRef, useState, type MutableRefObject } from "react"
 import {
   Alert,
@@ -11,7 +12,7 @@ import {
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { Swipeable } from "react-native-gesture-handler"
-import { listExercisesQ, localApi as api, useStore } from "@lift/core"
+import { listExercisesQ, localApi as api } from "@lift/core"
 import type { Exercise } from "@lift/core"
 import { CategoryBadge } from "../components/CategoryBadge"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
@@ -23,7 +24,7 @@ import { formatExerciseSubtitle } from "../format"
 export function ExercisesScreen({ navigation }: any) {
   const [search, setSearch] = useState("")
   const openSwipeableRef = useRef<Swipeable | null>(null)
-  const snapshot = useStore((s) => s.snapshot)
+  const snapshot = useScreenSnapshot()
   const exercises = useMemo(
     () => listExercisesQ({ q: search || undefined, sort: "last_performed" }),
     [snapshot, search]

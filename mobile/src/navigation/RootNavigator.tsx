@@ -237,15 +237,9 @@ export function RootNavigator() {
             <Stack.Screen
               name="Main"
               component={MainTabs}
-              // freezeOnBlur suspends the entire MainTabs subtree (every
-              // pre-mounted bottom tab — DayScreen, ExercisesScreen,
-              // CalendarScreen, SettingsScreen) while a pushed stack screen
-              // like SetLogger is on top. Without this, every snapshot
-              // mutation made on SetLogger fans out to listExercisesQ in
-              // ExercisesScreen, getCalendarQ in CalendarScreen, etc., even
-              // though none of them are visible — adding noticeable lag to
-              // SetLogger's first-paint settle. Frozen tabs unfreeze and
-              // re-render once when the user navigates back.
+              // Useful for deeper covered routes, but native-stack keeps the
+              // immediately previous screen unfrozen on Fabric. Screen data
+              // uses useScreenSnapshot to stop hidden store-driven renders.
               options={{ headerShown: false, freezeOnBlur: true }}
             />
             <Stack.Screen

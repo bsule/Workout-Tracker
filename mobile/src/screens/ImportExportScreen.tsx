@@ -1,3 +1,4 @@
+import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import { useState } from "react"
 import {
   ActivityIndicator,
@@ -11,7 +12,6 @@ import {
 import * as DocumentPicker from "expo-document-picker"
 import * as FileSystem from "expo-file-system/legacy"
 import * as Sharing from "expo-sharing"
-import { useStore } from "@lift/core"
 import { buildJson, timestampedExportName } from "@lift/core/export"
 import { writeFitnotesDbToCache } from "../exports/fitnotesDb"
 import {
@@ -49,7 +49,7 @@ type PendingImport =
 
 export function ImportExportScreen() {
   const { user } = useAuth()
-  const snapshot = useStore((s) => s.snapshot)
+  const snapshot = useScreenSnapshot()
 
   const [busy, setBusy] = useState<
     null | "json" | "fitnotesdb" | "pick" | "import"

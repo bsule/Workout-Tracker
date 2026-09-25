@@ -1,3 +1,4 @@
+import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
   AccessibilityInfo,
@@ -20,7 +21,6 @@ import {
   getPlannedDatesQ,
   getWorkoutByDateQ,
   setDayNote,
-  useStore,
 } from "@lift/core"
 import type { Category } from "@lift/core"
 import { MONTH_COUNT, clampMonthIndex, monthAtIndex, monthHeightAtOffset, monthIndex } from "../calendar/monthPaging"
@@ -153,7 +153,7 @@ export function CalendarScreen({ navigation, route }: any) {
   }, [incomingDate])
 
   const { firstDayOfWeek } = useSettings()
-  const snapshot = useStore((s) => s.snapshot)
+  const snapshot = useScreenSnapshot()
   const weekdayLabels =
     firstDayOfWeek === 1 ? WEEKDAY_LABELS_MONDAY : WEEKDAY_LABELS_SUNDAY
   // Gated on detailReady alongside DayWorkoutContent: getWorkoutByDateQ fully
@@ -477,7 +477,7 @@ const MonthPage = memo(function MonthPage({
   todayKey: string
   onOpenDay: (date: string) => void
 }) {
-  const snapshot = useStore((s) => s.snapshot)
+  const snapshot = useScreenSnapshot()
   const { year, month } = monthAtIndex(index)
   const cells = useMemo(() => buildMonthGrid(year, month, firstDayOfWeek), [year, month, firstDayOfWeek])
   const calendar = useMemo(() => detailReady ? getCalendarQ(year, month) : {}, [snapshot, year, month, detailReady])

@@ -1,3 +1,4 @@
+import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
   ActivityIndicator,
@@ -18,7 +19,6 @@ import {
   requestCloudNewerPrompt,
   subscribeSyncClock,
   SyncQuotaExceededError,
-  useStore,
   type Quota,
   type RemotePreview,
   type SyncClockSnapshot,
@@ -361,7 +361,7 @@ const RESTORE_SLOTS: { slot: RestorableSlot; title: string; help: string }[] = [
 ]
 
 function RestorePointsCard({ onError }: { onError: (msg: string | null) => void }) {
-  const current = useStore((s) => s.snapshot)
+  const current = useScreenSnapshot()
   const [meta, setMeta] = useState<RestoreMeta | null>(null)
   const [busy, setBusy] = useState<RestorableSlot | null>(null)
   const [info, setInfo] = useState<string | null>(null)
