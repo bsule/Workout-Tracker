@@ -59,6 +59,12 @@ export const DUR = {
   noteReveal: 260,
   /** A note line going. Leaving needs less ceremony than arriving. */
   noteHide: 180,
+  /** A changed number's pop settling back to its size (an edited set's
+   *  weight or reps in the list). */
+  changePop: 220,
+  /** ...and its teal fading back to the normal color. Matches the rest
+   *  ticker's teal after a reset. */
+  changeTint: 700,
 } as const
 
 /**

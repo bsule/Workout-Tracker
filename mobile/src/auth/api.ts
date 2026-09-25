@@ -32,9 +32,10 @@ export async function getCachedUser(): Promise<User | null> {
     const raw = await AsyncStorage.getItem(USER_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw) as Partial<User>
-    // username drives the storage namespace, so an entry without it is worse
-    // than none: it would point the store at `users/undefined`.
-    if (typeof parsed.username !== "string") return null
+    // The id keys the local store and the username finds an older one, so an
+    // entry without them is worse than none: it would point the store at
+    // `accounts/undefined`.
+    if (typeof parsed.id !== "number" || typeof parsed.username !== "string") return null
     return parsed as User
   } catch {
     return null

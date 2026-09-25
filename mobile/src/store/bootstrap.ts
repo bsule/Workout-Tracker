@@ -7,7 +7,8 @@ import {
   autoSync,
   unloadStore,
 } from "@lift/core"
-import { createActiveStorage } from "./storage"
+import { accountStorePath, legacyStorePath } from "@lift/core/store/paths"
+import { adoptLegacyStore, createActiveStorage } from "./storage"
 import { restTimer } from "../restTimer"
 
 let installed = false
@@ -52,14 +53,16 @@ export function installMobileStore() {
 }
 
 /**
- * Hydrates the store for a signed-in user. Reuses the
- * web's path scheme `users/<key>` so a single device snapshot is portable
- * via export/import or future R2 sync.
+ * Hydrates the store for a signed-in user, keyed by user id (the web uses the
+ * same path scheme, accountStorePath). A store an older build kept under the
+ * username moves over first, once.
  */
-export async function bootstrapForUser(userKey: string) {
+export async function bootstrapForUser(user: { id: number; username: string }) {
   await unloading
   installMobileStore()
-  configureStore(`users/${userKey}`)
+  const subPath = accountStorePath(user.id)
+  if (user.username) await adoptLegacyStore(legacyStorePath(user.username), subPath)
+  configureStore(subPath)
   await hydrateStore()
   scheduleAutoSync()
   // After hydrate, because the rest timer settings live in the snapshot. On

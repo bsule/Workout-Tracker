@@ -23,6 +23,7 @@ import {
   SummaryPanel,
 } from "./SetLoggerScreen"
 import { todayString } from "../dates"
+import { formatRelative } from "@lift/core/format"
 import { SubTabBar, type SubTab as LoggerSubTab } from "../components/SubTabBar"
 
 type SubTab = Exclude<LoggerSubTab, "workout">
@@ -133,17 +134,6 @@ function Stat({ label, value }: { label: string; value: string }) {
       <Text style={styles.statValue}>{value}</Text>
     </View>
   )
-}
-
-function formatRelative(d: string): string {
-  const today = new Date(todayString() + "T00:00:00")
-  const target = new Date(d + "T00:00:00")
-  const diff = Math.round((today.getTime() - target.getTime()) / (1000 * 60 * 60 * 24))
-  if (diff <= 0) return "Today"
-  if (diff === 1) return "Yesterday"
-  if (diff < 7) return `${diff}d ago`
-  if (diff < 30) return `${Math.floor(diff / 7)}w ago`
-  return `${Math.floor(diff / 30)}mo ago`
 }
 
 const styles = StyleSheet.create({

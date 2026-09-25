@@ -1,38 +1,17 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react"
 import { useStore } from "@lift/core"
 import type { WeightUnit } from "@lift/core"
-import { restTimerSettings } from "../restTimer/plan"
+import { readSettings, type DisplaySettings } from "@lift/core/settings"
 
-interface SettingsValue {
-  weightUnit: WeightUnit
-  firstDayOfWeek: 0 | 1
-  showOneRm: boolean
-  showPositionPrs: boolean
-  showRestTime: boolean
-  showTimeSinceLastSet: boolean
-  showLastTime: boolean
-  /** Rest timer outside the app (Live Activity / Android notification). */
-  restTimerEnabled: boolean
-  /** Seconds after the last set when that timer goes away. */
-  restTimerCutoffS: number
-}
+// The defaults live in @lift/core/settings so the web app reads the same.
+type SettingsValue = DisplaySettings
 
 const Ctx = createContext<SettingsValue | null>(null)
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const settings = useStore((s) => s.snapshot.settings)
   const value = useMemo<SettingsValue>(
-    () => ({
-      weightUnit: settings.weight_unit,
-      firstDayOfWeek: settings.first_day_of_week,
-      showOneRm: !!settings.show_one_rm,
-      showPositionPrs: settings.show_position_prs ?? true,
-      showRestTime: settings.show_rest_time ?? true,
-      showTimeSinceLastSet: settings.show_time_since_last_set ?? true,
-      showLastTime: settings.show_last_time ?? true,
-      restTimerEnabled: restTimerSettings(settings).enabled,
-      restTimerCutoffS: restTimerSettings(settings).cutoffS,
-    }),
+    () => readSettings(settings),
     [
       settings.weight_unit,
       settings.first_day_of_week,

@@ -11,18 +11,15 @@ import {
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { SafeAreaView } from "react-native-safe-area-context"
+import { defaultStep, formatWeight } from "@lift/core"
 import {
-  defaultStep,
-  estimateOneRm,
-  formatWeight,
-  fromKg,
-  roundForDisplay,
-  toKg,
-} from "@lift/core"
+  ONE_RM_PERCENTS,
+  oneRmDisplay as toOneRmDisplay,
+  oneRmKgFromDisplay,
+  percentOfOneRm,
+} from "@lift/core/oneRepMax"
 import { theme, line, tint } from "../theme/theme"
 import { useWeightUnit } from "../settings/SettingsProvider"
-
-const PERCENT_TABLE = [95, 90, 85, 80, 75, 70, 65, 60]
 
 export function OneRepMaxScreen({ navigation }: any) {
   const unit = useWeightUnit()
@@ -30,12 +27,12 @@ export function OneRepMaxScreen({ navigation }: any) {
   const [weight, setWeight] = useState<number>(unit === "kg" ? 60 : 135)
   const [reps, setReps] = useState<number>(5)
 
-  const oneRmKg = useMemo(() => {
-    const kg = toKg(weight, unit)
-    return estimateOneRm(kg, reps)
-  }, [weight, reps, unit])
+  const oneRmKg = useMemo(
+    () => oneRmKgFromDisplay(weight, reps, unit),
+    [weight, reps, unit]
+  )
 
-  const oneRmDisplay = roundForDisplay(fromKg(oneRmKg, unit), unit)
+  const oneRmDisplay = toOneRmDisplay(oneRmKg, unit)
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
@@ -91,8 +88,8 @@ export function OneRepMaxScreen({ navigation }: any) {
           {oneRmDisplay > 0 && reps > 0 && (
             <View style={styles.percentCard}>
               <Text style={styles.section}>% of 1RM</Text>
-              {PERCENT_TABLE.map((pct) => {
-                const w = roundForDisplay((oneRmDisplay * pct) / 100, unit)
+              {ONE_RM_PERCENTS.map((pct) => {
+                const w = percentOfOneRm(oneRmDisplay, pct, unit)
                 return (
                   <View key={pct} style={styles.percentRow}>
                     <Text style={styles.percentLabel}>{pct}%</Text>

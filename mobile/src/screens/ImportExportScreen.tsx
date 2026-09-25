@@ -18,6 +18,7 @@ import {
   importFitnotesCsv,
   importSnapshotJson,
   previewFitnotesCsv,
+  looksLikeJson,
   previewSnapshotJson,
   type ImportMode,
   type ImportResult,
@@ -420,16 +421,6 @@ function ModeRow({
       </View>
     </Pressable>
   )
-}
-
-function looksLikeJson(text: string): boolean {
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i)
-    if (c === 0xfeff) continue
-    if (c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d) continue
-    return text[i] === "{" || text[i] === "["
-  }
-  return false
 }
 
 const styles = StyleSheet.create({

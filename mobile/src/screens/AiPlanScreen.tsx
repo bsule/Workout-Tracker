@@ -14,32 +14,27 @@ import {
 import { Ionicons } from "@expo/vector-icons"
 import { listExercisesQ, useStore } from "@lift/core"
 import type { Exercise } from "@lift/core"
-import { AI_PROVIDERS, getProvider } from "../ai"
-import { applyPlan } from "../ai/applyPlan"
-import { buildHistoryContext } from "../ai/buildContext"
+import {
+  AI_PROVIDERS,
+  SYSTEM_PROMPT,
+  applyPlan,
+  buildHistoryContext,
+  buildUserPrompt,
+  formatPlanSet,
+  getProvider,
+  parseAiPlanResponse,
+} from "../ai"
+import type { AiPlanResponse } from "../ai"
 import { getApiKey } from "../ai/keys"
-import { parseAiPlanResponse } from "../ai/parse"
-import { SYSTEM_PROMPT, buildUserPrompt } from "../ai/prompts"
-import type { AiPlanResponse } from "../ai/types"
 import { Button } from "../components/Button"
 import { ExercisePickerSheet } from "../components/ExercisePickerSheet"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { useSettings } from "../settings/SettingsProvider"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
-import { addDays, todayString } from "../dates"
+import { addDays, enumerateDates, todayString } from "../dates"
+import { niceDate } from "../format"
 import { Card } from "../components/Card"
-
-function enumerateDates(from: string, to: string): string[] {
-  if (from > to) return []
-  const out: string[] = []
-  let cur = from
-  while (cur <= to) {
-    out.push(cur)
-    cur = addDays(cur, 1)
-  }
-  return out
-}
 
 export function AiPlanScreen({ navigation, route }: any) {
   const incomingStart: string | undefined = route?.params?.startDate
@@ -305,8 +300,9 @@ export function AiPlanScreen({ navigation, route }: any) {
                 {preview.days.length === 0 ? (
                   <Text style={styles.help}>The AI returned no days.</Text>
                 ) : (
-                  preview.days.map((d) => (
-                    <View key={d.date} style={styles.previewDay}>
+                  // Date plus position: the AI can return the same date twice.
+                  preview.days.map((d, di) => (
+                    <View key={`${d.date}:${di}`} style={styles.previewDay}>
                       <Text style={styles.previewDate}>{niceDate(d.date)}</Text>
                       {d.exercises.length === 0 ? (
                         <Text style={styles.help}>Rest day</Text>
@@ -316,7 +312,7 @@ export function AiPlanScreen({ navigation, route }: any) {
                             {ex.name}
                             {ex.sets.length > 0
                               ? `: ${ex.sets
-                                  .map((s) => formatSet(s, weightUnit))
+                                  .map((s) => formatPlanSet(s, weightUnit))
                                   .join(", ")}`
                               : ""}
                           </Text>
@@ -414,28 +410,6 @@ function DateRow({
       </View>
     </View>
   )
-}
-
-function niceDate(d: string): string {
-  const dt = new Date(d + "T00:00:00")
-  return dt.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  })
-}
-
-function formatSet(
-  s: { weight?: number | null; reps?: number | null; distance_m?: number | null; time_seconds?: number | null },
-  unit: string
-): string {
-  if (s.weight != null && s.reps != null) return `${s.weight}${unit}×${s.reps}`
-  if (s.reps != null) return `×${s.reps}`
-  if (s.distance_m != null && s.time_seconds != null)
-    return `${s.distance_m}m / ${s.time_seconds}s`
-  if (s.distance_m != null) return `${s.distance_m}m`
-  if (s.time_seconds != null) return `${s.time_seconds}s`
-  return "set"
 }
 
 const styles = StyleSheet.create({
