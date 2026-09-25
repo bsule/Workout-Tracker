@@ -9,7 +9,78 @@
  */
 
 import type { SetRow, Snapshot } from "./schema"
+import type { Indexes } from "./indexes"
 import { weightKey } from "../units"
+
+type Effort = { weight: number; reps: number }
+
+/**
+ * The record rule. `o` beats `s` when it is heavier with at least as many
+ * reps, or the same weight with more reps. Weights compare through weightKey,
+ * never as raw floats: an imported set and a typed one can hold kg values that
+ * differ in the third decimal while displaying the same number (see units.ts).
+ * On raw floats that noise broke both branches: the equal-weight branch never
+ * fired, so an older 135x7 failed to dominate a newer 135x5.
+ */
+export function dominatesEffort(o: Effort, s: Effort): boolean {
+  const ow = weightKey(o.weight)
+  const sw = weightKey(s.weight)
+  return (ow > sw && o.reps >= s.reps) || (ow === sw && o.reps > s.reps)
+}
+
+/** Same weight (by weightKey) and reps. The earlier of two such sets holds
+ *  the record. */
+export function sameEffort(o: Effort, s: Effort): boolean {
+  return weightKey(o.weight) === weightKey(s.weight) && o.reps === s.reps
+}
+
+/**
+ * Whether a set of (`weight`, `reps`) about to be added to `weId` would be the
+ * current overall PR / position PR for `exerciseId`, and the position it
+ * lands at. It applies the same rules recomputePrsForExercise does, with the
+ * new set taken as the latest: any logged set that beats it or ties it rules
+ * it out, overall and at its position. The mobile set logger calls it at tap
+ * time so its placeholder row shows the right star before the (deferred)
+ * mutation and the real recompute land.
+ */
+export function predictPrFlags(
+  indexes: Pick<Indexes, "workoutExercisesByExercise" | "setsByWorkoutExercise">,
+  exerciseId: number,
+  weId: number,
+  weight: number,
+  reps: number
+): { isPr: boolean; isPosPr: boolean; position: number } {
+  const wes = indexes.workoutExercisesByExercise.get(exerciseId) ?? []
+  let isPr = true
+  const targetSets = indexes.setsByWorkoutExercise.get(weId) ?? []
+  let loggedInTarget = 0
+  for (const s of targetSets) {
+    if (s.is_planned) continue
+    if (s.weight == null || s.reps == null) continue
+    loggedInTarget++
+  }
+  const position = loggedInTarget + 1
+  let isPosPr = true
+  const next: Effort = { weight, reps }
+  for (const we of wes) {
+    const arr = (indexes.setsByWorkoutExercise.get(we.id) ?? [])
+      .slice()
+      .sort((a, b) => a.order - b.order || a.id - b.id)
+    let posIdx = 0
+    for (const s of arr) {
+      if (s.is_planned) continue
+      if (s.weight == null || s.reps == null) continue
+      posIdx++
+      const prior: Effort = { weight: s.weight, reps: s.reps }
+      if (dominatesEffort(prior, next) || sameEffort(prior, next)) {
+        isPr = false
+        if (posIdx === position) isPosPr = false
+      }
+      if (!isPr && !isPosPr) return { isPr, isPosPr, position }
+    }
+  }
+  return { isPr, isPosPr, position }
+}
 
 export function recomputePrsForWe(snap: Snapshot, weId: number): Snapshot {
   const we = snap.workout_exercises.find((x) => x.id === weId)
@@ -83,23 +154,9 @@ export function recomputePrsForExercise(
     if (ot !== st) return ot < st
     return o.id < s.id
   }
-  // Weights compare through weightKey, never as raw floats: an imported set
-  // and a typed one can hold kg values that differ in the third decimal while
-  // displaying the same number (see units.ts). On raw floats that noise broke
-  // both branches below — the equal-weight branch never fired, so an older
-  // 135x7 failed to dominate a newer 135x5.
-  const dominates = (
-    o: SetRow & { weight: number; reps: number },
-    s: SetRow & { weight: number; reps: number }
-  ) => {
-    const ow = weightKey(o.weight)
-    const sw = weightKey(s.weight)
-    return (ow > sw && o.reps >= s.reps) || (ow === sw && o.reps > s.reps)
-  }
-  const sameEffort = (
-    o: SetRow & { weight: number; reps: number },
-    s: SetRow & { weight: number; reps: number }
-  ) => weightKey(o.weight) === weightKey(s.weight) && o.reps === s.reps
+  // dominatesEffort / sameEffort above are the record rule; predictPrFlags
+  // uses the same two, so the set logger's preview and the saved flag agree.
+  const dominates = dominatesEffort
 
   type Cand = SetRow & { weight: number; reps: number }
   const computePrSets = (

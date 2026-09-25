@@ -21,6 +21,7 @@ import type {
 import { applyMutation, getState } from "../store/store"
 import type { Category, ExerciseKind } from "../types"
 import { exerciseNameLookup, normalizeExerciseName } from "./exerciseNames"
+import { todayString } from "../dates"
 
 export type ImportMode = "merge" | "replace"
 
@@ -79,13 +80,6 @@ export interface ImportResult {
   errors: { row: number; message: string }[]
 }
 
-function todayLocal(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-function pad(n: number) {
-  return String(n).padStart(2, "0")
-}
 
 export function previewFitnotesCsv(text: string): FitNotesPreview {
   const rows = parseCsv(text)
@@ -122,7 +116,7 @@ export async function importFitnotesCsv(
     return { imported: 0, exercisesCreated: [], errors: [] }
   }
 
-  const today = todayLocal()
+  const today = todayString()
   const errors: { row: number; message: string }[] = []
   const exercisesCreated = new Set<string>()
 

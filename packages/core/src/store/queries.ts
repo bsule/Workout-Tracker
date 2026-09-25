@@ -15,6 +15,7 @@ import {
 import { getState } from "./store"
 import { SEED_EXERCISES, isSeedId } from "./seed"
 import type { ExerciseRow } from "./schema"
+import { todayString } from "../dates"
 
 /**
  * Min edit distance between `query` and any contiguous substring of `text`.
@@ -152,6 +153,35 @@ export function getExerciseHistoryQ(id: number): ExerciseHistoryDay[] {
   return [...byDate.values()].sort((a, b) => (a.date < b.date ? 1 : -1))
 }
 
+/**
+ * Rows that can change this exercise's history. Store mutations replace rows
+ * instead of editing them in place, including older sets whose PR flags move
+ * after a new set is logged. Comparing these references lets a screen skip
+ * materializing and sorting history for unrelated store changes without
+ * missing a workout date/status, exercise note, set, or PR update.
+ */
+export function getExerciseHistorySourceRowsQ(id: number): object[] {
+  const { indexes } = getState()
+  const rows: object[] = []
+  for (const we of indexes.workoutExercisesByExercise.get(id) ?? []) {
+    rows.push(we)
+    const workout = indexes.workoutById.get(we.workout_id)
+    if (workout) rows.push(workout)
+    for (const set of indexes.setsByWorkoutExercise.get(we.id) ?? []) {
+      rows.push(set)
+    }
+  }
+  return rows
+}
+
+export function sameExerciseHistorySourceRows(a: readonly object[], b: readonly object[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
+}
+
 export function listWorkoutsQ(params?: {
   date?: string
   month?: string
@@ -252,14 +282,6 @@ function mergeSeedAndCustom(custom: ExerciseRow[]): ExerciseRow[] {
   return out
 }
 
-function todayString(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-
-function pad(n: number): string {
-  return String(n).padStart(2, "0")
-}
 
 function daysBetween(from: string, to: string): number {
   const a = Date.parse(from + "T00:00:00")

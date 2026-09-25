@@ -4,6 +4,8 @@ import { recomputePrsForExercises } from "./prs"
 import { emptySnapshot, type Snapshot } from "./schema"
 import type { BlobStorage, SnapshotStats } from "./storage/types"
 import { clearDirty, getState, markHydrated, markUnhydrated } from "./store"
+import { dedupeGyms } from "./repair"
+import { renameGymIn } from "./gymRules"
 
 // Storage adapter is injected by the host app (web: IDB/OPFS, mobile: FS).
 type StorageFactory = (subPath: string) => BlobStorage
@@ -148,6 +150,10 @@ export async function hydrate(): Promise<void> {
     if (pending.length > 0) {
       snap = applyPendingOps(snap, pending)
     }
+    // Data an older build wrote wrong, fixed on load and saved below.
+    const repairedSnap = dedupeGyms(snap)
+    const repaired = repairedSnap !== snap
+    snap = repairedSnap
 
     // configure() switched users while this was reading: this data belongs
     // to the old store and must not load into the new one.
@@ -165,7 +171,7 @@ export async function hydrate(): Promise<void> {
       recomputeAllPrs()
     }
 
-    if (pending.length > 0 || migrated || fellBack) {
+    if (pending.length > 0 || migrated || fellBack || repaired) {
       // Persist replayed state and clear the log. After a fallback, write the
       // loaded copy back as current at once: until then the damaged file is
       // what the next launch would try first.
@@ -318,7 +324,9 @@ export async function replaceSnapshotFromBytes(bytes: Uint8Array): Promise<void>
     await s.clearPending()
     await s.writeSnapshot(bytes, snapshotStats(snapshot))
     checkAccount()
-    markHydrated(snapshot)
+    // A cloud copy an older build pushed can carry the duplicate gyms too. The
+    // bytes on disk stay as pulled; the next load repairs and saves them.
+    markHydrated(dedupeGyms(snapshot))
     clearDirty()
     consecutiveFlushFailures = 0
   } finally {
@@ -533,6 +541,14 @@ function applyOne(snap: Snapshot, op: OpEnvelope): Snapshot {
       const row = op.row as Snapshot["gyms"][number]
       if (snap.gyms.some((g) => g.id === row.id)) return snap
       return { ...snap, gyms: [...snap.gyms, row] }
+    }
+    case "rename_gym": {
+      // Logged by renameGym, which already refused a clash; replays the same
+      // rewrite (workouts included).
+      const id = op.id as number
+      const newName = ((op.newName as string) ?? "").trim()
+      if (!newName) return snap
+      return renameGymIn(snap, id, newName)
     }
     case "delete_gym": {
       const id = op.id as number
