@@ -60,19 +60,23 @@ struct RestTimerLiveActivity: Widget {
           .frame(width: 24, height: 24)
         VStack(alignment: .leading, spacing: 2) {
           Text("Since last set")
-            .font(.caption.weight(.semibold))
+            .font(.caption2.weight(.semibold))
             .foregroundStyle(muted)
+          // Smaller than .headline, and shrinks a little more before it
+          // truncates: at .headline beside the timer, most names showed
+          // only a word and a half.
           Text(context.state.exerciseName)
-            .font(.headline)
+            .font(.subheadline.weight(.semibold))
             .foregroundStyle(foreground)
             .lineLimit(1)
+            .minimumScaleFactor(0.8)
         }
         Spacer(minLength: 8)
         RestTime(state: context.state)
-          .font(.system(size: 34, weight: .bold, design: .rounded))
+          .font(.system(size: 26, weight: .bold, design: .rounded))
           .foregroundStyle(foreground)
           .multilineTextAlignment(.trailing)
-          .frame(maxWidth: 120, alignment: .trailing)
+          .frame(maxWidth: 92, alignment: .trailing)
       }
       .padding(.horizontal, 16)
       .padding(.vertical, 14)
@@ -81,26 +85,29 @@ struct RestTimerLiveActivity: Widget {
       .activitySystemActionForegroundColor(foreground)
     } dynamicIsland: { context in
       DynamicIsland {
-        DynamicIslandExpandedRegion(.leading) {
+        // Priority: the name's side gets the spare width, not the timer's.
+        DynamicIslandExpandedRegion(.leading, priority: 1) {
           VStack(alignment: .leading, spacing: 2) {
             Text("Since last set")
-              .font(.caption.weight(.semibold))
+              .font(.caption2.weight(.semibold))
               .foregroundStyle(muted)
             Text(context.state.exerciseName)
-              .font(.headline)
+              .font(.subheadline.weight(.semibold))
               .foregroundStyle(foreground)
               .lineLimit(1)
+              .minimumScaleFactor(0.8)
           }
-          .padding(.leading, 4)
+          // Fill the row's height and sit on its centre line, so the text
+          // and the timer line up across the two regions.
+          .frame(maxHeight: .infinity, alignment: .leading)
           .opacity(context.isStale ? 0.5 : 1)
         }
         DynamicIslandExpandedRegion(.trailing) {
           RestTime(state: context.state)
-            .font(.system(size: 30, weight: .bold, design: .rounded))
+            .font(.system(size: 24, weight: .bold, design: .rounded))
             .foregroundStyle(foreground)
             .multilineTextAlignment(.trailing)
-            .frame(maxWidth: 110, alignment: .trailing)
-            .padding(.trailing, 4)
+            .frame(maxWidth: 90, maxHeight: .infinity, alignment: .trailing)
             .opacity(context.isStale ? 0.5 : 1)
         }
       } compactLeading: {
@@ -126,6 +133,11 @@ struct RestTimerLiveActivity: Widget {
           .frame(maxWidth: 36)
           .minimumScaleFactor(0.6)
       }
+      // Even margins in the expanded island. By default iOS leaves room at
+      // the bottom for a bottom region, which this layout does not use, so the
+      // row sat high; the sides get the same inset as each other.
+      .contentMargins(.vertical, 14, for: .expanded)
+      .contentMargins(.horizontal, 20, for: .expanded)
       // A soft white keyline. iOS sets its width; it shows only over dark
       // app content.
       .keylineTint(.white.opacity(0.5))
