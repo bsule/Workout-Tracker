@@ -13,47 +13,28 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage"
 import { DEFAULT_CATEGORIES } from "@lift/core"
 import type { Category } from "@lift/core"
+import {
+  CATEGORY_STYLES_STORAGE_KEY,
+  COLOR_PALETTE,
+  customOrderFrom,
+  deriveCategoryStyles,
+  isDefaultCategory,
+  parseCategoryEntriesJson,
+  resetCategoryEntry,
+  setCategoryColor,
+  setCategoryLabel,
+  slugify,
+  type CategoryEntries,
+} from "@lift/core/categoryStyles"
 
-export const COLOR_PALETTE: string[] = [
-  "#f87171",
-  "#fb923c",
-  "#fbbf24",
-  "#facc15",
-  "#a3e635",
-  "#4ade80",
-  "#34d399",
-  "#2dd4bf",
-  "#22d3ee",
-  "#38bdf8",
-  "#60a5fa",
-  "#818cf8",
-  "#a78bfa",
-  "#c084fc",
-  "#e879f9",
-  "#f472b6",
-]
+// The palette, labels, slug rules and entry edits live in
+// @lift/core/categoryStyles so the web app follows the same rules. This file
+// keeps the React state, AsyncStorage, and the theme's default colors.
+export { COLOR_PALETTE }
 
-const DEFAULT_LABELS: Record<string, string> = {
-  abs: "Abs",
-  back: "Back",
-  biceps: "Biceps",
-  cardio: "Cardio",
-  chest: "Chest",
-  legs: "Legs",
-  shoulders: "Shoulders",
-  triceps: "Triceps",
-}
+const STORAGE_KEY = CATEGORY_STYLES_STORAGE_KEY
 
-const DEFAULT_SET = new Set<string>(DEFAULT_CATEGORIES)
-const STORAGE_KEY = "category-styles-v2"
-const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,31}$/
-
-interface CategoryEntry {
-  label?: string
-  color?: string
-  custom?: boolean
-}
-type Entries = Record<string, CategoryEntry>
+type Entries = CategoryEntries
 
 interface CategoryStylesValue {
   categories: Category[]
@@ -70,37 +51,9 @@ interface CategoryStylesValue {
 
 const Ctx = createContext<CategoryStylesValue | null>(null)
 
-function slugify(label: string): string {
-  return label
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 32)
-}
-
 async function loadEntries(): Promise<Entries> {
   try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY)
-    if (!raw) return {}
-    const parsed = JSON.parse(raw)
-    if (!parsed || typeof parsed !== "object") return {}
-    const out: Entries = {}
-    for (const [key, v] of Object.entries(parsed as Record<string, unknown>)) {
-      if (!SLUG_RE.test(key)) continue
-      if (!v || typeof v !== "object") continue
-      const obj = v as Record<string, unknown>
-      const entry: CategoryEntry = {}
-      if (typeof obj.label === "string" && obj.label.trim()) {
-        entry.label = obj.label.trim()
-      }
-      if (typeof obj.color === "string" && obj.color.trim()) {
-        entry.color = obj.color.trim()
-      }
-      if (obj.custom === true) entry.custom = true
-      if (entry.label || entry.color || entry.custom) out[key] = entry
-    }
-    return out
+    return parseCategoryEntriesJson(await AsyncStorage.getItem(STORAGE_KEY))
   } catch {
     return {}
   }
@@ -117,11 +70,7 @@ export function CategoryStylesProvider({ children }: { children: ReactNode }) {
       const loaded = await loadEntries()
       if (cancelled) return
       setEntries(loaded)
-      setCustomOrder(
-        Object.keys(loaded).filter(
-          (k) => loaded[k]?.custom && !DEFAULT_SET.has(k)
-        )
-      )
+      setCustomOrder(customOrderFrom(loaded))
       setHydrated(true)
     })()
     return () => {
@@ -135,49 +84,16 @@ export function CategoryStylesProvider({ children }: { children: ReactNode }) {
   }, [entries, hydrated])
 
   const setLabel = useCallback((category: Category, label: string) => {
-    const trimmed = label.trim()
-    setEntries((prev) => {
-      const next = { ...prev }
-      const existing = next[category] ?? {}
-      if (DEFAULT_SET.has(category)) {
-        if (!trimmed || trimmed === DEFAULT_LABELS[category]) {
-          const rest: CategoryEntry = {}
-          if (existing.color) rest.color = existing.color
-          if (Object.keys(rest).length === 0) delete next[category]
-          else next[category] = rest
-        } else {
-          next[category] = { ...existing, label: trimmed }
-        }
-      } else {
-        next[category] = {
-          ...existing,
-          custom: true,
-          label: trimmed || category,
-        }
-      }
-      return next
-    })
+    setEntries((prev) => setCategoryLabel(prev, category, label))
   }, [])
 
   const setColor = useCallback((category: Category, color: string) => {
-    setEntries((prev) => ({
-      ...prev,
-      [category]: {
-        ...(prev[category] ?? {}),
-        ...(DEFAULT_SET.has(category) ? {} : { custom: true }),
-        color,
-      },
-    }))
+    setEntries((prev) => setCategoryColor(prev, category, color))
   }, [])
 
   const resetCategory = useCallback((category: Category) => {
-    if (!DEFAULT_SET.has(category)) return
-    setEntries((prev) => {
-      if (!prev[category]) return prev
-      const next = { ...prev }
-      delete next[category]
-      return next
-    })
+    if (!isDefaultCategory(category)) return
+    setEntries((prev) => resetCategoryEntry(prev, category))
   }, [])
 
   const addCategory = useCallback(
@@ -204,7 +120,7 @@ export function CategoryStylesProvider({ children }: { children: ReactNode }) {
   )
 
   const removeCategory = useCallback((category: Category) => {
-    if (DEFAULT_SET.has(category)) return
+    if (isDefaultCategory(category)) return
     setEntries((prev) => {
       if (!prev[category]) return prev
       const next = { ...prev }
@@ -215,27 +131,19 @@ export function CategoryStylesProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo<CategoryStylesValue>(() => {
-    const categories: Category[] = [...DEFAULT_CATEGORIES, ...customOrder]
-    const labels: Record<Category, string> = {}
-    const colors: Partial<Record<Category, string>> = {}
-    for (const c of categories) {
-      const e = entries[c]
-      if (DEFAULT_SET.has(c)) {
-        labels[c] = e?.label || DEFAULT_LABELS[c]
-      } else {
-        labels[c] = e?.label || c
-      }
-      if (e?.color) colors[c] = e.color
-    }
+    const { categories, customCategories, labels, colors } = deriveCategoryStyles({
+      entries,
+      customOrder,
+    })
     return {
       categories,
-      customCategories: customOrder,
+      customCategories,
       labels,
       colors,
       setLabel,
       setColor,
       resetCategory,
-      isDefault: (c: Category) => DEFAULT_SET.has(c),
+      isDefault: (c: Category) => isDefaultCategory(c),
       addCategory,
       removeCategory,
     }

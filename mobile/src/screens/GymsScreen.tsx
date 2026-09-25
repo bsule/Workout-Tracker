@@ -14,6 +14,7 @@ import {
 import { Ionicons } from "@expo/vector-icons"
 import { localApi as api, useStore } from "@lift/core"
 import type { Gym } from "@lift/core"
+import { gymAddError, gymRenameError } from "@lift/core/workouts"
 import { Button } from "../components/Button"
 import { EASE, LIST_ANIM } from "../anim"
 import { theme, tint } from "../theme/theme"
@@ -48,6 +49,13 @@ export function GymsScreen() {
   function addGym() {
     const trimmed = draft.trim()
     if (!trimmed) return
+    // "golds" when "Golds" is saved is the same gym (@lift/core/workouts).
+    const problem = gymAddError(gyms, trimmed)
+    if (problem) {
+      animateGyms()
+      setError(problem)
+      return
+    }
     setError(null)
     try {
       // The first gym swaps the "No gyms yet" line for the list card. Later
@@ -80,26 +88,15 @@ export function GymsScreen() {
   function commitEdit() {
     if (editingId == null) return
     const trimmed = editDraft.trim()
-    if (!trimmed) {
-      animateGyms()
-      setEditError("Name can't be empty.")
-      return
-    }
-    const current = gyms.find((g) => g.id === editingId)
-    if (!current) {
+    // Same rules as the web gyms list (@lift/core/workouts).
+    const problem = gymRenameError(gyms, editingId, editDraft)
+    if (problem === "unchanged") {
       cancelEdit()
       return
     }
-    if (trimmed === current.name) {
-      cancelEdit()
-      return
-    }
-    const collision = gyms.some(
-      (g) => g.id !== editingId && g.name.toLowerCase() === trimmed.toLowerCase()
-    )
-    if (collision) {
+    if (problem) {
       animateGyms()
-      setEditError("A gym with that name already exists.")
+      setEditError(problem)
       return
     }
     Keyboard.dismiss()

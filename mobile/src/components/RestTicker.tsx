@@ -3,6 +3,7 @@ import { Animated, StyleSheet, View } from "react-native"
 import { MenuButton, type MenuAction } from "./MenuPopup"
 import { EASE } from "../anim"
 import { theme, line } from "../theme/theme"
+import { TICKER_HIDE_AFTER_S, elapsedS, formatElapsed } from "@lift/core/format"
 
 const TIMER_MENU: MenuAction[] = [
   { id: "reset", title: "Reset timer" },
@@ -22,12 +23,9 @@ const STOP_FADE_MS = 180
 /** How long "0s" stays teal after a reset before settling back to muted. */
 const TINT_MS = 700
 
-/** Past this the user is presumed not mid-workout and the line is noise. */
-const HIDE_AFTER_S = 1800
-
-function elapsedS(anchorMs: number): number {
-  return Math.max(0, Math.floor((Date.now() - anchorMs) / 1000))
-}
+/** Past this the user is presumed not mid-workout and the line is noise.
+ *  The count and its label come from @lift/core/format, shared with web. */
+const HIDE_AFTER_S = TICKER_HIDE_AFTER_S
 
 /**
  * The set logger's ticking "Xs since last set" / "Xm Ys since last set"
@@ -209,15 +207,7 @@ export function RestTicker({
   )
 
   if (closed || lastAnchor.current == null) return null
-  const elapsed = elapsedS(lastAnchor.current)
-  let label: string
-  if (elapsed < 60) {
-    label = `${elapsed}s`
-  } else {
-    const m = Math.floor(elapsed / 60)
-    const s = elapsed % 60
-    label = `${m}m ${s}s`
-  }
+  const label = formatElapsed(elapsedS(lastAnchor.current))
   const color = tint.interpolate({
     inputRange: [0, 1],
     outputRange: [theme.colors.muted, theme.colors.secondary],

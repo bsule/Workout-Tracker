@@ -26,6 +26,8 @@ import {
   Text,
   TextInput,
   View,
+  type StyleProp,
+  type TextStyle,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import Svg, { Circle, G, Line as SvgLine, Path as SvgPath, Text as SvgText } from "react-native-svg"
@@ -56,8 +58,11 @@ import {
   topRepRecords,
   topRepRecordsByPosition,
   useStore,
-  weightKey,
 } from "@lift/core"
+import {
+  getExerciseHistorySourceRowsQ,
+  sameExerciseHistorySourceRows,
+} from "@lift/core/store/queries"
 import type {
   ExerciseHistoryDay,
   TopRepRecord,
@@ -87,79 +92,70 @@ import {
   useToggleTiming,
 } from "../anim"
 import { sameHistory } from "../store/sameHistory"
+import { predictPrFlags as corePredictPrFlags } from "@lift/core/store/prs"
 import { useStableValue } from "../hooks/useStableValue"
 import { PrIcon } from "../components/PrIcon"
 import { SetList as SharedSetList } from "../components/SetList"
 import { pressedStyle } from "../theme/pressable"
 import { theme, line, tint } from "../theme/theme"
 import { useSettings, useWeightUnit } from "../settings/SettingsProvider"
-import { todayString } from "../dates"
+import { agoLabel, niceDate, recordDate, shortDate } from "@lift/core/format"
+import {
+  isEmptyWorkoutShell,
+  lastWorkoutTopSet as coreLastWorkoutTopSet,
+} from "@lift/core/workouts"
+import {
+  cleanNumericText,
+  createdAtForRest,
+  deleteSetsTitle,
+  isCardioCategory,
+  lastSessionBefore,
+  lastSessionSummary,
+  lastTimeCardOpen,
+  latestOtherSetIso,
+  plannedSetTitle,
+  restAnchorForEdit,
+  restSecondsFrom,
+  setFormError,
+  setRestLabels,
+} from "@lift/core/setLogger"
+import {
+  METRIC_OPTIONS,
+  REP_ROWS_COLLAPSED,
+  REP_SORTS,
+  SET_INDEX_OPTIONS,
+  chartPoints,
+  fmtMetric,
+  graphEmptyMessage,
+  graphHeaderLabel,
+  pastDays,
+  pickLastSession,
+  repRecordRows,
+  setNumbersOf,
+  weightRepSets,
+  xLabelIndices,
+  yAxisScale,
+  type ChartPoint,
+  type Metric,
+  type RepSort,
+} from "@lift/core/exerciseStats"
 import { lastSetAnchorMs, restTimer, tickerAnchor } from "../restTimer"
 import { SubTabBar, type SubTab } from "../components/SubTabBar"
 
 
 // Predict whether a hypothetical (weight, reps) added to `weId` would be the
-// current overall PR / position PR for `exerciseId`. Mirrors the dominance
-// logic in core's recomputePrsForExercise but runs against the live store at
-// click time — so the optimistic placeholder can render the gold star on the
-// same frame as the click, instead of waiting for the (rAF-deferred) mutation
-// and a second React commit.
+// current overall PR / position PR for `exerciseId`, against the live store at
+// click time, so the optimistic placeholder can render the gold star on the
+// same frame as the click instead of waiting for the (rAF-deferred) mutation
+// and a second React commit. The rule itself lives in core's prs.ts, next to
+// recomputePrsForExercise, so the preview and the saved flag cannot drift.
 function predictPrFlags(
   exerciseId: number,
   weId: number,
   weight: number,
   reps: number
 ): { isPr: boolean; isPosPr: boolean; position: number } {
-  const { indexes } = getState()
-  const wes = indexes.workoutExercisesByExercise.get(exerciseId) ?? []
-  let isPr = true
-  const targetSets = indexes.setsByWorkoutExercise.get(weId) ?? []
-  let loggedInTarget = 0
-  for (const s of targetSets) {
-    if (s.is_planned) continue
-    if (s.weight == null || s.reps == null) continue
-    loggedInTarget++
-  }
-  const position = loggedInTarget + 1
-  let isPosPr = true
-  // Compare on weightKey, matching prs.ts — the saved flag and this preview
-  // must agree, and raw kg floats from an import differ from typed ones.
-  const key = weightKey(weight)
-  for (const we of wes) {
-    const arr = (indexes.setsByWorkoutExercise.get(we.id) ?? [])
-      .slice()
-      .sort((a, b) => a.order - b.order || a.id - b.id)
-    let posIdx = 0
-    for (const s of arr) {
-      if (s.is_planned) continue
-      if (s.weight == null || s.reps == null) continue
-      posIdx++
-      const sKey = weightKey(s.weight)
-      const dominates =
-        (sKey > key && s.reps >= reps) ||
-        (sKey === key && s.reps > reps) ||
-        (sKey === key && s.reps === reps)
-      if (dominates) {
-        isPr = false
-        if (posIdx === position) isPosPr = false
-      }
-      if (!isPr && !isPosPr) return { isPr, isPosPr, position }
-    }
-  }
-  return { isPr, isPosPr, position }
-}
-
-function formatRest(prevIso: string | null | undefined, curIso: string): string | null {
-  if (!prevIso) return null
-  const diff = (Date.parse(curIso) - Date.parse(prevIso)) / 1000
-  // Mirror the live ticker's 30-min cap: a gap longer than that isn't rest
-  // between sets (e.g. set 1 anchored to another exercise logged hours
-  // earlier in the day), so suppress the label instead of showing "1951m".
-  if (!Number.isFinite(diff) || diff <= 30 || diff > 1800) return null
-  if (diff < 60) return `${Math.round(diff)}s`
-  const m = Math.floor(diff / 60)
-  const s = Math.round(diff % 60)
-  return s === 0 ? `${m}m` : `${m}m ${s}s`
+  return corePredictPrFlags(getState().indexes, exerciseId, weId, weight, reps)
 }
 
 // Animate the next layout change — used right before any mutation that adds or
@@ -201,27 +197,6 @@ const EMPTY_HISTORY: ExerciseHistoryDay[] = []
 
 /** For a NoteSheet that opens at the input: there is no "Edit" button to wire. */
 function noop() {}
-
-// Heaviest set from the most recent prior workout for this exercise, used to
-// prefill the log-set form when there's nothing else to seed from. Skips the
-// current workout's date so the previous session is what surfaces.
-function lastWorkoutTopSet(
-  exerciseId: number,
-  currentWorkoutDate: string | null
-): { weight: number; reps: number } | null {
-  const history = getExerciseHistoryQ(exerciseId)
-  for (const day of history) {
-    if (currentWorkoutDate && day.date === currentWorkoutDate) continue
-    const candidates = day.sets.filter(
-      (s): s is typeof s & { weight: number; reps: number } =>
-        s.weight != null && s.reps != null
-    )
-    if (candidates.length === 0) continue
-    const top = candidates.reduce((b, s) => (s.weight > b.weight ? s : b))
-    return { weight: top.weight, reps: top.reps }
-  }
-  return null
-}
 
 // First-frame placeholder for the editing form. See the use site for the
 // derivation of 254. Transparent so the empty card outline doesn't flash
@@ -668,24 +643,8 @@ function SetRowFade({
     </Animated.View>
   )
 }
-type Metric = "one_rm" | "heaviest" | "avg_weight" | "per_set"
-
-const METRIC_OPTIONS: {
-  value: Metric
-  label: string
-}[] = [
-  { value: "per_set", label: "Per Set" },
-  { value: "heaviest", label: "Heaviest" },
-  { value: "one_rm", label: "1RM" },
-  { value: "avg_weight", label: "Avg Weight" },
-]
-
-const SET_INDEX_OPTIONS: { value: number; label: string }[] = [
-  { value: 1, label: "1st" },
-  { value: 2, label: "2nd" },
-  { value: 3, label: "3rd" },
-  { value: 4, label: "4th" },
-]
+// Metric, METRIC_OPTIONS and SET_INDEX_OPTIONS live in @lift/core/exerciseStats
+// so the web graph offers the same choices.
 
 export function SetLoggerScreen({ route, navigation }: any) {
   // `resolved` holds the real workoutId / weId once they exist in the
@@ -801,7 +760,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // Cardio exercises store their two numerics as time-in-minutes (in the
   // `weight` field) and a level integer (in the `reps` field). No kg/lb
   // conversion is applied for cardio.
-  const isCardio = we?.exercise.category === "cardio"
+  const isCardio = isCardioCategory(we?.exercise.category)
   // Lazy: only run the history query when a tab that needs it is active.
   // The query iterates indexes and is fast, but it runs inside the same
   // synchronous React commit triggered by add/delete-set mutations, where
@@ -815,10 +774,20 @@ export function SetLoggerScreen({ route, navigation }: any) {
     // nothing for the query — only later commits do, and none at all when
     // the card is switched off.
     (tab === "workout" && firstPaintDone && showLastTime)
+  // Source row references stay the same when an unrelated exercise or a
+  // setting changes. A target set's PR flags also replace its row, so this
+  // invalidates for historical PR changes as well as new/deleted sets.
+  const rawHistorySources = useMemo(
+    () => exerciseId != null && needsHistory
+      ? getExerciseHistorySourceRowsQ(exerciseId)
+      : [],
+    [snapshot, exerciseId, needsHistory]
+  )
+  const historySources = useStableValue(rawHistorySources, sameExerciseHistorySourceRows)
   const rawHistory: ExerciseHistoryDay[] = useMemo(() => {
     if (exerciseId == null || !needsHistory) return EMPTY_HISTORY
     return getExerciseHistoryQ(exerciseId)
-  }, [snapshot, exerciseId, needsHistory])
+  }, [historySources, exerciseId, needsHistory])
   // Identity-stable while the content is unchanged, so LastTimePanel,
   // GraphPanel, and SummaryPanel skip their render on commits that did not
   // touch this exercise's history (a set edit elsewhere, a note, a sync).
@@ -840,40 +809,29 @@ export function SetLoggerScreen({ route, navigation }: any) {
     const realByDate = getWorkoutByDateQ(date)
     if (!realByDate) return null
     const skipWeId = realWe?.id ?? null
-    let latest: string | null = null
-    for (const otherWe of realByDate.exercises) {
-      if (skipWeId !== null && otherWe.id === skipWeId) continue
-      for (const s of otherWe.sets) {
-        if (s.is_planned) continue
-        if (latest === null || Date.parse(s.created_at) > Date.parse(latest)) {
-          latest = s.created_at
-        }
-      }
-    }
-    return latest
+    return latestOtherSetIso(realByDate.exercises, skipWeId)
   }, [snapshot, workout?.date, route.params?.pendingCreate?.date, realWe?.id])
 
   const nextPlanned = !isPlanned ? sets.find((s) => s.is_planned) ?? null : null
   const lastSet = sets.length ? sets[sets.length - 1] : null
   const seed = nextPlanned ?? lastSet
 
-  // Lazy initializer: when there's nothing seeding the form yet (no planned
-  // set, no sets in this session), pull the top set (heaviest weight) from
-  // the most recent prior workout for this exercise. Runs once at mount.
-  const [weight, setWeight] = useState<number>(() => {
-    if (seed?.weight != null) {
-      return isCardio ? seed.weight : roundForDisplay(fromKg(seed.weight, unit), unit)
+  // Seed each field independently, as before, but query the prior session at
+  // most once when either field needs a fallback. Runs only on mount.
+  const [initialForm] = useState(() => {
+    const top = (seed?.weight == null || seed?.reps == null) && exerciseId != null
+      ? coreLastWorkoutTopSet(getExerciseHistoryQ(exerciseId), workout?.date ?? null)
+      : null
+    const storedWeight = seed?.weight ?? top?.weight ?? (isCardio ? 20 : 0)
+    return {
+      weight: isCardio
+        ? storedWeight
+        : roundForDisplay(fromKg(storedWeight, unit), unit),
+      reps: seed?.reps ?? top?.reps ?? (isCardio ? 5 : 8),
     }
-    const top = exerciseId != null ? lastWorkoutTopSet(exerciseId, workout?.date ?? null) : null
-    if (isCardio) return top?.weight ?? 20
-    return roundForDisplay(fromKg(top?.weight ?? 0, unit), unit)
   })
-  const [reps, setReps] = useState<number>(() => {
-    if (seed?.reps != null) return seed.reps
-    const top = exerciseId != null ? lastWorkoutTopSet(exerciseId, workout?.date ?? null) : null
-    if (isCardio) return top?.reps ?? 5
-    return top?.reps ?? 8
-  })
+  const [weight, setWeight] = useState(initialForm.weight)
+  const [reps, setReps] = useState(initialForm.reps)
   const [error, setError] = useState<string | null>(null)
   // When non-null, Save updates this set instead of adding a new one. Set
   // by the row's swipe-Edit action, or by "Not Hit" on a planned set.
@@ -985,12 +943,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
       const effectiveLen = currentWe.sets.filter((s) => !leaving.has(s.id)).length
       if (effectiveLen > 0) return
       const isOnlyExercise = w.exercises.length === 1
-      const isSideEffectWorkout =
-        isOnlyExercise &&
-        !w.started_at &&
-        !w.gym &&
-        !w.notes &&
-        w.status !== "planned"
+      const isSideEffectWorkout = isOnlyExercise && isEmptyWorkoutShell(w)
       if (isSideEffectWorkout) {
         deleteWorkout(workoutId)
       } else {
@@ -1220,15 +1173,9 @@ export function SetLoggerScreen({ route, navigation }: any) {
     setReps(s.reps ?? 0)
     // Rest anchor: the most recent non-planned set before this one in the
     // current exercise, falling back to the prior-exercise iso passed in.
-    let anchor: string | null = prevWorkoutLastSetIso
-    for (const other of sets) {
-      if (other.id === s.id) break
-      if (!other.is_planned) anchor = other.created_at
-    }
+    const anchor = restAnchorForEdit(sets, s.id, prevWorkoutLastSetIso)
     setEditingRestAnchorIso(anchor)
-    const computed = anchor
-      ? Math.max(0, Math.round((Date.parse(s.created_at) - Date.parse(anchor)) / 1000))
-      : 0
+    const computed = restSecondsFrom(anchor, s.created_at)
     setRestSec(computed)
     setEditingOriginalRestSec(computed)
     setError(null)
@@ -1442,7 +1389,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
     if (selectedIds.length === 0) return
     const count = selectedIds.length
     Alert.alert(
-      `Delete ${count} set${count === 1 ? "" : "s"}?`,
+      deleteSetsTitle(count),
       "This can't be undone.",
       [
         { text: "Cancel", style: "cancel" },
@@ -1480,16 +1427,9 @@ export function SetLoggerScreen({ route, navigation }: any) {
   function save() {
     Keyboard.dismiss()
     setError(null)
-    if (reps <= 0) {
-      setError(isCardio ? "Set a level of at least 1." : "Add at least 1 rep to log this set.")
-      return
-    }
-    if (weight < 0) {
-      setError(isCardio ? "Time can’t be negative." : "Weight can’t be negative.")
-      return
-    }
-    if (isCardio && weight <= 0) {
-      setError("Set a time of at least 1 minute.")
+    const formError = setFormError(weight, reps, isCardio)
+    if (formError) {
+      setError(formError)
       return
     }
     try {
@@ -1518,7 +1458,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
         const anchor = editingRestAnchorIso
         const restChanged = anchor != null && restSec !== editingOriginalRestSec
         const newCreatedAt = restChanged && anchor
-          ? new Date(Date.parse(anchor) + restSec * 1000).toISOString()
+          ? createdAtForRest(anchor, restSec)
           : null
         setEditingSetId(null)
         setEditingRestAnchorIso(null)
@@ -1880,11 +1820,7 @@ function PlannedSetActionsModal({
   onDelete: (s: WorkoutSet) => void
 }) {
   const title =
-    set != null
-      ? isCardio
-        ? `${set.weight ?? "-"} min × Lvl ${set.reps ?? "-"}`
-        : `${formatWeight(set.weight ?? undefined, unit)} ${unit} × ${set.reps ?? "-"}`
-      : ""
+    set != null ? plannedSetTitle(set, unit, isCardio) : ""
   return (
     <PopupModal
       visible={set != null}
@@ -2161,18 +2097,8 @@ const LastTimePanel = memo(function LastTimePanel({
   /** Opens the Summary tab, which carries the full record table. */
   onShowMore?: () => void
 }) {
-  const last = useMemo(() => {
-    for (const d of days) {
-      // `>=` also skips a future-dated session, which is not a "last time".
-      if (d.date >= currentDate) continue
-      const sets = d.sets.filter(
-        (s): s is typeof s & { weight: number; reps: number } =>
-          s.weight != null && s.reps != null
-      )
-      if (sets.length) return { date: d.date, sets }
-    }
-    return null
-  }, [days, currentDate])
+  // Also skips a future-dated session, which is not a "last time".
+  const last = useMemo(() => lastSessionBefore(days, currentDate), [days, currentDate])
 
   // Both record sets are built from every day EXCEPT the one being logged.
   //
@@ -2210,7 +2136,7 @@ const LastTimePanel = memo(function LastTimePanel({
   // is down. With no earlier session there is nothing to collapse to in last
   // time mode either, so that stays open for its records.
   const [manual, setManual] = useState<boolean | null>(null)
-  const open = manual ?? (positionMode || !hasSets || !last)
+  const open = lastTimeCardOpen({ manual, positionMode, hasSets, hasLast: last != null })
 
   // Which position the rows currently show, and the one they are fading away
   // from. Both are rendered during a swap, so no state change has to land at a
@@ -2412,11 +2338,7 @@ const LastTimePanel = memo(function LastTimePanel({
   // that survives to position mode always had records to get there.
   if (!last && top.length === 0) return null
 
-  const collapsedLine = last
-    ? last.sets
-        .map((s) => `${formatWeight(s.weight, unit)}×${s.reps}`)
-        .join("   ")
-    : ""
+  const collapsedLine = last ? lastSessionSummary(last.sets, unit) : ""
 
   // Only the active layer sits in flow, and only while its height is unknown.
   // That is what gives the box its height before the first measurement lands,
@@ -2733,10 +2655,7 @@ export function PastHistory({
   currentDate: string
   onPressDate?: (date: string) => void
 }) {
-  const past = useMemo(
-    () => days.filter((d) => d.date <= currentDate),
-    [days, currentDate]
-  )
+  const past = useMemo(() => pastDays(days, currentDate), [days, currentDate])
   if (past.length === 0) {
     return (
       <View style={styles.empty}>
@@ -2772,10 +2691,7 @@ export function PastHistoryList({
   contentContainerStyle?: any
   style?: any
 }) {
-  const past = useMemo(
-    () => days.filter((d) => d.date <= currentDate),
-    [days, currentDate]
-  )
+  const past = useMemo(() => pastDays(days, currentDate), [days, currentDate])
   const renderItem = useCallback(
     ({ item }: { item: ExerciseHistoryDay }) => (
       <HistoryDayCard day={item} onPressDate={onPressDate} />
@@ -2812,78 +2728,22 @@ export function PastHistoryList({
   )
 }
 
-function dayValueKg(
-  day: ExerciseHistoryDay,
-  metric: Metric,
-  setIndex: number
-): { value: number; reps: number } {
-  const sets = day.sets.filter(
-    (s): s is typeof s & { weight: number; reps: number } =>
-      s.weight != null && s.reps != null
-  )
-  if (!sets.length) return { value: 0, reps: 0 }
-  switch (metric) {
-    case "one_rm": {
-      const best = sets.reduce((b, s) =>
-        s.estimated_one_rm > b.estimated_one_rm ? s : b
-      )
-      return { value: best.estimated_one_rm, reps: best.reps }
-    }
-    case "heaviest": {
-      const best = sets.reduce((b, s) => (s.weight > b.weight ? s : b))
-      return { value: best.weight, reps: best.reps }
-    }
-    case "avg_weight": {
-      const totalReps = sets.reduce((sum, s) => sum + s.reps, 0)
-      return {
-        value: sets.reduce((sum, s) => sum + s.weight, 0) / sets.length,
-        reps: totalReps,
-      }
-    }
-    case "per_set": {
-      const target = sets[setIndex - 1]
-      if (!target) return { value: 0, reps: 0 }
-      return { value: target.weight, reps: target.reps }
-    }
-  }
-}
+// dayValueKg and the chart's derivations live in @lift/core/exerciseStats so
+// the web graph plots the same values.
 
 export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "kg" | "lb" }) {
   const [metric, setMetric] = useState<Metric>("per_set")
   const [setIndex, setSetIndex] = useState<number>(1)
   const points = useMemo(
-    () =>
-      days
-        .map((d) => {
-          const dv = dayValueKg(d, metric, setIndex)
-          return {
-            date: d.date,
-            value: roundForDisplay(fromKg(dv.value, unit), unit),
-            reps: dv.reps,
-          }
-        })
-        .filter((p) => p.value > 0)
-        .sort(
-          (a, b) =>
-            new Date(a.date + "T00:00:00").getTime() -
-            new Date(b.date + "T00:00:00").getTime()
-        ),
+    () => chartPoints(days, metric, setIndex, unit),
     [days, metric, setIndex, unit]
   )
 
   const opt = METRIC_OPTIONS.find((m) => m.value === metric)!
-  const headerLabel =
-    metric === "heaviest"
-      ? "Heaviest set"
-      : metric === "per_set"
-        ? `${SET_INDEX_OPTIONS.find((s) => s.value === setIndex)!.label} set`
-        : opt.label
+  const headerLabel = graphHeaderLabel(metric, setIndex)
 
   if (points.length === 0) {
-    const emptyMessage =
-      metric === "per_set"
-        ? `No ${SET_INDEX_OPTIONS.find((s) => s.value === setIndex)!.label} sets logged yet.`
-        : `No data for ${opt.label.toLowerCase()} yet.`
+    const emptyMessage = graphEmptyMessage(metric, setIndex)
     return (
       <View style={styles.graphWrap}>
         <View style={styles.chartCard}>
@@ -2947,7 +2807,7 @@ export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "
           <View>
             <Text style={styles.chartEyebrow}>{headerLabel}</Text>
             <View style={styles.chartValueRow}>
-              <Text style={styles.chartValue}>{fmtMetric(latest.value, metric)}</Text>
+              <Text style={styles.chartValue}>{fmtMetric(latest.value)}</Text>
               <Text style={styles.chartUnit}>{unit}</Text>
               {points.length > 1 && (
                 <Text
@@ -2961,7 +2821,7 @@ export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "
                   ]}
                 >
                   {delta > 0 ? "+" : ""}
-                  {fmtMetric(delta, metric)} since first
+                  {fmtMetric(delta)} since first
                 </Text>
               )}
             </View>
@@ -2988,9 +2848,9 @@ export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "
         />
 
         <View style={styles.chartStats}>
-          <Stat label="Peak" value={fmtMetric(peak, metric)} unit={unit} accent="green" />
-          <Stat label="Average" value={fmtMetric(avg, metric)} unit={unit} accent="muted" />
-          <Stat label="Latest" value={fmtMetric(latest.value, metric)} unit={unit} accent="primary" />
+          <Stat label="Peak" value={fmtMetric(peak)} unit={unit} accent="green" />
+          <Stat label="Average" value={fmtMetric(avg)} unit={unit} accent="muted" />
+          <Stat label="Latest" value={fmtMetric(latest.value)} unit={unit} accent="primary" />
         </View>
       </View>
 
@@ -3009,8 +2869,6 @@ export function GraphPanel({ days, unit }: { days: ExerciseHistoryDay[]; unit: "
     </View>
   )
 }
-
-type ChartPoint = { date: string; value: number; reps: number }
 
 function SvgLineChart({
   points,
@@ -3031,31 +2889,14 @@ function SvgLineChart({
   const TOP_PAD = 12
   const BOT_PAD = 24
   const DRAW_H = CANVAS_H - TOP_PAD - BOT_PAD
-  const SECTIONS = 4
 
   const screenWidth = Dimensions.get("window").width
   const visibleW = screenWidth - theme.spacing[4] * 4 - Y_AXIS_W
   const naturalW = INITIAL + Math.max(0, points.length - 1) * POINT_SPACING + END
   const contentW = Math.max(visibleW, naturalW)
 
-  const values = points.map((p) => p.value)
-  const minVal = Math.min(...values)
-  const maxVal = Math.max(...values)
-  const rawSpan = Math.max(1, maxVal - minVal)
-  const roughStep = rawSpan / SECTIONS
-  const niceStep =
-    roughStep <= 5
-      ? 5
-      : roughStep <= 10
-        ? 10
-        : roughStep <= 25
-          ? 25
-          : roughStep <= 50
-            ? 50
-            : Math.ceil(roughStep / 100) * 100
-  const yMin = Math.max(0, Math.floor(minVal / niceStep) * niceStep)
-  const yMax = Math.ceil(maxVal / niceStep) * niceStep + (maxVal === minVal ? niceStep : 0)
-  const ySections = Math.max(1, Math.round((yMax - yMin) / niceStep))
+  // Round step, floored yMin, and the ticks: @lift/core/exerciseStats.
+  const { yMin, yMax, ticks: yTickValues } = yAxisScale(points.map((p) => p.value))
 
   const xFor = (i: number) => {
     if (points.length === 1) return contentW / 2
@@ -3075,17 +2916,7 @@ function SvgLineChart({
     if (i === points.length - 1) areaPath += ` L ${x} ${TOP_PAD + DRAW_H} Z`
   })
 
-  const yTickValues: number[] = []
-  for (let s = 0; s <= ySections; s++) {
-    yTickValues.push(yMax - s * niceStep)
-  }
-
-  const labelIndices: number[] = []
-  const labelCount = Math.min(5, points.length)
-  for (let k = 0; k < labelCount; k++) {
-    const denom = Math.max(1, labelCount - 1)
-    labelIndices.push(Math.round((k * (points.length - 1)) / denom))
-  }
+  const labelIndices = xLabelIndices(points.length)
   const [activeIdx, setActiveIdx] = useState<number | null>(
     points.length > 0 ? points.length - 1 : null
   )
@@ -3114,7 +2945,7 @@ function SvgLineChart({
               textAnchor="end"
               fill={theme.colors.muted}
             >
-              {fmtMetric(v, metric)}
+              {fmtMetric(v)}
             </SvgText>
           ))}
         </Svg>
@@ -3246,7 +3077,7 @@ function SvgLineChart({
               ]}
             >
               <Text style={styles.pointerValue}>
-                {fmtMetric(active.value, metric)} {unit}
+                {fmtMetric(active.value)} {unit}
               </Text>
               {active.reps > 0 && (
                 <Text style={styles.pointerDate}>× {active.reps} reps</Text>
@@ -3326,18 +3157,6 @@ function Stat({
   )
 }
 
-function fmtMetric(value: number | undefined, _metric: Metric): string {
-  if (value == null || !Number.isFinite(value)) return "-"
-  return value.toFixed(value % 1 === 0 ? 0 : 1)
-}
-
-function shortDate(date: string): string {
-  return new Date(date + "T00:00:00").toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  })
-}
-
 export function SettingsPanel({ navigation }: { navigation: any }) {
   return (
     <View style={{ gap: theme.spacing[3] }}>
@@ -3361,18 +3180,9 @@ export function SettingsPanel({ navigation }: { navigation: any }) {
 // Gold, reused for the "best estimated 1RM" marker on the rep rows.
 const GOLD = theme.colors.gold
 
-// How the rep-record rows are ordered, and what the bar in each row measures.
-// The bar always tracks the active sort, so the list reads as one shape.
-type RepSort = "weight" | "oneRm" | "reps" | "recent"
-const REP_SORTS: { key: RepSort; label: string; hint: string }[] = [
-  { key: "weight", label: "Heaviest", hint: "Top weight first" },
-  { key: "oneRm", label: "Best 1RM", hint: "Strongest set first" },
-  { key: "reps", label: "Most reps", hint: "Highest rep count first" },
-  { key: "recent", label: "Recent", hint: "Newest record first" },
-]
-
-// Rows shown before the "Show all" toggle is tapped.
-const REP_ROWS_COLLAPSED = 3
+// RepSort, REP_SORTS and REP_ROWS_COLLAPSED (how the rep-record rows are
+// ordered and how many show before "Show all") live in
+// @lift/core/exerciseStats.
 
 /**
  * The "Summary" sub-tab (was "Records"): what you did last time for this
@@ -3396,18 +3206,9 @@ export const SummaryPanel = memo(function SummaryPanel({
   excludeDate?: string
 }) {
   // getExerciseHistoryQ returns days newest-first, so the first match wins.
-  const lastDay = useMemo(() => {
-    const today = todayString()
-    for (const d of days) {
-      // Never a session that has not happened yet. A workout dated in the
-      // future can carry logged sets, and it sorts to the front — the History
-      // tab drops those days for the same reason.
-      if (d.date > today) continue
-      if (excludeDate && d.date >= excludeDate) continue
-      return d
-    }
-    return null
-  }, [days, excludeDate])
+  // Never a session that has not happened yet (a workout dated in the future
+  // can carry logged sets, and it sorts to the front).
+  const lastDay = useMemo(() => pickLastSession(days, excludeDate), [days, excludeDate])
 
   // The three note kinds that can hang off that date (see CLAUDE.md). They are
   // independent rows in the snapshot; any of them can be empty. `days` is
@@ -3426,29 +3227,10 @@ export const SummaryPanel = memo(function SummaryPanel({
 
   // Flatten weight×reps sets with their set position (order is 0-based, so the
   // set number shown to the user is order+1) and the date performed.
-  const wrSets = useMemo(() => {
-    const out: { weightKg: number; reps: number; setNum: number; date: string; oneRm: number }[] = []
-    for (const day of days) {
-      for (const s of day.sets) {
-        if (s.weight == null || s.reps == null) continue
-        out.push({
-          weightKg: s.weight,
-          reps: s.reps,
-          setNum: s.order + 1,
-          date: day.date,
-          oneRm: s.estimated_one_rm,
-        })
-      }
-    }
-    return out
-  }, [days])
+  const wrSets = useMemo(() => weightRepSets(days), [days])
 
   // Set numbers actually performed, ascending. Drives the picker; never padded.
-  const setNumbers = useMemo(() => {
-    const nums = new Set<number>()
-    for (const s of wrSets) nums.add(s.setNum)
-    return [...nums].sort((a, b) => a - b)
-  }, [wrSets])
+  const setNumbers = useMemo(() => setNumbersOf(wrSets), [wrSets])
 
   // "all" pools every position; otherwise restrict to one set number.
   const [scope, setScope] = useState<"all" | number>("all")
@@ -3480,78 +3262,7 @@ export const SummaryPanel = memo(function SummaryPanel({
   // One row per rep count actually performed in scope: the heaviest weight at
   // that rep count, the day it happened, how many times that rep count was
   // used, and the 1RM it estimates to.
-  const repRows = useMemo(() => {
-    const best = new Map<
-      number,
-      { weightKg: number; date: string; count: number }
-    >()
-    for (const s of scoped) {
-      const cur = best.get(s.reps)
-      if (!cur) {
-        best.set(s.reps, { weightKg: s.weightKg, date: s.date, count: 1 })
-        continue
-      }
-      cur.count += 1
-      if (weightKey(s.weightKg) > weightKey(cur.weightKg)) {
-        cur.weightKg = s.weightKg
-        cur.date = s.date
-      }
-    }
-    const rows = [...best.entries()].map(([reps, v]) => ({
-      reps,
-      weightKg: v.weightKg,
-      date: v.date,
-      count: v.count,
-      oneRmKg: estimateOneRm(v.weightKg, reps),
-    }))
-
-    // `metric` is what the bar measures — always the active sort, so the bar
-    // lengths and the row order tell the same story. "Recent" has no useful
-    // magnitude, so it falls back to weight.
-    // Weight is measured as weightKey so equal-looking weights really tie and
-    // the reps tiebreak below gets to decide. `share` is a ratio against
-    // maxMetric, so the x100 scale cancels out and the bars are unaffected.
-    const metric = (r: (typeof rows)[number]) =>
-      sort === "reps"
-        ? r.reps
-        : sort === "oneRm"
-          ? r.oneRmKg
-          : weightKey(r.weightKg)
-
-    rows.sort((a, b) => {
-      if (sort === "recent") {
-        if (a.date !== b.date) return a.date < b.date ? 1 : -1
-        return weightKey(b.weightKg) - weightKey(a.weightKg)
-      }
-      const diff = metric(b) - metric(a)
-      // Ties break on the harder set: more reps at the same weight.
-      return diff !== 0 ? diff : b.reps - a.reps
-    })
-
-    const maxMetric = rows.reduce((m, r) => (metric(r) > m ? metric(r) : m), 0)
-
-    // The single strongest row, by index rather than by value: several rep
-    // counts can estimate to the same 1RM, and marking every tie made the
-    // whole table gold. Ties go to the row that did more reps for it.
-    let topIdx = -1
-    for (let i = 0; i < rows.length; i++) {
-      if (topIdx < 0) {
-        topIdx = i
-        continue
-      }
-      const best = rows[topIdx]
-      if (rows[i].oneRmKg > best.oneRmKg) topIdx = i
-      else if (rows[i].oneRmKg === best.oneRmKg && rows[i].reps > best.reps) {
-        topIdx = i
-      }
-    }
-
-    return rows.map((r, i) => ({
-      ...r,
-      share: maxMetric > 0 ? metric(r) / maxMetric : 0,
-      isTopOneRm: i === topIdx,
-    }))
-  }, [scoped, sort])
+  const repRows = useMemo(() => repRecordRows(scoped, sort), [scoped, sort])
 
   const visibleRows = showAllRows
     ? repRows
@@ -3905,46 +3616,6 @@ function CalendarButton({
   )
 }
 
-function niceDate(d: string): string {
-  return new Date(d + "T00:00:00").toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  })
-}
-
-// "Yesterday" / "6 days ago" / "3 weeks ago" for the last-session header. Both
-// sides are floored to local midnight so the answer follows calendar days, not
-// elapsed hours — a session 20 hours ago still reads "Yesterday".
-function agoLabel(date: string): string {
-  const then = new Date(date + "T00:00:00")
-  const now = new Date()
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const days = Math.round((today.getTime() - then.getTime()) / 86400000)
-  if (days <= 0) return "Today"
-  if (days === 1) return "Yesterday"
-  if (days < 7) return `${days} days ago`
-  if (days < 30) {
-    const w = Math.floor(days / 7)
-    return w === 1 ? "1 week ago" : `${w} weeks ago`
-  }
-  if (days < 365) {
-    const m = Math.floor(days / 30)
-    return m === 1 ? "1 month ago" : `${m} months ago`
-  }
-  const y = Math.floor(days / 365)
-  return y === 1 ? "1 year ago" : `${y} years ago`
-}
-
-// Records show the year only when it differs from the current year (a PR can
-// be years old) — dropped the weekday to keep it compact in the rep rows.
-function recordDate(d: string): string {
-  const dt = new Date(d + "T00:00:00")
-  const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" }
-  if (dt.getFullYear() !== new Date().getFullYear()) opts.year = "numeric"
-  return dt.toLocaleDateString("en-US", opts)
-}
-
 function NumericField({
   label,
   unit,
@@ -3990,7 +3661,7 @@ function NumericField({
         <TextInput
           value={text}
           onChangeText={(t) => {
-            const cleaned = t.replace(allowDecimal ? /[^0-9.]/g : /[^0-9]/g, "")
+            const cleaned = cleanNumericText(t, allowDecimal)
             setText(cleaned)
             const n = Number(cleaned)
             if (Number.isFinite(n)) onChange(n)
@@ -4145,6 +3816,84 @@ function setRowPropsEqual(prev: SetRowProps, next: SetRowProps): boolean {
 // One set row: the pressable body, and for logged sets the Swipeable with
 // its action tray. Memoized so a store commit re-renders only the rows whose
 // data or position changed; every callback it receives is identity-stable.
+/**
+ * A set row's number that marks a change (the set was edited, or a planned
+ * set was logged with other numbers): the new value shows at once in the
+ * teal accent with a small pop, then settles back to its normal size and
+ * color, the same teal the rest ticker uses after a reset. A row appearing
+ * for the first time is not marked; it has its own fade-in. Opacity and scale
+ * only, on the native driver: the teal is a copy of the text laid over it
+ * that fades out. `onChanging` brackets the motion so the row can stop caching
+ * itself as a bitmap meanwhile (see SetRow).
+ */
+function ChangedText({
+  text,
+  suffix,
+  style,
+  onChanging,
+}: {
+  text: string
+  suffix?: ReactNode
+  style: StyleProp<TextStyle>
+  onChanging: (on: boolean) => void
+}) {
+  const lastText = useRef(text)
+  const pop = useRef(new Animated.Value(1)).current
+  const tint = useRef(new Animated.Value(0)).current
+  const token = useRef(0)
+  const active = useRef(false)
+
+  useEffect(() => {
+    if (text === lastText.current) return
+    lastText.current = text
+    const my = ++token.current
+    pop.stopAnimation()
+    tint.stopAnimation()
+    if (!active.current) {
+      active.current = true
+      onChanging(true)
+    }
+    pop.setValue(1.14)
+    tint.setValue(1)
+    Animated.parallel([
+      Animated.timing(pop, { toValue: 1, duration: DUR.changePop, easing: EASE.out, useNativeDriver: true }),
+      Animated.timing(tint, { toValue: 0, duration: DUR.changeTint, easing: EASE.inOut, useNativeDriver: true }),
+    ]).start(() => {
+      // A newer change took over; it ends the marking.
+      if (my !== token.current || !active.current) return
+      active.current = false
+      onChanging(false)
+    })
+  }, [text, pop, tint, onChanging])
+
+  // Unmounting mid-change must not leave the row un-cached.
+  useEffect(
+    () => () => {
+      if (active.current) onChanging(false)
+    },
+    [onChanging]
+  )
+
+  const content = (
+    <>
+      {text}
+      {suffix ? " " : null}
+      {suffix}
+    </>
+  )
+  return (
+    <Animated.View style={{ transform: [{ scale: pop }] }}>
+      <Text style={style}>{content}</Text>
+      <Animated.Text
+        style={[style, styles.changedTint, { opacity: tint }]}
+        pointerEvents="none"
+      >
+        {content}
+      </Animated.Text>
+    </Animated.View>
+  )
+}
+
 const SetRow = memo(function SetRow({
   s,
   index,
@@ -4170,6 +3919,15 @@ const SetRow = memo(function SetRow({
   onDeleteExited,
 }: SetRowProps) {
   const onExited = useCallback(() => onDeleteExited(s.id), [onDeleteExited, s.id])
+  // While an edited value is marked (ChangedText), the row must not be a
+  // cached bitmap: an animated child inside a rasterized layer renders stale.
+  // Rasterizing only helps the swipe, and nobody swipes in the moment after
+  // Update, so it is switched off for exactly that long.
+  const [changing, setChanging] = useState(0)
+  const onChanging = useCallback(
+    (on: boolean) => setChanging((n) => Math.max(0, n + (on ? 1 : -1))),
+    []
+  )
 
   const oneRm = !s.is_planned ? estimateOneRm(s.weight, s.reps) : 0
   const isPr = !!s.is_pr
@@ -4208,8 +3966,8 @@ const SetRow = memo(function SetRow({
       // collapsable=false ensures Android doesn't optimize this
       // intermediate view away, which would defeat the cache.
       collapsable={false}
-      renderToHardwareTextureAndroid
-      shouldRasterizeIOS
+      renderToHardwareTextureAndroid={changing === 0}
+      shouldRasterizeIOS={changing === 0}
       // Static, not an animated overlay. This row caches itself as a
       // bitmap (see the rasterisation note above), and an animated child
       // inside a cached layer renders stale - the highlight showed the
@@ -4236,19 +3994,21 @@ const SetRow = memo(function SetRow({
           isPr={isPr}
           restLabel={restLabel}
         />
-        <Text
-          style={[styles.setWeight, s.is_planned && styles.dimText]}
-        >
-          {isCardio
-            ? s.weight ?? "-"
-            : formatWeight(s.weight, unit)}{" "}
-          <Text style={styles.setUnit}>{isCardio ? "min" : unit}</Text>
-        </Text>
-        <Text
-          style={[styles.setReps, s.is_planned && styles.dimText]}
-        >
-          {isCardio ? `Lvl ${s.reps ?? "-"}` : s.reps ?? "-"}
-        </Text>
+        <View style={styles.setWeightBox}>
+          <ChangedText
+            text={isCardio ? String(s.weight ?? "-") : formatWeight(s.weight, unit)}
+            suffix={<Text style={styles.setUnit}>{isCardio ? "min" : unit}</Text>}
+            style={[styles.setWeightText, s.is_planned && styles.dimText]}
+            onChanging={onChanging}
+          />
+        </View>
+        <View style={styles.setRepsBox}>
+          <ChangedText
+            text={isCardio ? `Lvl ${s.reps ?? "-"}` : String(s.reps ?? "-")}
+            style={[styles.setRepsText, s.is_planned && styles.dimText]}
+            onChanging={onChanging}
+          />
+        </View>
         {!isCardio && !s.is_planned && showOneRm && oneRm > 0 ? (
           <Text style={styles.oneRm}>
             {formatWeight(oneRm, unit)} 1RM
@@ -4566,18 +4326,7 @@ const SetList = memo(function SetList({
   // Per-row rest labels. Anchor on the most recent prior *logged* set:
   // planned rows have synthetic created_at and shouldn't anchor real rest.
   // Set 1's rest comes from the last set of the previous workout.
-  const restLabels: (string | null)[] = []
-  {
-    let lastRealIso: string | null = prevWorkoutLastSetIso
-    for (const s of rows) {
-      if (s.is_planned) {
-        restLabels.push(null)
-      } else {
-        restLabels.push(formatRest(lastRealIso, s.created_at))
-        lastRealIso = s.created_at
-      }
-    }
-  }
+  const restLabels = setRestLabels(rows, prevWorkoutLastSetIso)
 
   return (
     <SetListEmptyTransition
@@ -5027,9 +4776,21 @@ const styles = StyleSheet.create({
   setIndex: { width: 24, color: theme.colors.muted, fontSize: theme.fontSize.base, fontWeight: "700" },
   setIndexCol: { width: 36, alignItems: "flex-start", justifyContent: "center" },
   setRestLabel: { color: theme.colors.muted, fontSize: 9, fontWeight: "500", marginTop: 1 },
-  setWeight: { flex: 1, color: theme.colors.foreground, fontSize: theme.fontSize.lg, fontWeight: "700", textAlign: "center" },
+  // The row's weight and reps: a box in the old layout slot, holding the
+  // text that marks a change (ChangedText).
+  setWeightBox: { flex: 1 },
+  setWeightText: { color: theme.colors.foreground, fontSize: theme.fontSize.lg, fontWeight: "700", textAlign: "center" },
+  setRepsBox: { width: 50 },
+  // The teal copy ChangedText lays over a changed number and fades out.
+  changedTint: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    color: theme.colors.secondary,
+  },
+  setRepsText: { color: theme.colors.foreground, fontSize: theme.fontSize.lg, fontWeight: "700", textAlign: "right" },
   setUnit: { color: theme.colors.muted, fontSize: 11, fontWeight: "400" },
-  setReps: { width: 50, color: theme.colors.foreground, fontSize: theme.fontSize.lg, fontWeight: "700", textAlign: "right" },
   setNoteLine: {
     flexDirection: "row",
     alignItems: "flex-start",

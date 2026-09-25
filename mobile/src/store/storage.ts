@@ -281,6 +281,27 @@ export class RnFsStorage implements BlobStorage {
   }
 }
 
+/**
+ * Moves a store kept under `fromSubPath` to `toSubPath`: the whole folder, so
+ * the snapshot, its restore points and the crash log go together in one
+ * rename. Only when the new folder does not exist yet and the old one does, so
+ * it runs once per account and never overwrites a store. Returns whether it
+ * moved anything. Throws if the move fails: the caller must not go on to load
+ * an empty store while the data sits in the old folder.
+ */
+export async function adoptLegacyStore(
+  fromSubPath: string,
+  toSubPath: string
+): Promise<boolean> {
+  const from = dirFor(fromSubPath).replace(/\/$/, "")
+  const to = dirFor(toSubPath).replace(/\/$/, "")
+  if (from === to) return false
+  if ((await FileSystem.getInfoAsync(to)).exists) return false
+  if (!(await FileSystem.getInfoAsync(from)).exists) return false
+  await FileSystem.moveAsync({ from, to })
+  return true
+}
+
 let active: RnFsStorage | null = null
 
 /** The factory passed to setStorageFactory; remembers the signed-in user's adapter. */

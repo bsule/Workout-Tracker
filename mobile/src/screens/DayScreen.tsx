@@ -38,7 +38,7 @@ import {
   deleteWorkout,
   workoutDurationSeconds,
 } from "@lift/core"
-import type { Workout, WorkoutExercise } from "@lift/core"
+import type { Gym, Workout, WorkoutExercise } from "@lift/core"
 import { Ionicons } from "@expo/vector-icons"
 import { useIsFocused } from "@react-navigation/native"
 import { Button } from "../components/Button"
@@ -64,6 +64,8 @@ import { pressedStyle } from "../theme/pressable"
 import { theme, line, tint } from "../theme/theme"
 import { useActiveDateAndSetter } from "../state/activeDate"
 import { addDays, todayString } from "../dates"
+import { formatDuration, labelForDate, noteActionLabel } from "@lift/core/format"
+import { isEmptyWorkoutShell, matchGymName } from "@lift/core/workouts"
 
 // ~6 year sliding window (3 each side of today). Generous enough that
 // the user effectively never hits the edge in normal use, and the
@@ -234,7 +236,7 @@ export function DayScreen({ navigation, route }: any) {
         if (wid == null) return
         Alert.alert(
           "Delete workout?",
-          "All exercises and sets logged this day will be removed. Notes are kept.",
+          "All exercises and sets logged this day will be removed.",
           [
             { text: "Cancel", style: "cancel" },
             {
@@ -448,13 +450,7 @@ function DayContent({
     const visibleExercises = rawWorkout.exercises.filter(
       (we) => we.sets.length > 0
     )
-    if (
-      visibleExercises.length === 0 &&
-      !rawWorkout.started_at &&
-      !rawWorkout.gym &&
-      !rawWorkout.notes &&
-      rawWorkout.status !== "planned"
-    ) {
+    if (visibleExercises.length === 0 && isEmptyWorkoutShell(rawWorkout)) {
       return undefined
     }
     return { ...rawWorkout, exercises: visibleExercises }
@@ -712,19 +708,6 @@ function DateNav({
 /** The day screen carries two notes: one on the date, one on the session. */
 type NoteKind = "day" | "workout"
 
-function noteActionLabel(date: string, hasNote: boolean): string {
-  const t = todayString()
-  if (date === t) return hasNote ? "Edit today's note" : "Add a note for today"
-  const named = labelForDate(date)
-  if (named === "Yesterday") {
-    return hasNote ? "Edit yesterday's note" : "Add a note for yesterday"
-  }
-  if (named === "Tomorrow") {
-    return hasNote ? "Edit tomorrow's note" : "Add a note for tomorrow"
-  }
-  return hasNote ? "Edit this day's note" : "Add a note for this day"
-}
-
 function TodayPill({
   visible,
   onPress,
@@ -795,27 +778,6 @@ function TodayPill({
       </Pressable>
     </Animated.View>
   )
-}
-
-/**
- * "Today" / "Yesterday" / "Tomorrow" when applicable; otherwise a long
- * weekday + month/day, e.g. "Monday, May 6".
- */
-function labelForDate(d: string): string {
-  const t = todayString()
-  if (d === t) return "Today"
-  const today = new Date(t + "T00:00:00")
-  const target = new Date(d + "T00:00:00")
-  const diffDays = Math.round(
-    (target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
-  )
-  if (diffDays === -1) return "Yesterday"
-  if (diffDays === 1) return "Tomorrow"
-  return target.toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  })
 }
 
 function SummaryStrip({
@@ -923,7 +885,10 @@ function GymPickerModal({
   workout: Workout
   onClose: () => void
 }) {
-  const [gymNames, setGymNames] = useState<string[]>([])
+  // Rows, not names: the list is keyed by gym id (an older import could save
+  // the same name twice, which made React warn about duplicate keys).
+  const [gyms, setGyms] = useState<Gym[]>([])
+  const gymNames = gyms.map((g) => g.name)
   const [adding, setAdding] = useState(false)
   const [newGym, setNewGym] = useState("")
   const { mounted, opacity } = usePresence(visible, { inMs: GYM_FADE_MS })
@@ -936,8 +901,8 @@ function GymPickerModal({
     setNewGym("")
     api
       .listGyms()
-      .then((gs) => setGymNames(gs.map((g) => g.name)))
-      .catch(() => setGymNames([]))
+      .then((gs) => setGyms(gs))
+      .catch(() => setGyms([]))
   }, [visible])
 
   const selected = workout.gym
@@ -966,9 +931,7 @@ function GymPickerModal({
     Keyboard.dismiss()
     // Typing "golds" when "Golds" is saved picks the saved gym. Patching the
     // typed text would add a second gym that differs only in case.
-    const existing = gymNames.find(
-      (g) => g.toLowerCase() === name.toLowerCase()
-    )
+    const existing = matchGymName(gymNames, name)
     onClose()
     deferMutation(() => {
       if (!existing) api.createGym(name)
@@ -1020,12 +983,12 @@ function GymPickerModal({
             first
             onPress={selected ? clearGym : onClose}
           />
-          {gymNames.map((name) => (
+          {gyms.map((g) => (
             <GymRow
-              key={name}
-              label={name}
-              selected={name === selected}
-              onPress={() => selectGym(name)}
+              key={g.id ?? `name:${g.name}`}
+              label={g.name}
+              selected={g.name === selected}
+              onPress={() => selectGym(g.name)}
             />
           ))}
         </ScrollView>
@@ -1133,14 +1096,6 @@ function formatTime(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   })
-}
-
-function formatDuration(seconds: number | null): string | null {
-  if (seconds == null || seconds <= 0) return null
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  if (h > 0) return `${h}h ${m}m`
-  return `${m}m`
 }
 
 function PlannedBanner({ date, onStart }: { date: string; onStart: () => void }) {

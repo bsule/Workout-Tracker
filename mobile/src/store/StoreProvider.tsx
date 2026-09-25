@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react"
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react"
 import { ActivityIndicator, Text, View } from "react-native"
 import { SnapshotTooNewError, useHydrated, useStore } from "@lift/core"
 import { useAuth } from "../auth/AuthProvider"
@@ -19,7 +19,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   // Signed out, the app shows only the Login screen, which reads nothing from
   // the store. Loading one anyway made an empty users/anon store on disk.
-  const userKey = user?.username ?? null
+  // Keyed by user id, not username: renaming the account in Settings must
+  // keep the same store.
+  const userKey = user ? String(user.id) : null
+  // The username only locates a store an older build kept under it. Kept in a
+  // ref so a rename does not reload the store; set in an effect declared
+  // before the load effect below, so it is current when that one runs.
+  const username = useRef<string | null>(null)
+  useEffect(() => {
+    username.current = user?.username ?? null
+  })
   const hydrated = useHydrated()
   const storeEmpty = useStore((s) => isStoreEmpty(s.snapshot))
   const [activeKey, setActiveKey] = useState<string | null>(null)
@@ -37,7 +46,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
     let cancelled = false
     setLoadError(null)
-    bootstrapForUser(userKey)
+    bootstrapForUser({ id: Number(userKey), username: username.current ?? "" })
       .then(() => {
         if (!cancelled) setActiveKey(userKey)
       })

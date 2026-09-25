@@ -1,7 +1,7 @@
 // Rows for the Settings screen and its sub-pages. A SettingsGroup is one card;
 // the rows inside it are separated by an inset divider, like iOS Settings.
 
-import { Children, Fragment, type ComponentProps, type ReactNode } from "react"
+import { Children, Fragment, isValidElement, type ComponentProps, type ReactNode } from "react"
 import { Pressable, StyleSheet, Switch, Text, View } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { theme } from "../theme/theme"
@@ -22,7 +22,10 @@ export function SettingsGroup({
   return (
     <View style={styles.group}>
       {rows.map((row, i) => (
-        <Fragment key={i}>
+        // Children.toArray gives every row a key of its own (its explicit key,
+        // or its position among the written children), so a row shown or
+        // hidden conditionally does not shift the ones after it.
+        <Fragment key={isValidElement(row) ? (row.key ?? i) : i}>
           {i > 0 && <View style={[styles.divider, inset && styles.dividerInset]} />}
           {row}
         </Fragment>

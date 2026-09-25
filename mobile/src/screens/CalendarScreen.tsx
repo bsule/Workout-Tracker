@@ -34,7 +34,8 @@ import { pressedStyle } from "../theme/pressable"
 import { useSettings } from "../settings/SettingsProvider"
 import { theme, line, tint } from "../theme/theme"
 import { useCategoryStyles } from "../categories/CategoryStylesProvider"
-import { todayString, ymd } from "../dates"
+import { todayString } from "../dates"
+import { buildMonthGrid, type MonthCell } from "@lift/core/dates"
 
 const WEEKDAY_LABELS_SUNDAY = ["S", "M", "T", "W", "T", "F", "S"]
 const WEEKDAY_LABELS_MONDAY = ["M", "T", "W", "T", "F", "S", "S"]
@@ -512,32 +513,7 @@ function niceLongDate(d: string): string {
   })
 }
 
-interface Cell {
-  date: string | null
-  day: number | null
-}
-
-function buildMonthGrid(
-  year: number,
-  month: number,
-  firstDayOfWeek: 0 | 1
-): Cell[] {
-  // first weekday of the month (0=Sun .. 6=Sat)
-  const first = new Date(year, month - 1, 1).getDay()
-  const daysInMonth = new Date(year, month, 0).getDate()
-  const cells: Cell[] = []
-  // Number of leading blanks: how many slots before the 1st when the row
-  // starts on `firstDayOfWeek`. (first - firstDayOfWeek + 7) % 7 handles
-  // both Sun-start (0) and Mon-start (1).
-  const leading = (first - firstDayOfWeek + 7) % 7
-  for (let i = 0; i < leading; i++) cells.push({ date: null, day: null })
-  for (let d = 1; d <= daysInMonth; d++) {
-    cells.push({ date: ymd(year, month, d), day: d })
-  }
-  // Complete the final week without adding empty rows.
-  while (cells.length % 7 !== 0) cells.push({ date: null, day: null })
-  return cells
-}
+type Cell = MonthCell
 
 const DayCell = memo(function DayCell({
   cell,
