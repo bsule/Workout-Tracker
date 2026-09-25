@@ -1,81 +1,46 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useMemo, useState } from "react"
+import { Suspense, useEffect, useMemo, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { ChevronLeft, Loader2, Sparkles, X } from "lucide-react"
 import { useStore } from "@/lib/store"
+import { queryAt } from "@/lib/store/queryAt"
 import { fuzzyMatch, listExercisesQ } from "@/lib/store"
 import type { Exercise } from "@lift/core"
 import { useAuth } from "@/components/auth/AuthProvider"
 import { FullPageLoader } from "@/components/ui/Spinner"
 import { Button } from "@/components/ui/button"
 import { useSettings } from "@/components/settings/SettingsProvider"
-import { AI_PROVIDERS, getProvider } from "@/lib/ai"
-import { applyPlan } from "@/lib/ai/applyPlan"
-import { buildHistoryContext } from "@/lib/ai/buildContext"
-import { getApiKey } from "@/lib/ai/keys"
-import { parseAiPlanResponse } from "@/lib/ai/parse"
-import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/ai/prompts"
-import type { AiPlanResponse } from "@/lib/ai/types"
-
-function pad(n: number) {
-  return String(n).padStart(2, "0")
-}
-function ymd(y: number, m: number, d: number): string {
-  return `${y}-${pad(m)}-${pad(d)}`
-}
-function todayString(): string {
-  const d = new Date()
-  return ymd(d.getFullYear(), d.getMonth() + 1, d.getDate())
-}
-function addDays(date: string, days: number): string {
-  const dt = new Date(date + "T00:00:00")
-  dt.setDate(dt.getDate() + days)
-  return ymd(dt.getFullYear(), dt.getMonth() + 1, dt.getDate())
-}
-function enumerateDates(from: string, to: string): string[] {
-  if (from > to) return []
-  const out: string[] = []
-  let cur = from
-  while (cur <= to) {
-    out.push(cur)
-    cur = addDays(cur, 1)
-  }
-  return out
-}
-function niceDate(d: string): string {
-  const dt = new Date(d + "T00:00:00")
-  return dt.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  })
-}
-function formatSet(
-  s: {
-    weight?: number | null
-    reps?: number | null
-    distance_m?: number | null
-    time_seconds?: number | null
-  },
-  unit: string,
-): string {
-  if (s.weight != null && s.reps != null) return `${s.weight}${unit}×${s.reps}`
-  if (s.reps != null) return `×${s.reps}`
-  if (s.distance_m != null && s.time_seconds != null)
-    return `${s.distance_m}m / ${s.time_seconds}s`
-  if (s.distance_m != null) return `${s.distance_m}m`
-  if (s.time_seconds != null) return `${s.time_seconds}s`
-  return "set"
-}
+import {
+  AI_PROVIDERS,
+  SYSTEM_PROMPT,
+  applyPlan,
+  buildHistoryContext,
+  buildUserPrompt,
+  formatPlanSet,
+  getProvider,
+  parseAiPlanResponse,
+} from "@/lib/ai"
+import type { AiPlanResponse } from "@/lib/ai"
+import { getApiKey, useHasApiKey } from "@/lib/ai/keys"
+import { addDays, enumerateDates, todayString } from "@lift/core/dates"
+import { niceDate } from "@lift/core/format"
 
 export default function AiPlanPage() {
+  // useSearchParams needs a Suspense boundary for the static build.
+  return (
+    <Suspense fallback={<FullPageLoader />}>
+      <AiPlanPageInner />
+    </Suspense>
+  )
+}
+
+function AiPlanPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user, loading: authLoading } = useAuth()
   const { settings } = useSettings()
-  const snapshot = useStore((s) => s.snapshot)
 
   const incomingStart = searchParams.get("startDate")
   const tomorrow = addDays(todayString(), 1)
@@ -93,6 +58,9 @@ export default function AiPlanPage() {
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Days that failed to apply. Shown once, then the page goes back, like
+  // mobile's "Partial success" alert.
+  const [partial, setPartial] = useState<string | null>(null)
   const [preview, setPreview] = useState<AiPlanResponse | null>(null)
   const [rawResponse, setRawResponse] = useState<string | null>(null)
   const [debugPrompt, setDebugPrompt] = useState<string | null>(null)
@@ -100,10 +68,7 @@ export default function AiPlanPage() {
   const providerId = settings.ai_provider ?? "openai"
   const providerLabel =
     AI_PROVIDERS.find((p) => p.id === providerId)?.label ?? providerId
-  const [hasKey, setHasKey] = useState(false)
-  useEffect(() => {
-    setHasKey(!!getApiKey(providerId))
-  }, [providerId])
+  const hasKey = useHasApiKey(providerId)
 
   const planDates = useMemo(
     () => enumerateDates(planStart, planEnd),
@@ -115,8 +80,9 @@ export default function AiPlanPage() {
   // Reactive exercise list, used by the picker. Matches mobile: show all
   // exercises (sorted by recency) regardless of whether they appear in the
   // history window.
+  const snapshot = useStore((s) => s.snapshot)
   const allExercises = useMemo(
-    () => listExercisesQ({ sort: "last_performed" }),
+    () => queryAt(snapshot, () => listExercisesQ({ sort: "last_performed" })),
     [snapshot],
   )
 
@@ -196,24 +162,26 @@ export default function AiPlanPage() {
     }
   }
 
+  // Back to where the user came from, as mobile pops the screen after an
+  // apply. A tab opened straight on this page has nowhere to go back to.
+  function goBack() {
+    if (window.history.length > 1) router.back()
+    else router.push("/calendar")
+  }
+
   async function onApply() {
     if (!preview) return
     setBusy(true)
     try {
       const res = await applyPlan(preview, settings.weight_unit)
       if (res.errors.length > 0) {
-        setError(
+        setPartial(
           `Applied ${res.appliedDates.length} day(s). Failed: ${res.errors
             .map((e) => `${e.date}: ${e.message}`)
             .join(" · ")}`,
         )
       } else {
-        const firstDate = res.appliedDates[0]
-        if (firstDate) {
-          router.push(`/workouts/date/${firstDate}`)
-        } else {
-          router.push("/workouts")
-        }
+        goBack()
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -273,7 +241,7 @@ export default function AiPlanPage() {
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             Change the provider or update API keys in{" "}
-            <Link href="/settings" className="text-primary underline">
+            <Link href="/settings/ai" className="text-primary underline">
               Settings → AI
             </Link>
             .
@@ -384,6 +352,23 @@ export default function AiPlanPage() {
         />
       </Section>
 
+      {partial && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm"
+          role="alertdialog"
+          aria-modal="true"
+          aria-label="Partial success"
+        >
+          <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-5 shadow-2xl">
+            <h2 className="text-base font-semibold tracking-tight">Partial success</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{partial}</p>
+            <Button size="lg" className="mt-4 w-full" onClick={goBack} autoFocus>
+              OK
+            </Button>
+          </div>
+        </div>
+      )}
+
       {error && (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3">
           <p className="text-sm text-destructive">{error}</p>
@@ -403,8 +388,9 @@ export default function AiPlanPage() {
             </p>
           ) : (
             <ul className="divide-y divide-border">
-              {preview.days.map((d) => (
-                <li key={d.date} className="py-2.5">
+              {/* Date plus position: the AI can return the same date twice. */}
+              {preview.days.map((d, di) => (
+                <li key={`${d.date}:${di}`} className="py-2.5">
                   <p className="text-sm font-semibold">{niceDate(d.date)}</p>
                   {d.exercises.length === 0 ? (
                     <p className="text-xs text-muted-foreground">Rest day</p>
@@ -417,7 +403,7 @@ export default function AiPlanPage() {
                             <span className="text-muted-foreground">
                               {": "}
                               {ex.sets
-                                .map((s) => formatSet(s, settings.weight_unit))
+                                .map((s) => formatPlanSet(s, settings.weight_unit))
                                 .join(", ")}
                             </span>
                           )}

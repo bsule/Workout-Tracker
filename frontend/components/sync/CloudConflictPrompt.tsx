@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { AlertTriangle, Loader2 } from "lucide-react"
 import {
   autoSync,
@@ -13,6 +13,7 @@ import {
   useStore,
   type RemotePreview,
 } from "@lift/core"
+import { formatTimestamp } from "@lift/core/format"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/components/auth/AuthProvider"
 import { cn } from "@/lib/utils"
@@ -33,9 +34,13 @@ import { cn } from "@/lib/utils"
 export function CloudConflictPrompt() {
   const { user } = useAuth()
   const [open, setOpen] = useState(false)
+  // Whether the dialog is up, readable from the sync clock callback without
+  // waiting for a render (mobile keeps the same ref).
+  const openRef = useRef(false)
   const [busy, setBusy] = useState<null | "pull" | "push">(null)
-  const [error, setError] = useState<string | null>(null)
-  const [done, setDone] = useState<string | null>(null)
+  // The outcome, titled like mobile's result alerts. Failures land here too
+  // ("Sync failed"), so the dialog always ends on one clear message.
+  const [done, setDone] = useState<{ title: string; message: string } | null>(null)
   // This dialog arrives unbidden, over whatever page the user is on, so the
   // destructive choice gets a second step. The Settings button does not need
   // one — you go there on purpose.
@@ -54,14 +59,15 @@ export function CloudConflictPrompt() {
     let cancelled = false
 
     function check() {
-      if (cancelled) return
-      setOpen((wasOpen) => {
-        if (wasOpen) return true
-        if (!shouldPromptCloudNewer()) return false
-        // Mark before showing: being asked is what counts, not answering.
-        markCloudNewerPrompted()
-        return true
-      })
+      if (cancelled || openRef.current) return
+      if (!shouldPromptCloudNewer()) return
+      openRef.current = true
+      // Mark before showing: being asked is what counts, not answering. Not
+      // inside a setOpen updater: marking notifies the sync clock's other
+      // subscribers, and doing that while React renders made it warn
+      // ("Cannot update a component while rendering a different component").
+      markCloudNewerPrompted()
+      setOpen(true)
     }
 
     // The conflict may already be on disk from a previous session.
@@ -93,35 +99,51 @@ export function CloudConflictPrompt() {
   }, [open])
 
   const closeDialog = useCallback(() => {
+    openRef.current = false
     setOpen(false)
     setConfirmOverwrite(false)
     setPreview(null)
     setPreviewState("loading")
+    setDone(null)
   }, [])
 
   const resolve = useCallback(async (choice: "pull" | "push") => {
     setBusy(choice)
-    setError(null)
     try {
       if (choice === "pull") {
         if (preview) {
           // Already downloaded for the comparison; don't fetch it twice.
           await autoSync.applyRemoteBytes(preview.bytes)
-          setDone("This device now matches the cloud.")
+          setDone({
+            title: "Cloud copy loaded",
+            message: "This device now matches the cloud.",
+          })
           return
         }
         const applied = await autoSync.pullAndReplace()
         setDone(
           applied
-            ? "This device now matches the cloud."
-            : "Nothing to pull. The cloud is empty."
+            ? {
+                title: "Cloud copy loaded",
+                message: "This device now matches the cloud.",
+              }
+            : {
+                title: "No cloud backup found",
+                message: "Nothing to pull. The cloud is empty.",
+              }
         )
       } else {
         await autoSync.forcePush()
-        setDone("The cloud now matches this device.")
+        setDone({
+          title: "Cloud overwritten",
+          message: "The cloud now matches this device.",
+        })
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't reach the server.")
+      setDone({
+        title: "Sync failed",
+        message: e instanceof Error ? e.message : "Couldn't reach the server.",
+      })
     } finally {
       setBusy(null)
     }
@@ -149,16 +171,17 @@ export function CloudConflictPrompt() {
           <div className="flex-1 pt-0.5">
             <h2 className="text-base font-semibold tracking-tight">
               {done
-                ? "Sorted"
+                ? done.title
                 : confirmOverwrite
                   ? "Overwrite the cloud copy?"
                   : "Cloud has newer data"}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              {done ??
-                (confirmOverwrite
-                  ? "The other device's newer changes will be gone. This cannot be undone."
-                  : "Another device pushed changes this one hasn't seen, so the automatic sync was refused. Nothing was lost. Get the cloud copy, or overwrite it with this device's data?")}
+              {done
+                ? done.message
+                : confirmOverwrite
+                  ? "The cloud's newer changes will be gone. This cannot be undone."
+                  : "Another device pushed changes this one hasn't seen, so the sync was refused. Nothing was lost. Get the cloud copy, or overwrite it with this device's data?"}
             </p>
             {!done && !confirmOverwrite && (
               <dl className="mt-3 space-y-1.5 rounded-md border border-white/10 bg-white/[.02] p-3 text-xs">
@@ -168,7 +191,7 @@ export function CloudConflictPrompt() {
                     {previewState === "loading"
                       ? "Reading…"
                       : previewState === "failed" || !preview
-                        ? "Couldn't read it just now"
+                        ? "Couldn't read the cloud copy just now"
                         : `${
                             preview.exportedAt
                               ? `saved ${formatTimestamp(preview.exportedAt)}`
@@ -184,9 +207,6 @@ export function CloudConflictPrompt() {
                   </dd>
                 </div>
               </dl>
-            )}
-            {error && (
-              <p className="mt-2 text-sm text-destructive">{error}</p>
             )}
           </div>
         </div>
@@ -254,10 +274,4 @@ export function CloudConflictPrompt() {
 
 function counts(workouts: number, sets: number): string {
   return `${workouts.toLocaleString()} workouts, ${sets.toLocaleString()} sets`
-}
-
-function formatTimestamp(iso: string): string {
-  const t = Date.parse(iso)
-  if (Number.isNaN(t)) return iso
-  return new Date(t).toLocaleString()
 }

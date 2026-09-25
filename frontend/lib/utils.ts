@@ -1,6 +1,7 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 import type { Category } from "@/types"
+import { addDays, todayString, ymd } from "@lift/core/dates"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -24,14 +25,11 @@ export function formatDateShort(iso: string): string {
 
 /** Format a Date as YYYY-MM-DD using local timezone (never UTC). */
 export function formatLocalDate(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  return `${y}-${m}-${day}`
+  return ymd(d.getFullYear(), d.getMonth() + 1, d.getDate())
 }
 
 export function todayLocal(): string {
-  return formatLocalDate(new Date())
+  return todayString()
 }
 
 /** True for any local YYYY-MM-DD strictly after today. */
@@ -46,9 +44,7 @@ export function parseLocalDate(iso: string): Date {
 }
 
 export function shiftDate(iso: string, days: number): string {
-  const d = parseLocalDate(iso)
-  d.setDate(d.getDate() + days)
-  return formatLocalDate(d)
+  return addDays(iso, days)
 }
 
 export function formatDayLabel(iso: string): string {
@@ -66,13 +62,9 @@ export function formatDayLabel(iso: string): string {
   })
 }
 
-export function formatDuration(seconds: number | null): string | null {
-  if (seconds == null) return null
-  const total = Math.max(0, Math.floor(seconds))
-  const h = Math.floor(total / 3600)
-  const m = Math.floor((total % 3600) / 60)
-  return `${h}h ${m}m`
-}
+/** Workout duration, the mobile rule: "5m", "1h 5m", or null (hide it) when
+ *  unknown or not positive. */
+export { formatDuration } from "@lift/core/format"
 
 export function categoryVar(category: Category): string {
   return `var(--cat-${category})`

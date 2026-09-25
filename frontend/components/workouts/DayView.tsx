@@ -2,46 +2,62 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { Plus, Trash2, Play, CalendarClock } from "lucide-react"
-import { PrIcon } from "@/components/workouts/PrIcon"
-import { useMemo, useState } from "react"
+import { CalendarDays, CirclePlus, Plus, Trash2, X } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   localApi as api,
+  batchMutations,
   deleteWorkout,
+  getDayNoteQ,
+  getState,
+  getWorkoutByDateQ,
   lastSetTimeOf,
+  setDayNote,
+  setWorkoutNote,
   startPlannedWorkout,
   useHydrated,
   useStore,
-  getWorkoutByDateQ,
-  getDayNoteQ,
-  setDayNote,
-  setWorkoutNote,
-  setExerciseNote,
-  listGymsQ,
   workoutDurationSeconds,
 } from "@/lib/store"
-import {
-  cn,
-  formatDuration,
-  parseLocalDate,
-} from "@/lib/utils"
-import type { Workout, WorkoutExercise } from "@/types"
-import { CategoryDot } from "@/components/exercises/CategoryBadge"
-import { ExerciseNoteField } from "@/components/workouts/ExerciseNoteField"
+import { addDays, todayString } from "@lift/core/dates"
+import { formatDuration, noteActionLabel } from "@lift/core/format"
+import { isEmptyWorkoutShell } from "@lift/core/workouts"
+import { cn } from "@/lib/utils"
+import { setActiveDate } from "@/lib/activeDate"
+import type { Workout } from "@/types"
 import { DateNav } from "@/components/layout/DateNav"
 import { GymEditor } from "@/components/workouts/GymEditor"
+import { NotePreview } from "@/components/workouts/NotePreview"
+import { ExerciseCard } from "@/components/day/ExerciseCard"
+import { PlannedBanner } from "@/components/day/PlannedBanner"
+import { ignorePageShortcut } from "@/components/day/keyboard"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
+import { NoteSheet } from "@/components/ui/NoteSheet"
+import type { ActionMenuItem } from "@/components/ui/ActionMenu"
 import { LoadingBlock } from "@/components/ui/Spinner"
-import {
-  useShowPositionPrs,
-  useWeightUnit,
-} from "@/components/settings/SettingsProvider"
-import { formatWeight } from "@/lib/units"
 
 interface Props {
   date: string
 }
 
+/** The day view carries two notes: one on the date, one on the session. */
+type NoteKind = "day" | "workout"
+
+interface NoteState {
+  /** The date the sheet was opened on: a date change drops it, like mobile. */
+  date: string
+  open: boolean
+  mode: "view" | "edit"
+  kind: NoteKind
+  draft: string
+  original: string
+}
+
+/**
+ * One day's workout, the web copy of mobile's DayScreen. Arrow keys and the
+ * arrows in the header move a day; "t" or the "Go to today" pill jumps back.
+ * Holding a card starts a multi-select for removing exercises.
+ */
 export function DayView({ date }: Props) {
   const router = useRouter()
   const confirm = useConfirm()
@@ -53,587 +69,442 @@ export function DayView({ date }: Props) {
   const snapshot = useStore((s) => s.snapshot)
   const rawWorkout = useMemo(
     () => (hydrated ? getWorkoutByDateQ(date) : undefined),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot is the re-run trigger
     [hydrated, date, snapshot]
   )
-  // Hide WEs that have no sets yet - they're transient placeholders the
-  // exercise picker creates before the user has saved their first set.
-  // The cleanup hook in the SetLogger page still purges them from the
-  // store; this just gates visibility so we don't flash an empty card on
-  // navigation. If filtering empties the workout AND it has no other
-  // state (gym, started_at, planned), treat it as not-yet-existing.
+  // Hide WEs that have no sets yet: they're transient placeholders the
+  // exercise picker creates before the user has saved their first set. If
+  // that empties a workout holding nothing else, treat it as not existing.
   const workout = useMemo(() => {
     if (!rawWorkout) return rawWorkout
     const visibleExercises = rawWorkout.exercises.filter(
       (we) => we.sets.length > 0
     )
-    if (
-      visibleExercises.length === 0 &&
-      !rawWorkout.started_at &&
-      !rawWorkout.gym &&
-      !rawWorkout.notes &&
-      rawWorkout.status !== "planned"
-    ) {
+    if (visibleExercises.length === 0 && isEmptyWorkoutShell(rawWorkout)) {
       return null
     }
     return { ...rawWorkout, exercises: visibleExercises }
   }, [rawWorkout])
-  const lastGym = useMemo(
-    () => (hydrated ? listGymsQ()[0]?.name ?? null : null),
-    [hydrated, snapshot]
-  )
   const dayNote = useMemo(
     () => (hydrated ? getDayNoteQ(date) : ""),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot is the re-run trigger
     [hydrated, date, snapshot]
   )
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
 
-  function changeDate(next: string) {
-    router.push(`/workouts/date/${next}`)
-  }
+  // Remember the date for /workouts and the calendar's default selection.
+  useEffect(() => {
+    setActiveDate(date)
+  }, [date])
 
-  async function startPlanned() {
-    if (!workout || workout.status !== "planned") return
-    setBusy(true)
-    setError(null)
-    try {
-      startPlannedWorkout(workout.id)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to start workout")
-    } finally {
-      setBusy(false)
+  const changeDate = useCallback(
+    (next: string) => router.push(`/workouts/date/${next}`),
+    [router]
+  )
+
+  // Selection is tied to the date it was made on, so any date change clears it.
+  const [selection, setSelection] = useState<{ date: string; ids: number[] }>({
+    date,
+    ids: [],
+  })
+  const selectedIds = useMemo(
+    () => (selection.date === date ? selection.ids : []),
+    [selection, date]
+  )
+  const selectionMode = selectedIds.length > 0
+  const toggleSelected = useCallback(
+    (weId: number) =>
+      setSelection((prev) => {
+        const ids = prev.date === date ? prev.ids : []
+        return {
+          date,
+          ids: ids.includes(weId)
+            ? ids.filter((x) => x !== weId)
+            : [...ids, weId],
+        }
+      }),
+    [date]
+  )
+  const clearSelection = useCallback(
+    () => setSelection({ date, ids: [] }),
+    [date]
+  )
+
+  const [noteState, setNoteState] = useState<NoteState>({
+    date,
+    open: false,
+    mode: "view",
+    kind: "day",
+    draft: "",
+    original: "",
+  })
+  const noteOpen = noteState.open && noteState.date === date
+
+  const openNoteSheet = useCallback(
+    (mode: "view" | "edit", kind: NoteKind) => {
+      const n =
+        kind === "day"
+          ? getDayNoteQ(date)
+          : (getState().indexes.workoutsByDate.get(date)?.notes ?? "")
+      setNoteState({ date, open: true, mode, kind, draft: n, original: n })
+    },
+    [date]
+  )
+  const closeNoteSheet = useCallback(
+    () => setNoteState((s) => ({ ...s, open: false })),
+    []
+  )
+
+  function saveNote() {
+    const text = noteState.draft.trim()
+    if (noteState.kind === "day") {
+      setDayNote(date, text)
+      return
     }
+    const id = getState().indexes.workoutsByDate.get(date)?.id
+    if (id != null) setWorkoutNote(id, text)
   }
 
-  async function removeExercise(weId: number) {
-    if (!workout) return
+  const deleteThisDaysWorkout = useCallback(async () => {
+    const wid = getState().indexes.workoutsByDate.get(date)?.id ?? null
+    if (wid == null) return
     const ok = await confirm({
-      title: "Remove exercise?",
-      message: "This exercise and all its sets will be removed from this day.",
+      title: "Delete workout?",
+      message:
+        "All exercises and sets logged this day will be removed.",
+      destructive: true,
+      confirmLabel: "Delete",
+    })
+    if (ok) deleteWorkout(wid)
+  }, [confirm, date])
+
+  // The date label's menu. The delete item only appears once some exercise
+  // on the day has a set, as on mobile.
+  const menuItems = useMemo<ActionMenuItem[]>(() => {
+    const hasExercises =
+      !!rawWorkout && rawWorkout.exercises.some((we) => we.sets.length > 0)
+    const items: ActionMenuItem[] = [
+      {
+        label: noteActionLabel(date, !!dayNote.trim()),
+        onSelect: () => openNoteSheet("edit", "day"),
+      },
+      {
+        label: "Open calendar",
+        onSelect: () => router.push(`/calendar?date=${date}`),
+      },
+    ]
+    if (hasExercises) {
+      items.push({
+        label: "Delete this day's workout",
+        destructive: true,
+        onSelect: () => void deleteThisDaysWorkout(),
+      })
+    }
+    return items
+  }, [rawWorkout, dayNote, date, openNoteSheet, router, deleteThisDaysWorkout])
+
+  async function confirmRemoveSelected() {
+    if (!workout || selectedIds.length === 0) return
+    const count = selectedIds.length
+    const ids = selectedIds
+    const workoutId = workout.id
+    const ok = await confirm({
+      title: `Remove ${count} exercise${count === 1 ? "" : "s"}?`,
+      message: "All sets logged for these exercises today will be deleted.",
       destructive: true,
       confirmLabel: "Remove",
     })
     if (!ok) return
-    try {
-      await api.removeExerciseFromWorkout(workout.id, weId)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to remove exercise")
-    }
-  }
-
-  async function handleDeleteWorkout() {
-    if (!workout) return
-    const hasSets = workout.exercises.some((e) => e.sets.length > 0)
-    const ok = await confirm({
-      title: "Delete this workout?",
-      message: hasSets
-        ? "This will delete this workout and all of its logged sets."
-        : "This workout will be deleted.",
-      destructive: true,
-      confirmLabel: "Delete workout",
+    // One commit for the batch, and no await inside it: localApi resolves
+    // against the in-memory snapshot, so each removal is synchronous.
+    batchMutations(() => {
+      for (const weId of ids) api.removeExerciseFromWorkout(workoutId, weId)
     })
-    if (!ok) return
-    setBusy(true)
-    try {
-      deleteWorkout(workout.id)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to delete workout")
-    } finally {
-      setBusy(false)
+    clearSelection()
+  }
+
+  // Keyboard: Left / Right move a day, "t" jumps to today, Esc ends a
+  // selection. Never while typing or while a dialog or menu is open.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (ignorePageShortcut(e)) return
+      if (e.key === "ArrowLeft") {
+        e.preventDefault()
+        changeDate(addDays(date, -1))
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault()
+        changeDate(addDays(date, 1))
+      } else if (e.key === "t" || e.key === "T") {
+        if (e.shiftKey) return
+        const today = todayString()
+        if (today !== date) changeDate(today)
+      } else if (e.key === "Escape" && selectionMode) {
+        clearSelection()
+      }
     }
-  }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [date, changeDate, selectionMode, clearSelection])
 
-
-  return (
-    <div className="space-y-5">
-      <DateNav date={date} onChange={changeDate} />
-
-      {workout === undefined && <LoadingBlock />}
-
-      {error && (
-        <p className="text-sm text-destructive" role="alert">
-          {error}
-        </p>
-      )}
-
-      {workout === null && (
-        <>
-          <DateStrip date={date} note={dayNote} />
-          <Link
-            href={`/exercises?forDate=${date}`}
-            className="flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed border-primary/40 bg-primary/[.06] px-6 py-12 text-center transition-colors hover:border-primary/60 hover:bg-primary/10"
-          >
-            <span className="flex size-14 items-center justify-center rounded-full bg-primary/15 text-primary">
-              <Plus className="size-8" />
-            </span>
-            <span className="text-base font-semibold text-foreground">
-              Add workout
-            </span>
-            <span className="text-sm text-muted-foreground">
-              No workout logged for this day yet.
-            </span>
-          </Link>
-        </>
-      )}
-
-      {workout && (
-        <>
-          <SummaryStrip workout={workout} lastGym={lastGym} note={dayNote} />
-
-          {workout.status === "planned" && (
-            <PlannedBanner
-              date={workout.date}
-              onStart={startPlanned}
-              busy={busy}
-            />
-          )}
-
-          {workout.exercises.length === 0 ? (
-            <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-              No exercises yet. Add one below.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {workout.exercises.map((we) => (
-                <ExerciseCard
-                  key={we.id}
-                  workoutId={workout.id}
-                  we={we}
-                  onRemove={() => removeExercise(we.id)}
-                />
-              ))}
-            </div>
-          )}
-
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pt-1">
-            <Link
-              href={`/exercises?pickFor=${workout.id}`}
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/20 transition-colors"
-            >
-              <Plus className="size-4" />
-              Add Exercise
-            </Link>
-
-            <button
-              type="button"
-              onClick={handleDeleteWorkout}
-              disabled={busy}
-              className="inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors disabled:opacity-50"
-            >
-              <Trash2 className="size-3.5" />
-              Delete workout
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-function SummaryStrip({
-  workout,
-  lastGym,
-  note,
-}: {
-  workout: Workout
-  lastGym: string | null
-  note: string
-}) {
-  // Show start/end/duration whenever the workout has a real `started_at` -
-  // that's only set when the workout was originally created on its own day.
-  // Past workouts that were logged retroactively start with started_at=null
-  // and stay clean. Today's recorded times persist into future views forever.
-  const hasTime = !!workout.started_at
-  const lastTime = hasTime ? lastSetTimeOf(workout) : null
-  const dur = hasTime ? formatDuration(workoutDurationSeconds(workout)) : null
-  return (
-    <div className="rounded-lg border border-border bg-foreground/[.04] p-4">
-      <div className="flex items-start justify-between gap-2">
-        {workout.exercises.length > 0 ? (
-          <div className="flex min-w-0 flex-col gap-y-0.5 text-xs text-muted-foreground">
-            {workout.started_at && (
-              <span>
-                <span className="text-foreground/70">Started </span>
-                {new Date(workout.started_at).toLocaleTimeString("en-US", {
-                  hour: "numeric",
-                  minute: "2-digit",
-                })}
-              </span>
-            )}
-            {lastTime && (
-              <span>
-                <span className="text-foreground/70">End </span>
-                {new Date(lastTime).toLocaleTimeString("en-US", {
-                  hour: "numeric",
-                  minute: "2-digit",
-                })}
-              </span>
-            )}
-            {dur && (
-              <span>
-                <span className="text-foreground/70">Duration </span>
-                {dur}
-              </span>
-            )}
-            <NoteField
-              key={`day-${workout.date}`}
-              label="Day"
-              note={note}
-              placeholder="How did today go?"
-              onSave={(text) => setDayNote(workout.date, text)}
-            />
-            <NoteField
-              key={`workout-${workout.id}`}
-              label="Workout"
-              note={workout.notes}
-              placeholder="How did the session go?"
-              onSave={(text) => setWorkoutNote(workout.id, text)}
-            />
-          </div>
-        ) : (
-          <div className="flex min-w-0 flex-col gap-y-0.5 text-xs text-muted-foreground">
-            <NoteField
-              key={`day-${workout.date}`}
-              label="Day"
-              note={note}
-              placeholder="How did today go?"
-              onSave={(text) => setDayNote(workout.date, text)}
-            />
-            <NoteField
-              key={`workout-${workout.id}`}
-              label="Workout"
-              note={workout.notes}
-              placeholder="How did the session go?"
-              onSave={(text) => setWorkoutNote(workout.id, text)}
-            />
-          </div>
-        )}
-        <GymEditor
-          workoutId={workout.id}
-          gym={workout.gym}
-          lastGym={lastGym}
-        />
-      </div>
-    </div>
-  )
-}
-
-function ExerciseCard({
-  workoutId,
-  we,
-  onRemove,
-}: {
-  workoutId: number
-  we: WorkoutExercise
-  onRemove: () => void
-}) {
-  const router = useRouter()
-  const unit = useWeightUnit()
-  const showPositionPrs = useShowPositionPrs()
-  const href = `/workouts/${workoutId}/exercises/${we.id}`
-
-  function handleRemove(e: React.MouseEvent) {
-    e.stopPropagation()
-    onRemove()
-  }
+  const showSummary = !!(workout || dayNote.trim())
+  const showBanner = workout?.status === "planned"
+  const isToday = date === todayString()
 
   return (
-    <div
-      role="link"
-      tabIndex={0}
-      onClick={() => router.push(href)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault()
-          router.push(href)
-        }
-      }}
-      className="overflow-hidden rounded-lg border border-border bg-card cursor-pointer hover:border-foreground/30 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-    >
-      <div className="flex items-center gap-2 border-b border-border/60 bg-foreground/[.04] px-4 py-3">
-        <CategoryDot category={we.exercise.category} />
-        <div className="min-w-0 flex-1">
-          <span className="block truncate text-base font-semibold tracking-tight">
-            {we.exercise.name}
-          </span>
-          {/* The card is a link. Stop the note's own clicks and keys from
-           *  reaching it, or editing would navigate away. */}
-          <div
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-          >
-            <ExerciseNoteField
-              note={we.note}
-              onSave={(text) => setExerciseNote(we.id, text)}
-            />
-          </div>
-        </div>
-        <button
-          onClick={handleRemove}
-          className="rounded p-1 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
-          aria-label="Remove exercise"
-        >
-          <Trash2 className="size-4" />
-        </button>
-      </div>
+    <div className="space-y-4 pb-20">
+      <DateNav date={date} onChange={changeDate} menuItems={menuItems} />
 
-      {we.sets.length === 0 ? (
-        <div className="block px-4 py-4 text-sm text-primary hover:bg-foreground/[.04]">
-          + Add first set
-        </div>
+      {workout === undefined ? (
+        <LoadingBlock />
       ) : (
-        <div className="px-4 pt-3 pb-1">
-          <div className="grid grid-cols-[1.75rem_2rem_1fr_4rem] items-center gap-x-4 px-1 pb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-            <span />
-            <span>Set</span>
-            <span className="text-center">Weight</span>
-            <span className="text-right">Reps</span>
-          </div>
-          <ul className="divide-y divide-white/5">
-            {we.sets.map((s, i) => (
-              <li
-                key={s.id}
-                className={cn(
-                  "grid grid-cols-[1.75rem_2rem_1fr_4rem] items-center gap-x-4 px-1 py-2",
-                  s.is_planned && "opacity-60"
-                )}
-              >
-                {s.is_planned ? (
-                  <span
-                    className="size-2 rounded-full border border-dashed border-primary/60"
-                    aria-label="Target set"
+        <>
+          {selectionMode ? (
+            <SelectionBar
+              count={selectedIds.length}
+              onClear={clearSelection}
+              onRemove={() => void confirmRemoveSelected()}
+            />
+          ) : (
+            <>
+              {showSummary && (
+                <SummaryCard
+                  workout={workout}
+                  note={dayNote}
+                  onOpenDayNote={() => openNoteSheet("view", "day")}
+                  onOpenWorkoutNote={() => openNoteSheet("view", "workout")}
+                />
+              )}
+              {showBanner && workout && (
+                <PlannedBanner
+                  date={date}
+                  onStart={() => startPlannedWorkout(workout.id)}
+                />
+              )}
+            </>
+          )}
+
+          {workout && workout.exercises.length > 0 ? (
+            <>
+              <div className="flex flex-col gap-3">
+                {workout.exercises.map((we) => (
+                  <ExerciseCard
+                    key={we.id}
+                    workoutId={workout.id}
+                    we={we}
+                    selectionMode={selectionMode}
+                    isSelected={selectedIds.includes(we.id)}
+                    onToggle={() => toggleSelected(we.id)}
+                    onLongPress={() => {
+                      if (!selectedIds.includes(we.id)) toggleSelected(we.id)
+                    }}
                   />
-                ) : s.is_pr || s.was_pr ? (
-                  <PrIcon
-                    isPr={s.is_pr}
-                    wasPr={s.was_pr}
-                    className="w-7 justify-self-start"
-                  />
-                ) : showPositionPrs ? (
-                  <PrIcon
-                    isPr={s.is_position_pr}
-                    wasPr={s.was_position_pr}
-                    variant="position"
-                    position={i + 1}
-                    className="w-7 justify-self-start"
-                  />
-                ) : (
-                  <PrIcon isPr={false} wasPr={false} className="w-7 justify-self-start" />
-                )}
-                <span className="text-sm font-medium tabular-nums text-foreground/80">
-                  {i + 1}
-                </span>
-                <span
-                  className={cn(
-                    "text-center text-base font-semibold tabular-nums",
-                    s.is_planned && "italic text-muted-foreground"
-                  )}
+                ))}
+              </div>
+              {/* Web has no global "+" tab, so the day keeps its own add. */}
+              {!selectionMode && (
+                <Link
+                  href={`/exercises?pickFor=${workout.id}`}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/20"
                 >
-                  {formatWeight(s.weight, unit)}
-                  <span className="ml-1 text-[11px] font-normal text-muted-foreground">
-                    {unit}
-                  </span>
-                </span>
-                <span
-                  className={cn(
-                    "text-right text-base font-semibold tabular-nums",
-                    s.is_planned && "italic text-muted-foreground"
-                  )}
-                >
-                  {s.reps}
-                </span>
-                {s.note && (
-                  <p className="col-span-4 mt-0.5 ml-8 whitespace-pre-wrap text-xs italic text-muted-foreground">
-                    {s.note}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
+                  <Plus className="size-4" />
+                  Add Exercise
+                </Link>
+              )}
+            </>
+          ) : (
+            <Link
+              href={
+                workout
+                  ? `/exercises?pickFor=${workout.id}`
+                  : `/exercises?forDate=${date}`
+              }
+              className="flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-primary bg-primary/[.06] px-6 py-10 text-center transition-colors hover:bg-primary/10"
+            >
+              <CirclePlus className="size-14 fill-primary text-background" />
+              <span className="text-base font-extrabold text-foreground">
+                {workout ? "Add exercise" : "Add workout"}
+              </span>
+              <span className="text-sm text-muted-foreground">
+                {workout
+                  ? "No exercises yet - tap to add one."
+                  : "No workout logged for this day yet."}
+              </span>
+            </Link>
+          )}
+        </>
       )}
+
+      <TodayPill visible={!isToday} onClick={() => changeDate(todayString())} />
+
+      <NoteSheet
+        open={noteOpen}
+        mode={noteState.mode}
+        title={noteState.kind === "day" ? "Day notes" : "Workout notes"}
+        placeholder={
+          noteState.kind === "day"
+            ? "How did today go?"
+            : "How did the session go?"
+        }
+        original={noteState.original}
+        draft={noteState.draft}
+        onChangeDraft={(draft) => setNoteState((s) => ({ ...s, draft }))}
+        onEdit={() => setNoteState((s) => ({ ...s, mode: "edit" }))}
+        onClose={closeNoteSheet}
+        onSave={saveNote}
+      />
     </div>
   )
 }
 
-function PlannedBanner({
-  date,
-  onStart,
-  busy,
+function SummaryCard({
+  workout,
+  note,
+  onOpenDayNote,
+  onOpenWorkoutNote,
 }: {
-  date: string
-  onStart: () => void
-  busy: boolean
+  workout: Workout | null
+  note: string
+  onOpenDayNote: () => void
+  onOpenWorkoutNote: () => void
 }) {
-  const today = todayString()
-  const isToday = date === today
-  const isFuture = date > today
+  // Start / end / duration whenever the workout has a real `started_at`: it
+  // is set when a workout is created on its own day. Past workouts logged
+  // retroactively start with started_at=null and stay clean.
+  const hasTime = !!workout?.started_at
+  const lastTime = hasTime && workout ? lastSetTimeOf(workout) : null
+  const started =
+    hasTime && workout?.started_at ? formatTime(workout.started_at) : null
+  const finished = lastTime ? formatTime(lastTime) : null
+  const duration =
+    hasTime && workout ? formatDuration(workoutDurationSeconds(workout)) : null
+  const workoutNote = workout?.notes ?? ""
+
   return (
-    <div
-      className={cn(
-        "flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between",
-        isToday
-          ? "border-primary/40 bg-primary/10"
-          : "border-border bg-foreground/[.04]"
-      )}
-    >
-      <div className="flex items-center gap-3">
-        <CalendarClock
-          className={cn("size-5", isToday ? "text-primary" : "text-muted-foreground")}
-        />
-        <div>
-          <div className="text-sm font-semibold">
-            {isToday
-              ? "You have a planned workout today"
-              : isFuture
-              ? "Planned workout"
-              : "Planned (past - never started)"}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {isFuture
-              ? "Edit targets now; start when the day arrives."
-              : "Sets shown are targets, not logged yet."}
-          </div>
+    <div className="rounded-lg border border-border bg-foreground/[.02] px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          {started && <SummaryMeta label="Started" value={started} />}
+          {finished && <SummaryMeta label="End" value={finished} />}
+          {duration && <SummaryMeta label="Duration" value={duration} />}
+          {!!note.trim() && (
+            <NoteRow label="Day note" note={note} onClick={onOpenDayNote} />
+          )}
+          {!!workoutNote.trim() && (
+            <NoteRow
+              label="Workout note"
+              note={workoutNote}
+              onClick={onOpenWorkoutNote}
+            />
+          )}
         </div>
+        {workout && <GymEditor workoutId={workout.id} gym={workout.gym} />}
       </div>
-      {!isFuture && (
-        <button
-          type="button"
-          onClick={onStart}
-          disabled={busy}
-          className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
-          <Play className="size-4" />
-          Start workout
-        </button>
-      )}
     </div>
   )
 }
 
-function todayString(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-function pad(n: number) {
-  return String(n).padStart(2, "0")
-}
+const LABEL_CLS =
+  "text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground"
 
-function DateStrip({ date, note }: { date: string; note: string }) {
-  const dt = parseLocalDate(date)
-  const niceDate = dt.toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  })
+function SummaryMeta({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-border bg-foreground/[.04] p-4">
-      <div className="text-sm text-muted-foreground">{niceDate}</div>
-      <div className="mt-2">
-        <NoteField
-          key={`day-${date}`}
-          label="Day"
-          note={note}
-          placeholder="How did today go?"
-          onSave={(text) => setDayNote(date, text)}
-        />
-      </div>
+    <div className="flex items-baseline gap-1">
+      <span className={LABEL_CLS}>{label}</span>
+      <span className="text-xs font-semibold">{value}</span>
     </div>
   )
 }
 
-/** Inline note editor. Used twice per day: once for the day note (keyed by
- *  date) and once for the workout note (keyed by workout id). */
-function NoteField({
+function NoteRow({
   label,
   note,
-  placeholder,
-  onSave,
+  onClick,
 }: {
   label: string
   note: string
-  placeholder: string
-  onSave: (text: string) => void
+  onClick: () => void
 }) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(note)
-  const lower = label.toLowerCase()
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex min-w-0 flex-col gap-1 rounded-md py-0.5 text-left transition-opacity hover:opacity-70 active:opacity-55 animate-in fade-in slide-in-from-top-1 duration-200"
+    >
+      <span className={LABEL_CLS}>{label}</span>
+      <NotePreview note={note} className="text-xs font-semibold leading-4" />
+    </button>
+  )
+}
 
-  if (!editing) {
-    return (
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  })
+}
+
+/** The multi-select toolbar that stands in for the summary card. */
+function SelectionBar({
+  count,
+  onClear,
+  onRemove,
+}: {
+  count: number
+  onClear: () => void
+  onRemove: () => void
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-foreground/20 bg-background px-3 py-2 animate-in fade-in slide-in-from-top-2 duration-200">
       <button
         type="button"
-        onClick={() => {
-          setDraft(note)
-          setEditing(true)
-        }}
-        className="block w-full min-w-0 rounded-md px-1 py-0.5 text-left hover:bg-white/5"
-        aria-label={note ? `Edit ${lower} notes` : `Add ${lower} notes`}
+        onClick={onClear}
+        aria-label="Clear selection"
+        title="Clear selection (Esc)"
+        className="flex size-8 items-center justify-center rounded-full transition-colors hover:bg-foreground/10"
       >
-        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-          {label}
-        </span>
-        <span
-          className={
-            note
-              ? "mt-0.5 block truncate text-xs text-foreground/80"
-              : "mt-0.5 block truncate text-xs italic text-muted-foreground"
-          }
-        >
-          {note ? note.replace(/\s+/g, " ").trim() : `Add ${lower} notes`}
-        </span>
+        <X className="size-[22px]" />
       </button>
-    )
-  }
+      <span className="flex-1 text-base font-bold">{count} selected</span>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="inline-flex items-center gap-1.5 rounded-full border border-destructive bg-destructive/10 px-3.5 py-2 text-sm font-bold text-destructive transition-colors hover:bg-destructive/20"
+      >
+        <Trash2 className="size-4" />
+        Remove
+      </button>
+    </div>
+  )
+}
 
-  function save() {
-    onSave(draft)
-    setEditing(false)
-  }
-
+/** Floating "Go to today" chip, shown whenever the viewed day isn't today. */
+function TodayPill({
+  visible,
+  onClick,
+}: {
+  visible: boolean
+  onClick: () => void
+}) {
   return (
-    <div className="flex min-w-0 flex-col gap-1.5">
-      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-        {label}
-      </span>
-      <textarea
-        autoFocus
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            e.preventDefault()
-            setDraft(note)
-            setEditing(false)
-          } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault()
-            save()
-          }
-        }}
-        placeholder={placeholder}
-        rows={3}
-        className="w-full resize-y rounded-md border border-white/10 bg-white/[.03] px-2 py-1.5 text-xs text-foreground focus:border-primary/50 focus:outline-none"
-      />
-      <div className="flex gap-1.5">
-        <button
-          type="button"
-          onClick={save}
-          className="rounded-md bg-emerald-500/15 px-2 py-1 text-[11px] font-semibold text-emerald-400 hover:bg-emerald-500/25"
-        >
-          Save
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setDraft(note)
-            setEditing(false)
-          }}
-          className="rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-white/5"
-        >
-          Cancel
-        </button>
-      </div>
+    <div
+      className={cn(
+        "pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center transition-all duration-150",
+        visible ? "translate-y-0 scale-100 opacity-100" : "translate-y-3 scale-90 opacity-0"
+      )}
+      aria-hidden={!visible}
+    >
+      <button
+        type="button"
+        onClick={onClick}
+        tabIndex={visible ? 0 : -1}
+        title="Go to today (T)"
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-full border border-primary bg-card px-4 py-2 text-xs font-bold text-primary shadow-lg shadow-black/35 transition-transform hover:bg-muted active:scale-95",
+          visible && "pointer-events-auto"
+        )}
+      >
+        <CalendarDays className="size-3.5" />
+        Go to today
+      </button>
     </div>
   )
 }

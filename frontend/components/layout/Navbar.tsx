@@ -1,31 +1,31 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname, useRouter } from "next/navigation"
-import { useEffect, useState } from "react"
+import { usePathname } from "next/navigation"
+import { useIsClient } from "@/lib/useIsClient"
 import { Dumbbell, Settings } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/components/auth/AuthProvider"
+import { useConfirmLogout } from "@/components/auth/useConfirmLogout"
 
+// Same names and order as the mobile tab bar.
 const navLinks = [
-  { href: "/workouts", label: "Workout" },
-  { href: "/calendar", label: "Calendar" },
+  { href: "/workouts", label: "Today" },
   { href: "/exercises", label: "Exercises" },
+  { href: "/calendar", label: "Calendar" },
 ]
 
 export function Navbar() {
   const pathname = usePathname()
-  const router = useRouter()
-  const { user, loading, logout } = useAuth()
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => setMounted(true), [])
+  const { user, loading } = useAuth()
+  const confirmLogout = useConfirmLogout()
+  const mounted = useIsClient()
+  // Signed out, every app page redirects to login, so its links lead nowhere.
+  // They stay up until auth has loaded, so a signed-in page does not flash
+  // without them.
+  const signedOut = mounted && !loading && !user
   const hideNavLinks =
-    pathname === "/" || pathname === "/login" || pathname === "/signup"
-
-  async function handleLogout() {
-    await logout()
-    router.push("/login")
-  }
+    signedOut || pathname === "/" || pathname === "/login" || pathname === "/signup"
 
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-md">
@@ -69,7 +69,7 @@ export function Navbar() {
                 <span className="hidden sm:inline">{user.username}</span>
               </Link>
               <button
-                onClick={handleLogout}
+                onClick={() => void confirmLogout()}
                 className="inline-flex rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
               >
                 Log out
@@ -93,6 +93,31 @@ export function Navbar() {
           )}
         </div>
       </div>
+
+      {/* Below sm the links get their own row, so every page stays one tap
+          away on a phone. */}
+      {!hideNavLinks && (
+        <nav className="flex border-t border-border sm:hidden">
+          {navLinks.map((link) => {
+            const active = pathname.startsWith(link.href)
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "flex-1 py-2 text-center text-sm font-medium transition-colors",
+                  active
+                    ? "text-foreground shadow-[inset_0_-2px_0_var(--primary)]"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {link.label}
+              </Link>
+            )
+          })}
+        </nav>
+      )}
     </header>
   )
 }

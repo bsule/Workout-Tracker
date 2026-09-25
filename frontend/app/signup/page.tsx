@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useForm } from "react-hook-form"
+import { useForm, useWatch } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { Dumbbell, EyeIcon, EyeOffIcon } from "lucide-react"
@@ -73,18 +73,19 @@ export default function SignupPage() {
   const {
     register,
     handleSubmit,
-    watch,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({ resolver: zodResolver(schema) })
 
-  const password = watch("password", "")
+  // useWatch, not watch(): the React Compiler cannot memoize around watch().
+  const password = useWatch({ control, name: "password", defaultValue: "" })
 
   async function onSubmit(data: FormValues) {
     setServerError(null)
     try {
       await signup({
-        username: data.username,
-        email: data.email,
+        username: data.username.trim(),
+        email: data.email.trim(),
         password: data.password,
       })
       router.push("/workouts")

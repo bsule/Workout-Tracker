@@ -1,6 +1,6 @@
 import type { BlobStorage } from "@lift/core/store/storage"
-import { IdbStorage } from "./idb"
-import { isOpfsAvailable, OpfsStorage } from "./opfs"
+import { adoptLegacyIdbStore, IdbStorage } from "./idb"
+import { adoptLegacyOpfsStore, isOpfsAvailable, OpfsStorage } from "./opfs"
 
 export type { BlobStorage } from "@lift/core/store/storage"
 
@@ -15,6 +15,21 @@ export function pickWebStorage(subPath: string): BlobStorage {
     return new OpfsStorage(subPath)
   }
   return new IdbStorage(subPath)
+}
+
+/**
+ * Moves a store kept under `fromSubPath` to `toSubPath`, in whichever backend
+ * pickWebStorage() uses, when the new one is still empty and the old one has
+ * data. Runs before configure(), once per account: the old path is gone
+ * afterwards. Returns whether it moved anything.
+ */
+export async function adoptLegacyWebStore(
+  fromSubPath: string,
+  toSubPath: string
+): Promise<boolean> {
+  if (typeof window === "undefined" || fromSubPath === toSubPath) return false
+  if (isOpfsAvailable()) return adoptLegacyOpfsStore(fromSubPath, toSubPath)
+  return adoptLegacyIdbStore(fromSubPath, toSubPath)
 }
 
 class MemoryStorage implements BlobStorage {

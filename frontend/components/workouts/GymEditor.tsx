@@ -1,166 +1,275 @@
 "use client"
 
-import { Pencil, MapPin, Check, X, ChevronDown } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
-import { localApi as api } from "@/lib/store"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { Check, Plus } from "lucide-react"
+import { localApi as api, listGymsQ } from "@/lib/store"
+import { matchGymName } from "@lift/core/workouts"
 import { cn } from "@/lib/utils"
+import { useBackdropClose } from "@/components/ui/useBackdropClose"
 
-interface Props {
+/**
+ * The workout's gym on the day view: "📍 {gym}", or a muted "📍 Add gym"
+ * when none is set. A click opens the gym picker, the web copy of mobile's
+ * GymPickerModal.
+ */
+export function GymEditor({
+  workoutId,
+  gym,
+}: {
   workoutId: number
   gym: string
-  /**
-   * The most recently used gym across all of the user's workouts. We pass it
-   * in so the empty-state shows the last-known gym as a one-click suggestion.
-   */
-  lastGym?: string | null
+}) {
+  // Mounted for the fade out as well as while open. Each open is a new
+  // session (a fresh key), so the picker always lands on the list with the
+  // current gyms, never on a half-typed name.
+  const [mounted, setMounted] = useState(false)
+  const [shown, setShown] = useState(false)
+  const [session, setSession] = useState(0)
+  const unmountTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(
+    () => () => {
+      if (unmountTimer.current) clearTimeout(unmountTimer.current)
+    },
+    []
+  )
+
+  function openPicker() {
+    if (unmountTimer.current) clearTimeout(unmountTimer.current)
+    setSession((n) => n + 1)
+    setMounted(true)
+    requestAnimationFrame(() => setShown(true))
+  }
+
+  const closePicker = useCallback(() => {
+    setShown(false)
+    if (unmountTimer.current) clearTimeout(unmountTimer.current)
+    unmountTimer.current = setTimeout(() => setMounted(false), 180)
+  }, [])
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={openPicker}
+        className="flex min-w-0 shrink items-center gap-1 rounded-md px-1 py-0.5 transition-opacity hover:opacity-70"
+        aria-label={gym ? `Gym: ${gym}. Change gym` : "Add gym"}
+      >
+        <span className="text-sm">📍</span>
+        <span
+          className={cn(
+            "truncate text-sm font-semibold",
+            !gym && "font-normal italic text-muted-foreground"
+          )}
+        >
+          {gym || "Add gym"}
+        </span>
+      </button>
+      {mounted && (
+        <GymPicker
+          key={session}
+          shown={shown}
+          workoutId={workoutId}
+          gym={gym}
+          onClose={closePicker}
+        />
+      )}
+    </>
+  )
 }
 
-export function GymEditor({ workoutId, gym, lastGym }: Props) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(gym)
-  const [busy, setBusy] = useState(false)
-  const [history, setHistory] = useState<string[] | null>(null)
-  const [open, setOpen] = useState(false)
-  const wrapRef = useRef<HTMLDivElement | null>(null)
+/**
+ * Modal card titled "Gym". "No gym" clears it, a saved gym applies at once,
+ * and "Add gym" opens a name field. A typed name that matches a saved gym in
+ * any case picks that gym instead of adding a near-duplicate.
+ */
+function GymPicker({
+  shown,
+  workoutId,
+  gym,
+  onClose,
+}: {
+  shown: boolean
+  workoutId: number
+  gym: string
+  onClose: () => void
+}) {
+  // Rows, not names: the list is keyed by gym id, like mobile.
+  const [gyms] = useState(() => listGymsQ())
+  const gymNames = gyms.map((g) => g.name)
+  const [adding, setAdding] = useState(false)
+  const [newGym, setNewGym] = useState("")
+  const inputRef = useRef<HTMLInputElement | null>(null)
 
-  useEffect(() => {
-    setDraft(gym)
-  }, [gym])
+  const backdrop = useBackdropClose(onClose)
 
-  useEffect(() => {
-    if (!editing) return
-    api.listGyms()
-      .then((gs) => setHistory(gs.map((g) => g.name)))
-      .catch(() => setHistory([]))
-  }, [editing])
-
-  // close dropdown on outside click
-  useEffect(() => {
-    if (!open) return
-    function onDoc(e: MouseEvent) {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false)
-    }
-    window.addEventListener("mousedown", onDoc)
-    return () => window.removeEventListener("mousedown", onDoc)
-  }, [open])
-
-  async function save() {
-    const trimmed = draft.trim()
-    setBusy(true)
-    try {
-      await api.patchWorkout(workoutId, { gym: trimmed })
-      setEditing(false)
-      setOpen(false)
-    } finally {
-      setBusy(false)
-    }
+  function startAdding() {
+    setAdding(true)
+    requestAnimationFrame(() => inputRef.current?.focus())
   }
 
-  function cancel() {
-    setDraft(gym)
-    setEditing(false)
-    setOpen(false)
+  function cancelAdd() {
+    setAdding(false)
+    setNewGym("")
   }
 
-  if (!editing) {
-    if (gym) {
-      return (
-        <button
-          onClick={() => setEditing(true)}
-          className="group inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-foreground/80 hover:bg-white/5"
-          aria-label="Edit gym"
-        >
-          <MapPin className="size-3 text-primary/80" />
-          <span className="truncate">{gym}</span>
-          <Pencil className="size-3 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100" />
-        </button>
-      )
+  useEffect(() => {
+    if (!shown) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return
+      if (adding) cancelAdd()
+      else onClose()
     }
-    return (
-      <button
-        onClick={() => setEditing(true)}
-        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-white/5 hover:text-foreground"
-        aria-label="Add gym"
-      >
-        <MapPin className="size-3" />
-        {lastGym ? `+ ${lastGym}` : "+ Add gym"}
-      </button>
-    )
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [shown, adding, onClose])
+
+  function selectGym(name: string) {
+    onClose()
+    if (name === gym) return
+    api.patchWorkout(workoutId, { gym: name })
   }
 
-  // editing
+  function clearGym() {
+    onClose()
+    if (gym) api.patchWorkout(workoutId, { gym: "" })
+  }
+
+  function commitNew() {
+    const name = newGym.trim()
+    if (!name) return
+    const existing = matchGymName(gymNames, name)
+    onClose()
+    if (!existing) api.createGym(name)
+    api.patchWorkout(workoutId, { gym: existing ?? name })
+  }
+
+  const rowCls =
+    "flex min-h-11 w-full items-center justify-between gap-3 px-3 text-left text-base transition-colors"
+
   return (
-    <div ref={wrapRef} className="relative inline-flex items-stretch gap-1">
-      <div className="relative">
-        <input
-          autoFocus
-          type="text"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onFocus={() => setOpen(true)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault()
-              save()
-            } else if (e.key === "Escape") {
-              cancel()
-            }
-          }}
-          placeholder="Gym name"
-          className="h-7 w-44 rounded-md border border-white/10 bg-white/[.03] px-2 pr-7 text-xs focus:outline-none focus:border-primary/50"
-        />
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground hover:bg-white/5"
-          aria-label="Toggle gym list"
-        >
-          <ChevronDown className="size-3" />
-        </button>
-
-        {open && history && history.length > 0 && (
-          <ul className="absolute left-0 top-full z-30 mt-1 w-56 max-h-56 overflow-auto rounded-md border border-white/10 bg-popover py-1 shadow-xl">
-            {history
-              .filter((g) => g.toLowerCase().includes(draft.trim().toLowerCase()))
-              .map((g) => (
-                <li key={g}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDraft(g)
-                      setOpen(false)
-                    }}
-                    className={cn(
-                      "flex w-full items-center gap-1.5 px-2 py-1 text-xs text-left hover:bg-white/5",
-                      g === draft && "bg-white/5"
-                    )}
-                  >
-                    <MapPin className="size-3 text-muted-foreground" />
-                    {g}
-                  </button>
-                </li>
-              ))}
-          </ul>
+    <div
+      className={cn(
+        "fixed inset-0 z-[100] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm transition-opacity duration-150",
+        shown ? "opacity-100" : "opacity-0"
+      )}
+      {...backdrop}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Gym"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className={cn(
+          "flex max-h-[80vh] w-full max-w-sm flex-col gap-3 rounded-2xl border border-border bg-card p-5 text-foreground shadow-2xl transition-all duration-150 ease-out",
+          shown ? "scale-100 opacity-100" : "scale-95 opacity-0"
         )}
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold tracking-tight">Gym</h2>
+          <button
+            type="button"
+            onClick={adding ? cancelAdd : onClose}
+            className="text-base font-semibold text-primary transition-opacity hover:opacity-70"
+          >
+            {adding ? "Cancel" : "Done"}
+          </button>
+        </div>
+
+        <div className="flex min-h-0 shrink flex-col overflow-hidden rounded-md border border-border">
+          <div
+            className={cn(
+              "min-h-0 shrink overflow-y-auto",
+              adding ? "max-h-[132px]" : "max-h-[264px]"
+            )}
+          >
+            <GymRow label="No gym" muted selected={!gym} first onClick={clearGym} rowCls={rowCls} />
+            {gyms.map((g) => (
+              <GymRow
+                key={g.id ?? `name:${g.name}`}
+                label={g.name}
+                selected={g.name === gym}
+                onClick={() => selectGym(g.name)}
+                rowCls={rowCls}
+              />
+            ))}
+          </div>
+
+          {adding ? (
+            <div className={cn(rowCls, "border-t border-border")}>
+              <input
+                ref={inputRef}
+                value={newGym}
+                onChange={(e) => setNewGym(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault()
+                    commitNew()
+                  }
+                }}
+                placeholder="New gym name"
+                autoCapitalize="words"
+                autoCorrect="off"
+                className="min-w-0 flex-1 bg-transparent py-2.5 text-base outline-none placeholder:text-muted-foreground"
+              />
+              <button
+                type="button"
+                onClick={commitNew}
+                disabled={!newGym.trim()}
+                className="text-base font-semibold text-primary transition-opacity hover:opacity-70 disabled:text-muted-foreground disabled:hover:opacity-100"
+              >
+                Add
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={startAdding}
+              className={cn(rowCls, "justify-start border-t border-border hover:bg-foreground/[.06]")}
+            >
+              <span className="flex items-center gap-1.5 font-semibold text-primary">
+                <Plus className="size-[18px]" />
+                Add gym
+              </span>
+            </button>
+          )}
+        </div>
       </div>
-      <button
-        type="button"
-        onClick={save}
-        disabled={busy}
-        className="rounded-md bg-emerald-500/15 px-1.5 text-emerald-400 hover:bg-emerald-500/25"
-        aria-label="Save gym"
-      >
-        <Check className="size-3.5" />
-      </button>
-      <button
-        type="button"
-        onClick={cancel}
-        disabled={busy}
-        className="rounded-md px-1.5 text-muted-foreground hover:bg-white/5"
-        aria-label="Cancel"
-      >
-        <X className="size-3.5" />
-      </button>
     </div>
+  )
+}
+
+function GymRow({
+  label,
+  selected,
+  muted = false,
+  first = false,
+  onClick,
+  rowCls,
+}: {
+  label: string
+  selected: boolean
+  muted?: boolean
+  first?: boolean
+  onClick: () => void
+  rowCls: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(rowCls, !first && "border-t border-border", "hover:bg-foreground/[.06]")}
+    >
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate",
+          muted && "text-muted-foreground",
+          selected && "font-semibold"
+        )}
+      >
+        {label}
+      </span>
+      {selected && <Check className="size-[18px] shrink-0 text-primary" />}
+    </button>
   )
 }

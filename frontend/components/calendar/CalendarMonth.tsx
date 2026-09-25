@@ -1,18 +1,24 @@
 "use client"
 
-import Link from "next/link"
 import { ChevronLeft, ChevronRight } from "lucide-react"
+import { useMemo } from "react"
+import { buildMonthGrid, todayString } from "@lift/core/dates"
 import type { CalendarMap, Category } from "@/types"
-import { categoryVar, cn, formatLocalDate, isFutureDate, todayLocal } from "@/lib/utils"
+import { categoryVar, cn } from "@/lib/utils"
 import { useSettings } from "@/components/settings/SettingsProvider"
+import { useCategoryStyles } from "@/components/categories/CategoryStylesProvider"
 
 interface Props {
   year: number
   month: number // 1-12
   data: CalendarMap
   plannedDates?: string[]
+  selectedDate: string
+  onSelect: (date: string) => void
   onPrev: () => void
   onNext: () => void
+  /** The month title: jumps back to the current month. */
+  onToday: () => void
 }
 
 const MONTH_LABELS = [
@@ -20,120 +26,163 @@ const MONTH_LABELS = [
   "July", "August", "September", "October", "November", "December",
 ]
 
-const WEEKDAYS_MON = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-const WEEKDAYS_SUN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+const WEEKDAYS_SUN = ["S", "M", "T", "W", "T", "F", "S"]
+const WEEKDAYS_MON = ["M", "T", "W", "T", "F", "S", "S"]
 
-export function CalendarMonth({ year, month, data, plannedDates, onPrev, onNext }: Props) {
-  const plannedSet = plannedDates ? new Set(plannedDates) : null
+/**
+ * The month grid, the web copy of mobile's CalendarScreen grid. A click
+ * selects a day (the page shows it under the grid) instead of navigating.
+ */
+export function CalendarMonth({
+  year,
+  month,
+  data,
+  plannedDates,
+  selectedDate,
+  onSelect,
+  onPrev,
+  onNext,
+  onToday,
+}: Props) {
   const { settings } = useSettings()
-  const firstDayOfWeek = settings.first_day_of_week  // 0=Sun, 1=Mon
-  const labels = firstDayOfWeek === 0 ? WEEKDAYS_SUN : WEEKDAYS_MON
-
-  const firstDay = new Date(year, month - 1, 1)
-  // JS getDay returns 0=Sun..6=Sat. Shift by firstDayOfWeek so the chosen
-  // day is column 0.
-  const startCol = (firstDay.getDay() - firstDayOfWeek + 7) % 7
-  const daysInMonth = new Date(year, month, 0).getDate()
-  const today = todayLocal()
-
-  const cells: (number | null)[] = []
-  for (let i = 0; i < startCol; i++) cells.push(null)
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d)
-  while (cells.length % 7 !== 0) cells.push(null)
+  const firstDayOfWeek = settings.first_day_of_week === 1 ? 1 : 0
+  const labels = firstDayOfWeek === 1 ? WEEKDAYS_MON : WEEKDAYS_SUN
+  const cells = useMemo(
+    () => buildMonthGrid(year, month, firstDayOfWeek),
+    [year, month, firstDayOfWeek]
+  )
+  const planned = useMemo(() => new Set(plannedDates ?? []), [plannedDates])
+  const today = todayString()
 
   return (
-    <div className="rounded-lg border border-white/10 bg-card p-3 sm:p-4">
-      <div className="flex items-center justify-between gap-2 px-1">
+    <div className="border-b border-border">
+      <div className="flex items-center justify-between gap-2 py-2">
         <button
+          type="button"
           onClick={onPrev}
-          className="rounded-md p-1.5 text-primary hover:bg-white/5"
+          className="rounded-md p-1.5 text-primary transition-colors hover:bg-foreground/5"
           aria-label="Previous month"
+          title="Previous month (Page Up)"
         >
           <ChevronLeft className="size-5" />
         </button>
-        <div className="text-base font-semibold tracking-tight">
-          {MONTH_LABELS[month - 1]} {year}
-        </div>
         <button
+          type="button"
+          onClick={onToday}
+          className="flex-1 rounded-md py-1.5 text-center text-base font-bold transition-opacity hover:opacity-70"
+          title="Go to this month"
+        >
+          {MONTH_LABELS[month - 1]} {year}
+        </button>
+        <button
+          type="button"
           onClick={onNext}
-          className="rounded-md p-1.5 text-primary hover:bg-white/5"
+          className="rounded-md p-1.5 text-primary transition-colors hover:bg-foreground/5"
           aria-label="Next month"
+          title="Next month (Page Down)"
         >
           <ChevronRight className="size-5" />
         </button>
       </div>
 
-      <div className="mt-4 grid grid-cols-7 gap-1">
-        {labels.map((d) => (
+      <div className="grid grid-cols-7 border-b border-border px-2 pb-2">
+        {labels.map((d, i) => (
           <div
-            key={d}
-            className="px-1 py-1 text-center text-[11px] font-medium text-muted-foreground"
+            key={i}
+            className="text-center text-xs font-bold tracking-wider text-muted-foreground"
           >
             {d}
           </div>
         ))}
-        {cells.map((d, i) => {
-          if (d === null) return <div key={i} />
-          const iso = formatLocalDate(new Date(year, month - 1, d))
-          const cats = data[iso] ?? null
-          const isToday = iso === today
-          const isPlanned = plannedSet?.has(iso) ?? false
-          const isFuture = isFutureDate(iso)
-          const baseCls = cn(
-            "flex aspect-square flex-col items-center justify-center gap-1 rounded-md border text-sm transition-colors",
-            isToday
-              ? "border-primary/60 bg-primary/5 text-primary"
-              : isPlanned
-              ? "border-dashed border-primary/40 text-foreground/85 hover:bg-white/[.04]"
-              : isFuture
-              ? "border-transparent text-foreground/50 hover:bg-white/[.04]"
-              : "border-transparent text-foreground/85 hover:bg-white/[.04]"
+      </div>
+
+      <div className="grid grid-cols-7 p-2">
+        {cells.map((cell, i) =>
+          cell.date ? (
+            <DayCell
+              key={cell.date}
+              date={cell.date}
+              day={cell.day!}
+              cats={data[cell.date]}
+              planned={planned.has(cell.date)}
+              isToday={cell.date === today}
+              isSelected={cell.date === selectedDate}
+              onSelect={onSelect}
+            />
+          ) : (
+            <div key={`blank-${i}`} className="aspect-square" />
           )
-          const inner = (
-            <>
-              <span className="tabular-nums">{d}</span>
-              {cats && cats.length > 0 && (
-                <DotRow cats={cats} planned={isPlanned} />
-              )}
-              {cats && cats.length === 0 && (
-                <span
-                  className={cn(
-                    "size-1.5 rounded-full",
-                    isPlanned ? "ring-1 ring-primary/60" : "bg-white/30"
-                  )}
-                />
-              )}
-            </>
-          )
-          return (
-            <Link key={i} href={`/workouts/date/${iso}`} className={baseCls}>
-              {inner}
-            </Link>
-          )
-        })}
+        )}
       </div>
     </div>
   )
 }
 
-function DotRow({ cats, planned }: { cats: Category[]; planned?: boolean }) {
-  const shown = cats.slice(0, 3)
+function DayCell({
+  date,
+  day,
+  cats,
+  planned,
+  isToday,
+  isSelected,
+  onSelect,
+}: {
+  date: string
+  day: number
+  cats: Category[] | undefined
+  planned: boolean
+  isToday: boolean
+  isSelected: boolean
+  onSelect: (date: string) => void
+}) {
+  const { labels } = useCategoryStyles()
+  const isPlannedOnly = planned && (!cats || cats.length === 0)
   return (
-    <div className="flex items-center gap-1">
-      {shown.map((c) => (
+    <button
+      type="button"
+      onClick={() => onSelect(date)}
+      aria-pressed={isSelected}
+      aria-label={new Date(date + "T00:00:00").toLocaleDateString("en-US", {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+      })}
+      className="aspect-square p-[3px] outline-none focus-visible:[&>span]:ring-2 focus-visible:[&>span]:ring-primary"
+    >
+      <span
+        className={cn(
+          "flex size-full flex-col items-center justify-start rounded-md border border-transparent pt-1.5 transition-colors",
+          !isSelected && !isToday && "hover:bg-foreground/[.04]",
+          isToday && "border-foreground/20 bg-foreground/5",
+          isSelected && "border-foreground bg-foreground/10"
+        )}
+      >
         <span
-          key={c}
           className={cn(
-            "inline-block size-1.5 rounded-full",
-            planned && "ring-1 ring-primary/60 bg-transparent"
+            "text-sm font-semibold tabular-nums sm:text-base",
+            (isToday || isSelected) && "font-extrabold"
           )}
-          style={planned ? undefined : { backgroundColor: categoryVar(c) }}
-          aria-label={c}
-        />
-      ))}
-      {cats.length > 3 && (
-        <span className="text-[8px] text-muted-foreground">+</span>
-      )}
-    </div>
+        >
+          {day}
+        </span>
+        <span className="mt-1 flex min-h-1.5 items-center gap-[3px]">
+          {cats && cats.length > 0 ? (
+            cats.slice(0, 4).map((c) => (
+              <span
+                key={c}
+                className="size-[5px] rounded-full"
+                style={{ backgroundColor: categoryVar(c) }}
+                aria-label={labels[c] ?? c}
+              />
+            ))
+          ) : isPlannedOnly ? (
+            <span
+              className="size-1.5 rounded-full border border-dashed border-muted-foreground"
+              aria-label="Planned"
+            />
+          ) : null}
+        </span>
+      </span>
+    </button>
   )
 }

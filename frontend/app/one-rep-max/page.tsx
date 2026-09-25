@@ -2,18 +2,15 @@
 
 import { useMemo, useState } from "react"
 import { Minus, Plus } from "lucide-react"
-import { estimateOneRm } from "@/lib/store"
+import { defaultStep, formatWeight } from "@/lib/units"
 import {
-  defaultStep,
-  formatWeight,
-  fromKg,
-  roundForDisplay,
-  toKg,
-} from "@/lib/units"
+  ONE_RM_PERCENTS,
+  oneRmDisplay as toOneRmDisplay,
+  oneRmKgFromDisplay,
+  percentOfOneRm,
+} from "@lift/core/oneRepMax"
 import { PageWrapper } from "@/components/layout/PageWrapper"
 import { useWeightUnit } from "@/components/settings/SettingsProvider"
-
-const PERCENT_TABLE = [95, 90, 85, 80, 75, 70, 65, 60]
 
 export default function OneRepMaxPage() {
   const unit = useWeightUnit()
@@ -22,10 +19,10 @@ export default function OneRepMaxPage() {
   const [reps, setReps] = useState<number>(5)
 
   const oneRmKg = useMemo(
-    () => estimateOneRm(toKg(weight, unit), reps),
+    () => oneRmKgFromDisplay(weight, reps, unit),
     [weight, reps, unit]
   )
-  const oneRmDisplay = roundForDisplay(fromKg(oneRmKg, unit), unit)
+  const oneRmDisplay = toOneRmDisplay(oneRmKg, unit)
 
   return (
     <PageWrapper>
@@ -34,7 +31,7 @@ export default function OneRepMaxPage() {
           <h1 className="text-2xl font-bold tracking-tight">1 Rep Max</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Estimates your single-rep max from a working set using the
-            Epley/Brzycki blend.
+            Brzycki formula.
           </p>
         </header>
 
@@ -76,8 +73,8 @@ export default function OneRepMaxPage() {
             <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
               % of 1RM
             </p>
-            {PERCENT_TABLE.map((pct) => {
-              const w = roundForDisplay((oneRmDisplay * pct) / 100, unit)
+            {ONE_RM_PERCENTS.map((pct) => {
+              const w = percentOfOneRm(oneRmDisplay, pct, unit)
               return (
                 <div
                   key={pct}

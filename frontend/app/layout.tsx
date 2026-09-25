@@ -9,6 +9,7 @@ import { SettingsProvider } from "@/components/settings/SettingsProvider"
 import { StoreProvider } from "@/components/store/StoreProvider"
 import { CloudConflictPrompt } from "@/components/sync/CloudConflictPrompt"
 import { ThemeProvider, themeBootstrapScript } from "@/components/settings/ThemeProvider"
+import Script from "next/script"
 
 const inter = Inter({
   variable: "--font-sans",
@@ -39,9 +40,18 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${archivoBlack.variable} ${jetbrainsMono.variable} dark antialiased h-full`}>
+    // themeBootstrapScript swaps "dark" for "light" on this element before
+    // React hydrates, so its class can differ from the server's on purpose.
+    <html lang="en" suppressHydrationWarning className={`${inter.variable} ${archivoBlack.variable} ${jetbrainsMono.variable} dark antialiased h-full`}>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
+        {/* next/script, not a bare <script>: React 19 warns about script tags
+            rendered by components. beforeInteractive puts it in the initial
+            HTML, so the stored theme applies before the first paint. */}
+        <Script
+          id="theme-bootstrap"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{ __html: themeBootstrapScript }}
+        />
       </head>
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <ThemeProvider>

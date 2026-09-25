@@ -1,519 +1,403 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import Link from "next/link"
+import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Upload } from "lucide-react"
-import { useAuth } from "@/components/auth/AuthProvider"
-import { Button } from "@/components/ui/button"
-import { FullPageLoader } from "@/components/ui/Spinner"
-import { cn } from "@/lib/utils"
 import {
   importFitnotesCsv,
   importSnapshotJson,
-  previewFile,
-  type Preview,
+  previewFitnotesCsv,
+  looksLikeJson,
+  previewSnapshotJson,
   type ImportMode,
   type ImportResult,
-} from "@/lib/fitnotes/importCsv"
+} from "@lift/core/import"
+import { formatTimestamp } from "@lift/core/format"
+import { useAuth } from "@/components/auth/AuthProvider"
+import {
+  SettingsCard,
+  SettingsHeading,
+  SettingsPage,
+} from "@/components/settings/SettingRows"
+import { Button } from "@/components/ui/button"
+import { useConfirm } from "@/components/ui/ConfirmDialog"
+import { FullPageLoader, LoadingBlock } from "@/components/ui/Spinner"
+import { useStore } from "@/lib/store"
+import { cn } from "@/lib/utils"
 
-type Step = "upload" | "fitnotes" | "snapshot" | "unknown" | "result"
+type PendingImport =
+  | {
+      kind: "snapshot"
+      text: string
+      workoutCount: number
+      setCount: number
+      customExerciseCount: number
+      gymCount: number
+      exportedAt: string | null
+    }
+  | { kind: "fitnotes"; text: string; rowCount: number }
 
-export default function ImportPage() {
+/** Import / Export, the web copy of mobile's ImportExportScreen. */
+export default function ImportExportPage() {
   const router = useRouter()
   const { user, loading } = useAuth()
-
-  const [step, setStep] = useState<Step>("upload")
-  const [file, setFile] = useState<File | null>(null)
-  const [preview, setPreview] = useState<Preview | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<ImportResult | null>(null)
-  const [mode, setMode] = useState<ImportMode>("merge")
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login")
   }, [user, loading, router])
 
-  async function uploadAndPreview(f: File) {
-    setBusy(true)
+  if (loading || !user) return <FullPageLoader />
+  return <ImportExport username={user.username} />
+}
+
+function ImportExport({ username }: { username: string }) {
+  const confirm = useConfirm()
+  const snapshot = useStore((s) => s.snapshot)
+  const fileRef = useRef<HTMLInputElement | null>(null)
+
+  const [busy, setBusy] = useState<
+    null | "json" | "csv" | "fitnotesdb" | "pick" | "import"
+  >(null)
+  const [pending, setPending] = useState<PendingImport | null>(null)
+  const [mode, setMode] = useState<ImportMode>("merge")
+  const [result, setResult] = useState<ImportResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function runExport(kind: "json" | "csv" | "fitnotesdb") {
+    setBusy(kind)
     setError(null)
     try {
-      const data = await previewFile(f)
-      setFile(f)
-      setPreview(data)
-      setStep(
-        data.kind === "fitnotes"
-          ? "fitnotes"
-          : data.kind === "snapshot"
-            ? "snapshot"
-            : "unknown"
-      )
+      if (kind === "json") {
+        const { downloadJson } = await import("@/lib/exports/snapshot")
+        downloadJson(snapshot, username)
+      } else if (kind === "csv") {
+        const { downloadCsv } = await import("@/lib/exports/snapshot")
+        downloadCsv(snapshot)
+      } else {
+        // sql.js is lazy-loaded only for this branch.
+        const { downloadFitnotesDb } = await import("@/lib/fitnotes/exportDb")
+        await downloadFitnotesDb(snapshot)
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to read file")
+      setError(e instanceof Error ? e.message : "Export failed.")
     } finally {
-      setBusy(false)
+      setBusy(null)
+    }
+  }
+
+  async function readAndPreview(file: File) {
+    setBusy("pick")
+    setError(null)
+    setResult(null)
+    try {
+      const text = await file.text()
+      if (looksLikeJson(text)) {
+        const p = previewSnapshotJson(text)
+        if (p.format !== "lift-snapshot") {
+          setError(
+            p.reason ??
+              "JSON file doesn't match the Lift backup format. Pick a file exported from Lift."
+          )
+          return
+        }
+        setPending({
+          kind: "snapshot",
+          text,
+          workoutCount: p.workoutCount,
+          setCount: p.setCount,
+          customExerciseCount: p.customExerciseCount,
+          gymCount: p.gymCount,
+          exportedAt: p.exportedAt,
+        })
+      } else {
+        const p = previewFitnotesCsv(text)
+        if (p.format !== "fitnotes") {
+          setError(
+            "CSV header didn't match the FitNotes format. Headers required: Date, Exercise, Category, Weight (kg), Weight (lbs), Reps, Distance, Distance Unit, Time, Notes, Kind."
+          )
+          return
+        }
+        setPending({ kind: "fitnotes", text, rowCount: p.rowCount })
+      }
+      setMode("merge")
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't read file.")
+    } finally {
+      setBusy(null)
     }
   }
 
   async function runImport() {
-    if (!file || !preview) return
+    if (!pending) return
     if (mode === "replace") {
-      const ok = window.confirm(
-        "Replace everything?\n\nThis will permanently delete every workout, exercise, and set currently in the app, then load the file. Settings are kept.\n\nThis cannot be undone."
-      )
+      const ok = await confirm({
+        title: "Replace everything?",
+        message:
+          "This permanently deletes every workout, exercise, and set currently in the app, then loads the file. Settings are kept. This cannot be undone.",
+        confirmLabel: "Replace",
+        destructive: true,
+      })
       if (!ok) return
     }
-    setBusy(true)
+    setBusy("import")
     setError(null)
     try {
-      const data =
-        preview.kind === "snapshot"
-          ? await importSnapshotJson(file, { mode })
-          : await importFitnotesCsv(file, { mode })
-      setResult(data)
-      setStep("result")
+      const res =
+        pending.kind === "snapshot"
+          ? await importSnapshotJson(pending.text, { mode })
+          : await importFitnotesCsv(pending.text, { mode })
+      setResult(res)
+      setPending(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Import failed")
+      setError(e instanceof Error ? e.message : "Import failed.")
     } finally {
-      setBusy(false)
+      setBusy(null)
     }
   }
 
-  function reset() {
-    setFile(null)
-    setPreview(null)
-    setResult(null)
-    setError(null)
-    setStep("upload")
-    setMode("merge")
-  }
-
-  if (loading || !user) {
-    return <FullPageLoader />
-  }
+  const exportDisabled = busy != null
+  const importDisabled = busy != null && busy !== "import"
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6 sm:py-10 space-y-6">
-      <h1 className="text-xl font-bold tracking-tight">Import workouts</h1>
-      <StepIndicator step={step} />
+    <SettingsPage title="Import / Export">
+      <p className="text-sm leading-relaxed text-muted-foreground">
+        Save your workouts to a file, or bring them in from a Lift or FitNotes
+        export. Cloud sync is under{" "}
+        <Link href="/settings/backup" className="text-primary hover:underline">
+          Backup &amp; Restore
+        </Link>
+        .
+      </p>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      {step === "upload" && (
-        <UploadStep busy={busy} onFile={uploadAndPreview} />
-      )}
+      <SettingsHeading>Export</SettingsHeading>
+      <ExportCard
+        title="Lift JSON backup"
+        help="Full snapshot: workouts, custom exercises, saved gyms. Re-importable on Lift mobile or web."
+        label={busy === "json" ? "Preparing…" : "Export JSON"}
+        onPress={() => void runExport("json")}
+        disabled={exportDisabled}
+      />
+      <ExportCard
+        title="FitNotes-compatible DB"
+        help="A .fitnotesdb file you can side-load into FitNotes for iOS. Distance, time, notes, and exercise kind are all preserved."
+        label={busy === "fitnotesdb" ? "Preparing…" : "Export FitNotes DB"}
+        onPress={() => void runExport("fitnotesdb")}
+        disabled={exportDisabled}
+      />
+      <ExportCard
+        title="CSV spreadsheet"
+        help="One row per set: date, exercise, weight, reps, PR flags, notes, gym. For spreadsheets; Lift can't import it back."
+        label={busy === "csv" ? "Preparing…" : "Export CSV"}
+        onPress={() => void runExport("csv")}
+        disabled={exportDisabled}
+      />
 
-      {step === "fitnotes" && preview?.kind === "fitnotes" && (
-        <FitNotesConfirmStep
-          rowCount={preview.rowCount}
-          mode={mode}
-          onModeChange={setMode}
-          onBack={reset}
-          onSubmit={runImport}
-          busy={busy}
-        />
-      )}
-
-      {step === "snapshot" && preview?.kind === "snapshot" && (
-        <SnapshotConfirmStep
-          workoutCount={preview.workoutCount}
-          setCount={preview.setCount}
-          customExerciseCount={preview.customExerciseCount}
-          gymCount={preview.gymCount}
-          exportedAt={preview.exportedAt}
-          mode={mode}
-          onModeChange={setMode}
-          onBack={reset}
-          onSubmit={runImport}
-          busy={busy}
-        />
-      )}
-
-      {step === "unknown" && preview?.kind === "unknown" && (
-        <UnknownFormatStep onBack={reset} reason={preview.reason} />
-      )}
-
-      {step === "result" && result && <ResultStep result={result} onReset={reset} />}
-    </div>
-  )
-}
-
-function StepIndicator({ step }: { step: Step }) {
-  const middleLabel =
-    step === "snapshot"
-      ? "2. Confirm backup"
-      : step === "unknown"
-        ? "2. Unrecognized"
-        : "2. Confirm"
-  const items: { id: Step; label: string }[] = [
-    { id: "upload", label: "1. Upload" },
-    {
-      id:
-        step === "unknown"
-          ? "unknown"
-          : step === "snapshot"
-            ? "snapshot"
-            : "fitnotes",
-      label: middleLabel,
-    },
-    { id: "result", label: "3. Result" },
-  ]
-  const i = items.findIndex((x) => x.id === step)
-  return (
-    <ol className="flex gap-2 text-xs">
-      {items.map((x, idx) => (
-        <li
-          key={x.id}
-          className={cn(
-            "flex-1 rounded-md border px-3 py-2 text-center font-medium",
-            idx === i
-              ? "border-primary/40 bg-primary/10 text-primary"
-              : idx < i
-                ? "border-white/10 bg-white/[.02] text-foreground/70"
-                : "border-white/10 bg-white/[.02] text-muted-foreground"
-          )}
+      <SettingsHeading>Import</SettingsHeading>
+      <SettingsCard>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Pick a Lift JSON backup or a FitNotes Android CSV export. The format
+          is detected automatically.
+        </p>
+        <Button
+          size="lg"
+          onClick={() => fileRef.current?.click()}
+          disabled={importDisabled}
         >
-          {x.label}
-        </li>
-      ))}
-    </ol>
-  )
-}
-
-function UploadStep({
-  busy,
-  onFile,
-}: {
-  busy: boolean
-  onFile: (f: File) => void
-}) {
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Upload a Lift JSON backup or a FitNotes for Android CSV export. We&rsquo;ll
-        detect the format automatically. Imports run entirely in your browser;
-        nothing is uploaded to a server.
-      </p>
-      <label
-        className={cn(
-          "flex cursor-pointer flex-col items-center gap-3 rounded-xl border-2 border-dashed border-white/15 bg-white/[.02] p-12 text-sm hover:bg-white/[.04]",
-          busy && "pointer-events-none opacity-60"
-        )}
-      >
-        <Upload className="size-10 text-primary" />
-        <span className="text-base font-semibold">
-          {busy ? "Reading…" : "Click to choose a file"}
-        </span>
-        <span className="text-xs text-muted-foreground">
-          .json (Lift backup) or .csv (FitNotes), UTF-8 encoded
-        </span>
+          {busy === "pick" ? "Reading…" : "Choose file"}
+        </Button>
         <input
+          ref={fileRef}
           type="file"
-          accept=".csv,.json,text/csv,application/json"
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0]
-            if (f) onFile(f)
+            // Clear it so picking the same file again still fires.
+            e.target.value = ""
+            if (f) void readAndPreview(f)
           }}
         />
-      </label>
-    </div>
-  )
-}
+      </SettingsCard>
 
-function FitNotesConfirmStep({
-  rowCount,
-  mode,
-  onModeChange,
-  onBack,
-  onSubmit,
-  busy,
-}: {
-  rowCount: number
-  mode: ImportMode
-  onModeChange: (m: ImportMode) => void
-  onBack: () => void
-  onSubmit: () => void
-  busy: boolean
-}) {
-  const submitLabel = busy
-    ? mode === "replace"
-      ? "Replacing…"
-      : "Importing…"
-    : mode === "replace"
-      ? `Replace with ${rowCount.toLocaleString()} sets`
-      : `Import ${rowCount.toLocaleString()} sets`
-
-  return (
-    <div className="space-y-6">
-      <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm">
-        <div className="text-base font-semibold text-emerald-300">
-          FitNotes export detected
-        </div>
-        <p className="mt-1 text-emerald-100/90">
-          {rowCount.toLocaleString()} sets ready to import. Distance, time,
-          notes, and exercise kind are preserved automatically. No column
-          mapping needed.
-        </p>
-      </div>
-
-      <ImportModeChooser mode={mode} onModeChange={onModeChange} busy={busy} />
-
-      <div className="flex justify-between gap-3">
-        <Button variant="outline" onClick={onBack} disabled={busy}>
-          Back
-        </Button>
-        <Button
-          onClick={onSubmit}
-          disabled={busy}
-          size="lg"
-          variant={mode === "replace" ? "destructive" : "default"}
-        >
-          {submitLabel}
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-function SnapshotConfirmStep({
-  workoutCount,
-  setCount,
-  customExerciseCount,
-  gymCount,
-  exportedAt,
-  mode,
-  onModeChange,
-  onBack,
-  onSubmit,
-  busy,
-}: {
-  workoutCount: number
-  setCount: number
-  customExerciseCount: number
-  gymCount: number
-  exportedAt: string | null
-  mode: ImportMode
-  onModeChange: (m: ImportMode) => void
-  onBack: () => void
-  onSubmit: () => void
-  busy: boolean
-}) {
-  const submitLabel = busy
-    ? mode === "replace"
-      ? "Replacing…"
-      : "Importing…"
-    : mode === "replace"
-      ? `Replace with backup`
-      : `Import ${workoutCount.toLocaleString()} workouts`
-
-  const exportedNote =
-    exportedAt && !Number.isNaN(Date.parse(exportedAt))
-      ? new Date(exportedAt).toLocaleString()
-      : null
-
-  return (
-    <div className="space-y-6">
-      <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm">
-        <div className="text-base font-semibold text-emerald-300">
-          Lift backup detected
-        </div>
-        <p className="mt-1 text-emerald-100/90">
-          {workoutCount.toLocaleString()} workouts · {setCount.toLocaleString()}{" "}
-          sets · {customExerciseCount.toLocaleString()} custom exercises ·{" "}
-          {gymCount.toLocaleString()} gyms.
-          {exportedNote && (
-            <>
-              {" "}
-              <span className="text-emerald-200/70">
-                Exported {exportedNote}.
-              </span>
-            </>
+      {pending && (
+        <SettingsCard>
+          <p className="text-[15px] font-semibold">
+            {pending.kind === "snapshot"
+              ? "Lift backup detected"
+              : "FitNotes export detected"}
+          </p>
+          {pending.kind === "snapshot" ? (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {pending.workoutCount.toLocaleString()} workouts ·{" "}
+              {pending.setCount.toLocaleString()} sets ·{" "}
+              {pending.customExerciseCount.toLocaleString()} custom exercises ·{" "}
+              {pending.gymCount.toLocaleString()} gyms
+              {pending.exportedAt
+                ? ` · exported ${formatTimestamp(pending.exportedAt)}`
+                : ""}
+            </p>
+          ) : (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {pending.rowCount.toLocaleString()} sets ready to import.
+            </p>
           )}
-        </p>
-      </div>
 
-      <ImportModeChooser mode={mode} onModeChange={onModeChange} busy={busy} />
+          <div className="flex flex-col gap-2">
+            <ModeRow
+              title="Add to my existing data"
+              description="Merge: workouts on the same date+gym and exercises with the same name are reused."
+              checked={mode === "merge"}
+              onSelect={() => setMode("merge")}
+              disabled={busy === "import"}
+            />
+            <ModeRow
+              title="Replace everything"
+              description="Wipes all current workouts, exercises, sets, and PRs. Settings are kept. Cannot be undone."
+              checked={mode === "replace"}
+              onSelect={() => setMode("replace")}
+              disabled={busy === "import"}
+              destructive
+            />
+          </div>
 
-      <div className="flex justify-between gap-3">
-        <Button variant="outline" onClick={onBack} disabled={busy}>
-          Back
-        </Button>
-        <Button
-          onClick={onSubmit}
-          disabled={busy}
-          size="lg"
-          variant={mode === "replace" ? "destructive" : "default"}
-        >
-          {submitLabel}
-        </Button>
-      </div>
-    </div>
+          <div className="flex gap-3">
+            <Button
+              variant="outline"
+              size="lg"
+              className="flex-1"
+              onClick={() => setPending(null)}
+              disabled={busy === "import"}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant={mode === "replace" ? "destructive" : "default"}
+              size="lg"
+              className="flex-1"
+              onClick={() => void runImport()}
+              disabled={busy === "import"}
+            >
+              {busy === "import"
+                ? mode === "replace"
+                  ? "Replacing…"
+                  : "Importing…"
+                : mode === "replace"
+                  ? "Replace"
+                  : "Import"}
+            </Button>
+          </div>
+        </SettingsCard>
+      )}
+
+      {result && (
+        <SettingsCard>
+          <p className="text-[15px] font-semibold">
+            {result.imported.toLocaleString()} sets imported
+          </p>
+          {result.exercisesCreated.length > 0 && (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Created {result.exercisesCreated.length} new custom exercise
+              {result.exercisesCreated.length === 1 ? "" : "s"}:{" "}
+              {result.exercisesCreated.join(", ")}
+            </p>
+          )}
+          {result.errors.length > 0 && (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {result.errors.length} row
+              {result.errors.length === 1 ? "" : "s"} skipped. First few:{" "}
+              {result.errors
+                .slice(0, 3)
+                .map((e) => `row ${e.row}: ${e.message}`)
+                .join(" · ")}
+            </p>
+          )}
+          <Button size="lg" onClick={() => setResult(null)}>
+            Done
+          </Button>
+        </SettingsCard>
+      )}
+
+      {busy === "import" && <LoadingBlock />}
+    </SettingsPage>
   )
 }
 
-function ImportModeChooser({
-  mode,
-  onModeChange,
-  busy,
-}: {
-  mode: ImportMode
-  onModeChange: (m: ImportMode) => void
-  busy: boolean
-}) {
-  return (
-    <div className="space-y-2">
-      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        Import mode
-      </div>
-      <ModeOption
-        checked={mode === "merge"}
-        onSelect={() => onModeChange("merge")}
-        title="Add to my existing data"
-        description="Keeps everything currently in the app. New sets are added; workouts on the same date+gym and exercises with the same name are merged automatically."
-        accent="emerald"
-        disabled={busy}
-      />
-      <ModeOption
-        checked={mode === "replace"}
-        onSelect={() => onModeChange("replace")}
-        title="Replace everything"
-        description="Wipes all current workouts, exercises, sets, and PRs. The file becomes your only data. Settings are kept. This cannot be undone."
-        accent="amber"
-        disabled={busy}
-      />
-    </div>
-  )
-}
-
-function ModeOption({
-  checked,
-  onSelect,
+function ExportCard({
   title,
-  description,
-  accent,
+  help,
+  label,
+  onPress,
   disabled,
 }: {
-  checked: boolean
-  onSelect: () => void
   title: string
-  description: string
-  accent: "emerald" | "amber"
+  help: string
+  label: string
+  onPress: () => void
   disabled: boolean
 }) {
-  const accentBorder =
-    accent === "amber"
-      ? "border-amber-500/50 bg-amber-500/10"
-      : "border-emerald-500/40 bg-emerald-500/10"
+  return (
+    <SettingsCard>
+      <div className="flex flex-col gap-2">
+        <p className="text-[15px] font-semibold">{title}</p>
+        <p className="text-xs leading-relaxed text-muted-foreground">{help}</p>
+      </div>
+      <Button size="lg" onClick={onPress} disabled={disabled}>
+        {label}
+      </Button>
+    </SettingsCard>
+  )
+}
+
+function ModeRow({
+  title,
+  description,
+  checked,
+  onSelect,
+  disabled,
+  destructive,
+}: {
+  title: string
+  description: string
+  checked: boolean
+  onSelect: () => void
+  disabled: boolean
+  destructive?: boolean
+}) {
   return (
     <button
       type="button"
+      role="radio"
+      aria-checked={checked}
       onClick={onSelect}
       disabled={disabled}
       className={cn(
-        "w-full rounded-md border p-3 text-left text-sm transition",
+        "flex w-full items-start gap-3 rounded-md border p-3 text-left transition-opacity",
         checked
-          ? accentBorder
-          : "border-white/10 bg-white/[.02] hover:bg-white/[.04]",
-        disabled && "pointer-events-none opacity-60"
+          ? destructive
+            ? "border-destructive"
+            : "border-foreground"
+          : "border-border hover:bg-foreground/[.03]",
+        disabled && "opacity-60"
       )}
     >
-      <div className="flex items-start gap-3">
-        <span
-          className={cn(
-            "mt-1 inline-block size-3.5 shrink-0 rounded-full border",
-            checked
-              ? "border-foreground bg-foreground"
-              : "border-white/30 bg-transparent"
-          )}
-          aria-hidden
-        />
-        <div>
-          <div className="font-semibold">{title}</div>
-          <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
-        </div>
-      </div>
-    </button>
-  )
-}
-
-function UnknownFormatStep({
-  onBack,
-  reason,
-}: {
-  onBack: () => void
-  reason: string
-}) {
-  return (
-    <div className="space-y-6">
-      <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
-        <div className="text-base font-semibold text-amber-200">
-          Format not recognized
-        </div>
-        <p className="mt-1 text-amber-100/80">{reason}</p>
-        <p className="mt-2 text-amber-100/70">
-          Supported formats: a Lift JSON backup (exported from Settings) or a
-          FitNotes Android CSV export. Header row for FitNotes should include{" "}
-          <span className="font-mono">Date, Exercise, Category, Weight (kg),
-          Weight (lbs), Reps, Distance, Distance Unit, Time, Notes, Kind</span>.
-        </p>
-      </div>
-      <div className="flex justify-end">
-        <Button variant="outline" onClick={onBack}>
-          Pick a different file
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-function ResultStep({
-  result,
-  onReset,
-}: {
-  result: ImportResult
-  onReset: () => void
-}) {
-  return (
-    <div className="space-y-4">
-      <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm">
-        <div className="text-base font-semibold text-emerald-300">
-          {result.imported.toLocaleString()} sets imported
-        </div>
-        {result.exercisesCreated.length > 0 && (
-          <div className="mt-2 text-emerald-200/90">
-            Created {result.exercisesCreated.length} new custom exercise
-            {result.exercisesCreated.length === 1 ? "" : "s"}:{" "}
-            {result.exercisesCreated.join(", ")}
-          </div>
+      <span
+        aria-hidden
+        className={cn(
+          "mt-[3px] size-3.5 shrink-0 rounded-full border",
+          checked
+            ? destructive
+              ? "border-destructive bg-destructive"
+              : "border-foreground bg-foreground"
+            : "border-border"
         )}
-      </div>
-
-      {result.errors.length > 0 && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
-          <div className="font-semibold text-amber-200">
-            {result.errors.length} row{result.errors.length === 1 ? "" : "s"} skipped
-          </div>
-          <ul className="mt-2 space-y-1 text-amber-100/90">
-            {result.errors.slice(0, 50).map((e, i) => (
-              <li key={i} className="font-mono text-xs">
-                row {e.row}: {e.message}
-              </li>
-            ))}
-            {result.errors.length > 50 && (
-              <li className="text-xs italic text-amber-200/70">
-                …and {result.errors.length - 50} more
-              </li>
-            )}
-          </ul>
-        </div>
-      )}
-
-      <div className="flex gap-3">
-        <Button variant="outline" onClick={onReset}>
-          Import another file
-        </Button>
-      </div>
-    </div>
+      />
+      <span className="flex-1">
+        <span className="mb-0.5 block text-sm font-semibold">{title}</span>
+        <span className="block text-xs leading-relaxed text-muted-foreground">
+          {description}
+        </span>
+      </span>
+    </button>
   )
 }

@@ -11,6 +11,7 @@ import {
 import { AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { useBackdropClose } from "@/components/ui/useBackdropClose"
 
 interface ConfirmOptions {
   title: string
@@ -45,6 +46,9 @@ export function ConfirmDialogProvider({
     opts: DEFAULT_OPTS,
   })
   const resolveRef = useRef<((v: boolean) => void) | null>(null)
+  // A press that starts inside the card and ends on the backdrop is not a
+  // click outside.
+  const backdrop = useBackdropClose(() => close(false))
 
   const confirm = useCallback<ConfirmFn>((opts) => {
     return new Promise<boolean>((resolve) => {
@@ -90,7 +94,7 @@ export function ConfirmDialogProvider({
               ? "bg-black/60 backdrop-blur-sm opacity-100"
               : "bg-black/60 backdrop-blur-sm opacity-0"
           )}
-          onClick={() => close(false)}
+          {...backdrop}
           role="dialog"
           aria-modal="true"
           aria-label={state.opts.title}

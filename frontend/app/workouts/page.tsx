@@ -2,7 +2,7 @@
 
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { todayLocal } from "@/lib/utils"
+import { activeDateOrToday } from "@/lib/activeDate"
 import { useAuth } from "@/components/auth/AuthProvider"
 import { FullPageLoader } from "@/components/ui/Spinner"
 
@@ -16,7 +16,8 @@ export default function WorkoutsIndex() {
       router.replace("/login")
       return
     }
-    router.replace(`/workouts/date/${todayLocal()}`)
+    // The day last viewed in this tab (mobile keeps it in ActiveDate), or today.
+    router.replace(`/workouts/date/${activeDateOrToday()}`)
   }, [user, loading, router])
 
   return <FullPageLoader />

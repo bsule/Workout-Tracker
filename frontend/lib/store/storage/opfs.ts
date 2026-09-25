@@ -119,3 +119,74 @@ function isNotFound(e: unknown): boolean {
     (e.name === "NotFoundError" || e.name === "NotFound")
   )
 }
+
+/** The directory at `subPath`, or null when any part of it is missing. */
+async function findDir(
+  root: FileSystemDirectoryHandle,
+  subPath: string
+): Promise<FileSystemDirectoryHandle | null> {
+  let handle = root
+  for (const part of subPath.split("/").filter(Boolean)) {
+    try {
+      handle = await handle.getDirectoryHandle(part, { create: false })
+    } catch (e) {
+      if (isNotFound(e)) return null
+      throw e
+    }
+  }
+  return handle
+}
+
+async function readFileOrNull(
+  dir: FileSystemDirectoryHandle,
+  name: string
+): Promise<Blob | null> {
+  try {
+    const fh = await dir.getFileHandle(name, { create: false })
+    const file = await fh.getFile()
+    return file.size ? file : null
+  } catch (e) {
+    if (isNotFound(e)) return null
+    throw e
+  }
+}
+
+async function writeFile(dir: FileSystemDirectoryHandle, name: string, data: Blob) {
+  const fh = await dir.getFileHandle(name, { create: true })
+  const writable = await fh.createWritable()
+  await writable.write(data)
+  await writable.close()
+}
+
+/**
+ * Moves an OPFS store from `fromSubPath` to `toSubPath` (see
+ * adoptLegacyWebStore). OPFS has no portable rename, so it copies, then
+ * deletes the old directory. The crash log is copied before the snapshot and
+ * "moved" means the new snapshot exists, so a copy cut short runs again on the
+ * next load instead of leaving a store with a crash log and no snapshot.
+ */
+export async function adoptLegacyOpfsStore(
+  fromSubPath: string,
+  toSubPath: string
+): Promise<boolean> {
+  const root = await navigator.storage.getDirectory()
+  const existing = await findDir(root, toSubPath)
+  if (existing && (await readFileOrNull(existing, SNAPSHOT_NAME))) return false
+  const from = await findDir(root, fromSubPath)
+  if (!from) return false
+  const snapshot = await readFileOrNull(from, SNAPSHOT_NAME)
+  const pending = await readFileOrNull(from, PENDING_NAME)
+  if (!snapshot && !pending) return false
+
+  let to = root
+  for (const part of toSubPath.split("/").filter(Boolean)) {
+    to = await to.getDirectoryHandle(part, { create: true })
+  }
+  await writeFile(to, PENDING_NAME, pending ?? new Blob([]))
+  if (snapshot) await writeFile(to, SNAPSHOT_NAME, snapshot)
+
+  const parts = fromSubPath.split("/").filter(Boolean)
+  const parent = await findDir(root, parts.slice(0, -1).join("/"))
+  await parent?.removeEntry(parts[parts.length - 1], { recursive: true })
+  return true
+}

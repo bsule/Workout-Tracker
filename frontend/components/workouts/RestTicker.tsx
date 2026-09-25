@@ -1,82 +1,99 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { RotateCcw, Timer, X } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { ActionMenu } from "@/components/ui/ActionMenu"
+import { TICKER_HIDE_AFTER_S, elapsedS, formatElapsed } from "@lift/core/format"
 import { cn } from "@/lib/utils"
 
-interface Props {
-  anchorMs: number
-  onReset?: () => void
-  onStop?: () => void
-  className?: string
-}
+/** How long "0s" stays teal after a reset before settling back to muted. */
+const TINT_MS = 700
 
-const HIDE_AFTER_S = 1800 // 30 minutes
+/**
+ * The set logger's ticking "Xs since last set" line, the last line of the
+ * set-list card. A click opens Reset timer / Stop timer. `anchorMs` is what
+ * it counts from (core tickerAnchor); null means nothing to count from.
+ *
+ * The parent keeps this mounted and the line hides itself, so losing the
+ * anchor (Stop timer, deleting the set it counted from, the 30 minute
+ * cutoff) collapses it with one motion instead of dropping it in one frame.
+ */
+export function RestTicker({
+  anchorMs,
+  onReset,
+  onStop,
+}: {
+  anchorMs: number | null
+  onReset: () => void
+  onStop: () => void
+}) {
+  const [, force] = useState(0)
+  const shown = anchorMs != null && elapsedS(anchorMs) <= TICKER_HIDE_AFTER_S
+  // While collapsing, keep counting from the last anchor it showed: a newly
+  // handed-over older anchor would flash its time on the way out.
+  const [lastAnchor, setLastAnchor] = useState<number | null>(shown ? anchorMs : null)
+  if (shown && anchorMs !== lastAnchor) setLastAnchor(anchorMs)
+  const [tinted, setTinted] = useState(false)
+  const tintTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-export function RestTicker({ anchorMs, onReset, onStop, className }: Props) {
-  const [now, setNow] = useState(() => Date.now())
-  const [stoppedAnchor, setStoppedAnchor] = useState<number | null>(null)
-
-  // Re-render periodically to update elapsed time from clock
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 500)
+    if (!shown) return
+    const id = setInterval(() => force((c) => c + 1), 250)
     return () => clearInterval(id)
-  }, [])
+  }, [shown])
 
-  if (stoppedAnchor === anchorMs) return null
+  useEffect(
+    () => () => {
+      if (tintTimer.current) clearTimeout(tintTimer.current)
+    },
+    []
+  )
 
-  const elapsed = Math.max(0, Math.floor((now - anchorMs) / 1000))
-  if (elapsed > HIDE_AFTER_S) return null
-
-  let timeStr: string
-  if (elapsed < 60) {
-    timeStr = `${elapsed}s`
-  } else {
-    const m = Math.floor(elapsed / 60)
-    const s = elapsed % 60
-    timeStr = `${m}m ${s}s`
+  function reset() {
+    onReset()
+    setTinted(true)
+    if (tintTimer.current) clearTimeout(tintTimer.current)
+    tintTimer.current = setTimeout(() => setTinted(false), TINT_MS)
   }
 
-  function handleStop() {
-    setStoppedAnchor(anchorMs)
-    onStop?.()
-  }
+  if (lastAnchor == null) return null
+  const label = formatElapsed(elapsedS(lastAnchor))
 
   return (
+    // Only the collapse animates: a new anchor opens the line at rest, like
+    // one that mounts. The clip is only on while collapsed, so the menu can
+    // drop below the line while it is open.
     <div
       className={cn(
-        "flex items-center justify-between rounded-xl border border-primary/20 bg-primary/[.04] px-4 py-2.5 text-xs text-foreground/90 transition-colors",
-        className
+        "grid",
+        shown
+          ? "grid-rows-[1fr]"
+          : "grid-rows-[0fr] opacity-0 transition-[grid-template-rows,opacity] duration-300 ease-in-out"
       )}
+      aria-hidden={!shown}
+      inert={!shown}
     >
-      <div className="flex items-center gap-2">
-        <Timer className="size-4 text-primary animate-pulse" />
-        <span className="font-mono font-semibold tabular-nums text-foreground">
-          {timeStr}
-        </span>
-        <span className="text-muted-foreground">since last set</span>
-      </div>
-      <div className="flex items-center gap-1">
-        {onReset && (
-          <button
-            type="button"
-            onClick={onReset}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-white/5 hover:text-foreground transition-colors"
-            title="Reset timer"
-          >
-            <RotateCcw className="size-3" />
-            <span>Reset</span>
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={handleStop}
-          className="inline-flex items-center gap-1 rounded-md p-1 text-muted-foreground hover:bg-white/5 hover:text-foreground transition-colors"
-          title="Dismiss timer"
-          aria-label="Dismiss timer"
-        >
-          <X className="size-3.5" />
-        </button>
+      <div className={cn("min-h-0", !shown && "overflow-hidden")}>
+        <ActionMenu
+          title="Rest timer"
+          align="center"
+          ariaLabel="Rest timer"
+          className="flex w-full"
+          triggerClassName="w-full justify-center border-t border-white/[.06] px-3 py-1.5 transition-colors hover:bg-white/[.03]"
+          trigger={
+            <span
+              className={cn(
+                "text-center text-xs tabular-nums transition-colors",
+                tinted ? "text-secondary duration-0" : "text-muted-foreground duration-700"
+              )}
+            >
+              {label} since last set
+            </span>
+          }
+          items={[
+            { label: "Reset timer", onSelect: reset },
+            { label: "Stop timer", onSelect: onStop },
+          ]}
+        />
       </div>
     </div>
   )

@@ -1,7 +1,7 @@
 "use client"
 
 import type { Category } from "@/types"
-import { categoryVar, cn } from "@/lib/utils"
+import { cn } from "@/lib/utils"
 import { useCategoryStyles } from "@/components/categories/CategoryStylesProvider"
 
 interface Props {
@@ -9,6 +9,13 @@ interface Props {
   showLabel?: boolean
   size?: "sm" | "md"
   className?: string
+}
+
+/** A category's color: the user's override or the theme default (both
+ *  arrive as --cat-<slug>), else muted for a slug with neither, like a
+ *  deleted custom category. */
+export function categoryColor(category: Category): string {
+  return `var(--cat-${category}, var(--muted-foreground))`
 }
 
 export function CategoryDot({
@@ -28,7 +35,7 @@ export function CategoryDot({
         size === "sm" ? "size-2" : "size-2.5",
         className
       )}
-      style={{ backgroundColor: categoryVar(category) }}
+      style={{ backgroundColor: categoryColor(category) }}
       aria-label={labels[category]}
     />
   )
