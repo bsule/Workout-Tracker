@@ -7,7 +7,6 @@ import {
   Activity,
   ChevronLeft,
   History as HistoryIcon,
-  ListPlus,
   Settings as SettingsIcon,
   ScrollText,
 } from "lucide-react"
@@ -20,9 +19,13 @@ import { ExerciseChart } from "@/components/workouts/ExerciseChart"
 import { ExerciseHistory } from "@/components/workouts/ExerciseHistory"
 import { ExerciseSummary } from "@/components/workouts/ExerciseSummary"
 import { localApi as api, useHydrated, useStore } from "@/lib/store"
+import { queryAt } from "@/lib/store/queryAt"
 import { getExerciseHistoryQ, listExercisesQ } from "@/lib/store/queries"
 import { useCategoryStyles } from "@/components/categories/CategoryStylesProvider"
+import { pendingLoggerHref } from "@/lib/loggerHref"
 import { cn } from "@/lib/utils"
+import { todayString } from "@lift/core/dates"
+import { formatRelative } from "@lift/core/format"
 import type { Category, Exercise, ExerciseHistoryDay } from "@/types"
 
 type Tab = "chart" | "summary" | "history" | "settings"
@@ -37,51 +40,30 @@ export default function ExerciseDetailPage({
   const router = useRouter()
   const { user, loading } = useAuth()
   const hydrated = useHydrated()
-  const snapshot = useStore((s) => s.snapshot)
-  const confirm = useConfirm()
   const [tab, setTab] = useState<Tab>("history")
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login")
   }, [user, loading, router])
 
+  const snapshot = useStore((s) => s.snapshot)
   const exercise: Exercise | null = useMemo(() => {
     if (!hydrated || !Number.isFinite(exerciseId)) return null
-    return listExercisesQ({ sort: "name" }).find((e) => e.id === exerciseId) ?? null
+    return queryAt(snapshot, () =>
+      listExercisesQ({ sort: "name" }).find((e) => e.id === exerciseId) ?? null
+    )
   }, [hydrated, exerciseId, snapshot])
 
   const history: ExerciseHistoryDay[] | null = useMemo(() => {
     if (!hydrated || !Number.isFinite(exerciseId)) return null
-    return getExerciseHistoryQ(exerciseId)
+    return queryAt(snapshot, () => getExerciseHistoryQ(exerciseId))
   }, [hydrated, exerciseId, snapshot])
 
-  async function logToday() {
+  // Mobile's "Log a set": open the logger for today without creating
+  // anything; the workout and its exercise row appear with the first set.
+  function logToday() {
     if (!exercise) return
-    setBusy(true)
-    setError(null)
-    try {
-      const today = todayString()
-      const workout = await api.createWorkout(today)
-      if (workout.merged_into_finished) {
-        const ok = await confirm({
-          title: "Already finished a workout today",
-          message:
-            "You have a finished session for today. Logging will add this exercise to that same session.",
-          confirmLabel: "Log there",
-        })
-        if (!ok) {
-          setBusy(false)
-          return
-        }
-      }
-      const we = await api.addExerciseToWorkout(workout.id, exercise.id)
-      router.push(`/workouts/${workout.id}/exercises/${we.id}`)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to open logger")
-      setBusy(false)
-    }
+    router.replace(pendingLoggerHref(todayString(), exercise.id))
   }
 
   if (loading || !user) {
@@ -89,6 +71,11 @@ export default function ExerciseDetailPage({
   }
 
   const allHistory = history ?? []
+  // Only days that have happened: a workout dated in the future can carry
+  // logged sets. Same cut as the History tab.
+  const today = todayString()
+  const pastHistory = allHistory.filter((d) => d.date <= today)
+  const lastDate = pastHistory[0]?.date ?? null
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6 sm:py-10 space-y-6">
@@ -102,27 +89,31 @@ export default function ExerciseDetailPage({
         </Link>
 
         {exercise ? (
-          <div className="flex items-center gap-3">
-            <CategoryDot category={exercise.category} size="md" />
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate text-2xl font-bold tracking-tight">
-                {exercise.name}
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                {formatCount(exercise.workouts_count ?? allHistory.length)}
-              </p>
-            </div>
-            <Button onClick={logToday} disabled={busy}>
-              <ListPlus className="size-4" />
-              {busy ? "Opening..." : "Log"}
-            </Button>
+          <div className="space-y-1.5">
+            <h1 className="text-2xl font-extrabold tracking-tight">
+              {exercise.name}
+            </h1>
+            <CategoryLabel category={exercise.category} />
           </div>
         ) : (
           <h1 className="text-xl font-bold tracking-tight">Exercise</h1>
         )}
-      </div>
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+        {exercise && tab === "history" && (
+          <>
+            <div className="flex gap-3">
+              <Stat label="Workouts" value={String(pastHistory.length)} />
+              <Stat
+                label="Last"
+                value={lastDate ? formatRelative(lastDate) : "-"}
+              />
+            </div>
+            <Button onClick={logToday} className="w-full" size="lg">
+              Log a set
+            </Button>
+          </>
+        )}
+      </div>
 
       {!hydrated && <LoadingBlock />}
       {hydrated && !exercise && (
@@ -131,7 +122,7 @@ export default function ExerciseDetailPage({
 
       {exercise && (
         <>
-          <Tabs active={tab} onChange={setTab} priorCount={allHistory.length} />
+          <Tabs active={tab} onChange={setTab} priorCount={pastHistory.length} />
 
           {tab === "chart" &&
             (history === null ? (
@@ -151,7 +142,7 @@ export default function ExerciseDetailPage({
             (history === null ? (
               <LoadingBlock />
             ) : (
-              <ExerciseHistory history={allHistory} />
+              <ExerciseHistory history={allHistory} currentDate={today} />
             ))}
 
           {tab === "settings" && (
@@ -162,6 +153,30 @@ export default function ExerciseDetailPage({
           )}
         </>
       )}
+    </div>
+  )
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex-1 space-y-1 rounded-xl bg-card p-4">
+      <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="text-lg font-bold">{value}</div>
+    </div>
+  )
+}
+
+/** Mobile's CategoryBadge: the category's dot and its name. */
+function CategoryLabel({ category }: { category: Category }) {
+  const { labels } = useCategoryStyles()
+  return (
+    <div className="flex items-center gap-1.5">
+      <CategoryDot category={category} size="sm" />
+      <span className="text-xs font-bold uppercase tracking-[0.12em] text-muted-foreground">
+        {labels[category] ?? category}
+      </span>
     </div>
   )
 }
@@ -199,14 +214,14 @@ function Tabs({
             key={it.id}
             onClick={() => onChange(it.id)}
             className={cn(
-              "inline-flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-sm font-medium transition-colors",
+              "inline-flex min-w-0 items-center justify-center gap-1 rounded-lg px-1.5 py-2 text-xs font-medium transition-colors sm:gap-1.5 sm:text-sm",
               isActive
                 ? "bg-white/10 text-foreground shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset]"
                 : "text-muted-foreground hover:bg-white/[.04] hover:text-foreground"
             )}
           >
             {it.icon}
-            <span className="hidden sm:inline">{it.label}</span>
+            <span>{it.label}</span>
             {it.badge && (
               <span
                 className={cn(
@@ -308,7 +323,10 @@ function ExerciseSettingsPanel({
             onChange={(e) => setCategory(e.target.value as Category)}
             className="mt-1 w-full rounded-md border border-white/10 bg-white/[.04] px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
           >
-            {categories.map((c) => (
+            {/* A category the list does not know (a FitNotes import keeps
+                unrecognized ones) stays an option, so saving the name does
+                not silently switch it to the first one. */}
+            {(categories.includes(category) ? categories : [...categories, category]).map((c) => (
               <option key={c} value={c} className="bg-neutral-900 text-foreground">
                 {labels[c] ?? c}
               </option>
@@ -369,13 +387,4 @@ function ExerciseSettingsPanel({
       </div>
     </div>
   )
-}
-
-function todayString(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
-}
-
-function formatCount(count: number): string {
-  return count === 1 ? "1 workout" : `${count} workouts`
 }

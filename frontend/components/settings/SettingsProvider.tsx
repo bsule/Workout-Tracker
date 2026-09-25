@@ -3,10 +3,11 @@
 import { createContext, useCallback, useContext } from "react"
 import { localApi, useStore } from "@/lib/store"
 import type { UserSettings } from "@/types"
+import { readSettings } from "@lift/core/settings"
 
 const DEFAULTS: UserSettings = {
   weight_unit: "lb",
-  first_day_of_week: 1,
+  first_day_of_week: 0,
 }
 
 interface SettingsState {
@@ -41,37 +42,34 @@ export function useWeightUnit() {
   return useSettings().settings.weight_unit
 }
 
-/** Whether to show estimated 1RM under each set in the logger. Defaults
- *  to true when missing — this matches the on-by-default behavior the
- *  web shipped with before the toggle existed. */
+// The show_* defaults come from @lift/core/settings, the same reader the
+// mobile app uses, so a synced snapshot shows the same things on both.
+
+/** Whether to show estimated 1RM under each set in the logger. Off unless
+ *  the user turned it on. */
 export function useShowOneRm(): boolean {
-  const v = useSettings().settings.show_one_rm
-  return v == null ? true : v
+  return readSettings(useSettings().settings).showOneRm
 }
 
 /** Whether to render per-set-position PR badges. Defaults to true. */
 export function useShowPositionPrs(): boolean {
-  const v = useSettings().settings.show_position_prs
-  return v == null ? true : v
+  return readSettings(useSettings().settings).showPositionPrs
 }
 
 /** Whether to render time-between-sets next to each set number on the
  *  log-set page. Defaults to true. */
 export function useShowRestTime(): boolean {
-  const v = useSettings().settings.show_rest_time
-  return v == null ? true : v
+  return readSettings(useSettings().settings).showRestTime
 }
 
 /** Whether to show a live ticking time-since-last-set timer on the
  *  log-set page. Defaults to true. */
 export function useShowTimeSinceLastSet(): boolean {
-  const v = useSettings().settings.show_time_since_last_set
-  return v == null ? true : v
+  return readSettings(useSettings().settings).showTimeSinceLastSet
 }
 
 /** Whether to show the Last time / set position records card under
  *  the set list. Defaults to true. */
 export function useShowLastTime(): boolean {
-  const v = useSettings().settings.show_last_time
-  return v == null ? true : v
+  return readSettings(useSettings().settings).showLastTime
 }

@@ -35,7 +35,7 @@ export default function LoginPage() {
   async function onSubmit(data: FormValues) {
     setServerError(null)
     try {
-      await login(data)
+      await login({ username: data.username.trim(), password: data.password })
       router.push("/workouts")
     } catch (err) {
       setServerError(

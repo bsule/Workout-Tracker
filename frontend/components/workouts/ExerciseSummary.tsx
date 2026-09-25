@@ -1,14 +1,34 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import { ChevronDown, ScrollText, X } from "lucide-react"
-import type { ExerciseHistoryDay, HistorySet } from "@/types"
-import { cn, parseLocalDate } from "@/lib/utils"
-import { formatWeight, weightKey } from "@/lib/units"
-import { estimateOneRm, getDayNoteQ, getWorkoutByDateQ } from "@/lib/store"
+import { useEffect, useMemo, useRef, useState } from "react"
+import {
+  ArrowUpDown,
+  Check,
+  ChevronDown,
+  Layers,
+  type LucideIcon,
+} from "lucide-react"
+import type { ExerciseHistoryDay } from "@/types"
+import { cn } from "@/lib/utils"
+import { formatWeight } from "@/lib/units"
+import { getDayNoteQ, getWorkoutByDateQ } from "@/lib/store"
 import { useWeightUnit } from "@/components/settings/SettingsProvider"
-import { Dropdown } from "@/components/ui/Dropdown"
-import { DayBlock } from "@/components/workouts/ExerciseHistory"
+import {
+  DayBlock,
+  SectionTitle,
+  calendarHref,
+} from "@/components/workouts/ExerciseHistory"
+import { agoLabel, recordDate } from "@lift/core/format"
+import {
+  REP_ROWS_COLLAPSED,
+  REP_SORTS,
+  pickLastSession,
+  repRecordRows,
+  setNumbersOf,
+  weightRepSets,
+  type RepRecordRow,
+  type RepSort,
+} from "@lift/core/exerciseStats"
 
 interface Props {
   history: ExerciseHistoryDay[]
@@ -19,38 +39,23 @@ interface Props {
   excludeDate?: string
 }
 
-// Records only apply to weight×reps sets — cardio rows have null weight/reps.
-type WrSet = HistorySet & { weight: number; reps: number }
-type Dated = { set: WrSet; date: string }
-
-// "all" = every set position pooled; otherwise the 1-based set number as string.
-type Scope = "all" | string
-
-// How the rep-record rows are ordered, and what the bar in each row measures.
-// The bar always tracks the active sort, so the list reads as one shape.
-type RepSort = "weight" | "oneRm" | "reps" | "recent"
-const REP_SORTS: { key: RepSort; label: string; hint: string }[] = [
-  { key: "weight", label: "Heaviest", hint: "Top weight first" },
-  { key: "oneRm", label: "Best 1RM", hint: "Strongest set first" },
-  { key: "reps", label: "Most reps", hint: "Highest rep count first" },
-  { key: "recent", label: "Recent", hint: "Newest record first" },
-]
-
-// Rows shown before the "Show all" toggle is clicked.
-const REP_ROWS_COLLAPSED = 3
-
+/**
+ * The Summary tab: what you did last time for this exercise, the notes
+ * attached to that day, and your best set at every rep count you have
+ * performed. Mirrors mobile's SummaryPanel.
+ */
 export function ExerciseSummary({ history, excludeDate }: Props) {
   const unit = useWeightUnit()
 
-  // getExerciseHistoryQ returns days newest-first, but this component takes
-  // whatever the page hands it — sort defensively before picking the last one.
+  // pickLastSession expects newest first. getExerciseHistoryQ returns that
+  // order, but this takes whatever the page hands it, so sort defensively.
   const ordered = useMemo(
     () => [...history].sort((a, b) => (a.date < b.date ? 1 : -1)),
     [history]
   )
 
   const lastDay = useMemo(
-    () => ordered.find((d) => !excludeDate || d.date < excludeDate) ?? null,
+    () => pickLastSession(ordered, excludeDate),
     [ordered, excludeDate]
   )
 
@@ -68,148 +73,112 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
     return out
   }, [lastDay])
 
-  const all: Dated[] = useMemo(() => {
-    const out: Dated[] = []
-    for (const day of history) {
-      for (const s of day.sets) {
-        if (s.weight != null && s.reps != null) {
-          out.push({ set: s as WrSet, date: day.date })
-        }
-      }
-    }
-    return out
-  }, [history])
+  const wrSets = useMemo(() => weightRepSets(history), [history])
+  const setNumbers = useMemo(() => setNumbersOf(wrSets), [wrSets])
 
-  // Set numbers actually performed (order is 0-based → set number is order+1),
-  // sorted ascending. Drives the dropdown; never padded to a fixed range.
-  const setNumbers = useMemo(() => {
-    const nums = new Set<number>()
-    for (const a of all) nums.add(a.set.order + 1)
-    return [...nums].sort((x, y) => x - y)
-  }, [all])
-
-  const [scope, setScope] = useState<Scope>("all")
+  // "all" pools every position; otherwise restrict to one set number.
+  const [scope, setScope] = useState<"all" | number>("all")
   const [sort, setSort] = useState<RepSort>("weight")
   const [showAllRows, setShowAllRows] = useState(false)
   // The date whose sets the record popup is showing, or null when closed.
-  const [recordDate, setRecordDate] = useState<string | null>(null)
+  const [recordDay, setRecordDay] = useState<string | null>(null)
 
-  // Sets in the selected scope ("all", or a single set position).
   const scoped = useMemo(
-    () =>
-      scope === "all"
-        ? all
-        : all.filter((a) => a.set.order + 1 === Number(scope)),
-    [all, scope]
+    () => (scope === "all" ? wrSets : wrSets.filter((s) => s.setNum === scope)),
+    [wrSets, scope]
   )
 
-  const repRows = useMemo(() => rowsPerRep(scoped, sort), [scoped, sort])
+  const repRows = useMemo(() => repRecordRows(scoped, sort), [scoped, sort])
 
-  const recordDay = useMemo(
-    () => ordered.find((d) => d.date === recordDate) ?? null,
-    [ordered, recordDate]
+  const shownRecordDay = useMemo(
+    () => ordered.find((d) => d.date === recordDay) ?? null,
+    [ordered, recordDay]
   )
 
   if (history.length === 0) {
     return (
-      <div className="rounded-2xl border border-white/10 bg-card/40 p-6 text-center">
-        <ScrollText className="mx-auto size-5 text-muted-foreground" />
-        <p className="mt-2 text-sm text-muted-foreground">
-          Nothing logged for this exercise yet. Log a few sets to see your last
-          session and your records here.
-        </p>
+      <div className="rounded-2xl border border-dashed border-white/10 bg-white/[.01] p-6 text-center text-sm text-muted-foreground">
+        Nothing logged for this exercise yet. Log a few sets to see your last
+        session and your records here.
       </div>
     )
   }
 
-  const scopeOptions = [
-    { value: "all", label: "All sets", description: `${all.length} sets` },
-    ...setNumbers.map((n) => {
-      const count = all.filter((a) => a.set.order + 1 === n).length
-      return {
-        value: String(n),
-        label: `Set ${n}`,
-        description: count === 1 ? "1 time" : `${count} times`,
-      }
-    }),
-  ]
-
-  const sortOptions = REP_SORTS.map((s) => ({
-    value: s.key,
-    label: s.label,
-    description: s.hint,
-  }))
+  const sortLabel =
+    REP_SORTS.find((s) => s.key === sort)?.label ?? REP_SORTS[0].label
 
   return (
-    <div className="space-y-6">
-      {/* Last session */}
-      <section className="space-y-3">
-        <div className="flex items-baseline justify-between gap-2">
-          <h2 className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Last session
-          </h2>
-          {lastDay && (
-            <span className="text-[11px] text-muted-foreground">
-              {agoLabel(lastDay.date)}
-            </span>
-          )}
+    <div className="space-y-3">
+      <SectionTitle>Last session</SectionTitle>
+      {lastDay ? (
+        <DayBlock
+          day={lastDay}
+          subtitle={agoLabel(lastDay.date)}
+          notes={lastNotes}
+          calendarHref={calendarHref(lastDay.date)}
+        />
+      ) : (
+        <div className="rounded-2xl border border-dashed border-white/10 bg-white/[.01] p-6 text-center text-sm text-muted-foreground">
+          No earlier session for this exercise.
         </div>
-        {lastDay ? (
-          <DayBlock
-            day={lastDay}
-            notes={lastNotes}
-            dateHref={`/workouts/date/${lastDay.date}`}
-          />
-        ) : (
-          <div className="rounded-2xl border border-dashed border-white/10 bg-white/[.01] p-6 text-center text-sm text-muted-foreground">
-            No earlier session for this exercise.
-          </div>
-        )}
-      </section>
+      )}
 
-      {/* Rep records */}
       {repRows.length > 0 && (
-        <section className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              Rep records
-            </h2>
-            <div className="flex items-center gap-2">
-              <Dropdown
-                value={scope}
-                onChange={(v) => {
-                  setScope(v)
-                  setShowAllRows(false)
-                }}
-                options={scopeOptions}
-                size="sm"
-                align="end"
-                className="w-32"
-                ariaLabel="Select set number"
-              />
-              <Dropdown
-                value={sort}
-                onChange={(v) => {
-                  setSort(v as RepSort)
-                  setShowAllRows(false)
-                }}
-                options={sortOptions}
-                size="sm"
-                align="end"
-                className="w-32"
-                ariaLabel="Sort rep records"
-              />
-            </div>
+        <>
+          <SectionTitle className="pt-2">Rep records</SectionTitle>
+
+          <div className="flex gap-2">
+            <PickerChip
+              icon={Layers}
+              label={scope === "all" ? "All sets" : `Set ${scope}`}
+              title="Show set"
+              options={[
+                {
+                  id: "all",
+                  title: "All sets",
+                  subtitle: `${wrSets.length} ${wrSets.length === 1 ? "set" : "sets"}`,
+                  selected: scope === "all",
+                },
+                ...setNumbers.map((n) => {
+                  const count = wrSets.filter((s) => s.setNum === n).length
+                  return {
+                    id: String(n),
+                    title: `Set ${n}`,
+                    subtitle: `${count} ${count === 1 ? "time" : "times"}`,
+                    selected: scope === n,
+                  }
+                }),
+              ]}
+              onSelect={(id) => {
+                setScope(id === "all" ? "all" : Number(id))
+                setShowAllRows(false)
+              }}
+            />
+            <PickerChip
+              icon={ArrowUpDown}
+              label={sortLabel}
+              title="Sort by"
+              options={REP_SORTS.map((o) => ({
+                id: o.key,
+                title: o.label,
+                subtitle: o.hint,
+                selected: sort === o.key,
+              }))}
+              onSelect={(id) => {
+                setSort(id as RepSort)
+                setShowAllRows(false)
+              }}
+            />
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-white/5 bg-card/40">
+          <div className="overflow-hidden rounded-2xl border border-white/5 bg-card">
             {repRows.slice(0, REP_ROWS_COLLAPSED).map((row, i) => (
               <RepRow
                 key={row.reps}
                 row={row}
                 unit={unit}
                 first={i === 0}
-                onOpen={() => setRecordDate(row.date)}
+                onOpen={() => setRecordDay(row.date)}
               />
             ))}
 
@@ -229,7 +198,7 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
                     row={row}
                     unit={unit}
                     first={false}
-                    onOpen={() => setRecordDate(row.date)}
+                    onOpen={() => setRecordDay(row.date)}
                   />
                 ))}
               </div>
@@ -245,23 +214,24 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
                   ? `Show top ${REP_ROWS_COLLAPSED}`
                   : `Show all ${repRows.length} rep counts`}
                 <ChevronDown
-                  className={
-                    "size-3.5 transition-transform " +
-                    (showAllRows ? "rotate-180" : "")
-                  }
+                  className={cn(
+                    "size-3.5 transition-transform",
+                    showAllRows && "rotate-180"
+                  )}
                 />
               </button>
             )}
           </div>
-        </section>
-      )}
 
-      <RecordDayDialog day={recordDay} onClose={() => setRecordDate(null)} />
+          <RecordDayDialog
+            day={shownRecordDay}
+            onClose={() => setRecordDay(null)}
+          />
+        </>
+      )}
     </div>
   )
 }
-
-type RepRowData = ReturnType<typeof rowsPerRep>[number]
 
 function RepRow({
   row,
@@ -269,7 +239,7 @@ function RepRow({
   first,
   onOpen,
 }: {
-  row: RepRowData
+  row: RepRecordRow
   unit: "kg" | "lb"
   first: boolean
   onOpen: () => void
@@ -301,7 +271,7 @@ function RepRow({
           </span>
         )}
         <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-          {formatShort(row.date)}
+          {recordDate(row.date)}
         </span>
       </div>
       <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
@@ -322,9 +292,106 @@ function RepRow({
   )
 }
 
+type PickerOption = {
+  id: string
+  title: string
+  subtitle?: string
+  selected: boolean
+}
+
+/**
+ * A chip that opens a menu of choices, like mobile's PickerTrigger. The chip
+ * shows the current one, and the menu marks it with a checkmark.
+ */
+function PickerChip({
+  icon: Icon,
+  label,
+  title,
+  options,
+  onSelect,
+}: {
+  icon: LucideIcon
+  label: string
+  title: string
+  options: PickerOption[]
+  onSelect: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDown(e: MouseEvent) {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false)
+    }
+    document.addEventListener("mousedown", onDown)
+    window.addEventListener("keydown", onKey)
+    return () => {
+      document.removeEventListener("mousedown", onDown)
+      window.removeEventListener("keydown", onKey)
+    }
+  }, [open])
+
+  return (
+    <div ref={rootRef} className="relative min-w-0 flex-1">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={title}
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-1.5 rounded-lg border border-white/10 bg-card px-3 py-2 text-left transition-colors hover:bg-white/[.04]"
+      >
+        <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-sm font-bold">{label}</span>
+        <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute left-0 right-0 top-full z-50 mt-1 min-w-48 overflow-hidden rounded-xl border border-white/10 bg-popover py-1 text-popover-foreground shadow-xl"
+        >
+          <div className="px-3 pb-1 pt-1.5 text-xs font-medium text-muted-foreground">
+            {title}
+          </div>
+          <div className="max-h-72 overflow-y-auto">
+            {options.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={o.selected}
+                onClick={() => {
+                  setOpen(false)
+                  onSelect(o.id)
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-white/5"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block">{o.title}</span>
+                  {o.subtitle && (
+                    <span className="block text-xs text-muted-foreground">
+                      {o.subtitle}
+                    </span>
+                  )}
+                </span>
+                {o.selected && <Check className="size-4 shrink-0 text-primary" />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /**
  * What a record row opens: the date it was set, and every set logged for this
- * exercise that day. Read-only — click the backdrop or press Escape to close.
+ * exercise that day. Read-only. Click the backdrop or press Escape to close,
+ * or the calendar icon to open that day, same as the last-session card.
  */
 function RecordDayDialog({
   day,
@@ -346,7 +413,7 @@ function RecordDayDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 pt-16"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
       role="dialog"
       aria-modal="true"
       onClick={onClose}
@@ -356,137 +423,15 @@ function RecordDayDialog({
         // Clicks inside the card must not reach the backdrop's close handler.
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-2 flex justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded-lg border border-white/10 bg-card/80 p-1.5 text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-        {/* dateHref turns the card's date into a link to that day — the same
-            affordance the last-session card has. */}
         <DayBlock
           day={day}
-          notes={[]}
-          dateHref={`/workouts/date/${day.date}`}
+          scrollSets
+          calendarHref={calendarHref(day.date)}
+          // Close as the link navigates: the popup must not sit over the
+          // calendar while it loads.
+          onCalendarClick={onClose}
         />
       </div>
     </div>
   )
-}
-
-/**
- * Reduce a list of sets to one row per rep count: the heaviest entry at that
- * rep count, how many sets used it, and its estimated 1RM. Only rep counts
- * present appear.
- *
- * `share` drives the bar width and always measures whatever `sort` orders by,
- * so the bar lengths and the row order tell the same story. "Recent" has no
- * useful magnitude, so it falls back to weight.
- */
-function rowsPerRep(sets: Dated[], sort: RepSort) {
-  const best = new Map<
-    number,
-    { weightKg: number; date: string; count: number }
-  >()
-  for (const a of sets) {
-    const cur = best.get(a.set.reps)
-    if (!cur) {
-      best.set(a.set.reps, { weightKg: a.set.weight, date: a.date, count: 1 })
-      continue
-    }
-    cur.count += 1
-    // weightKey, not the raw kg: an imported set and a typed one can hold kg
-    // floats that differ in the third decimal while displaying the same
-    // number, and the raw compare let that noise pick the winner.
-    if (weightKey(a.set.weight) > weightKey(cur.weightKg)) {
-      cur.weightKg = a.set.weight
-      cur.date = a.date
-    }
-  }
-  const rows = [...best.entries()].map(([reps, v]) => ({
-    reps,
-    weightKg: v.weightKg,
-    date: v.date,
-    count: v.count,
-    oneRmKg: estimateOneRm(v.weightKg, reps),
-  }))
-
-  // Weight is measured as weightKey so equal-looking weights really tie and the
-  // reps tiebreak below gets to decide. `share` is a ratio against maxMetric,
-  // so the x100 scale cancels out and the bars are unaffected.
-  const metric = (r: (typeof rows)[number]) =>
-    sort === "reps"
-      ? r.reps
-      : sort === "oneRm"
-        ? r.oneRmKg
-        : weightKey(r.weightKg)
-
-  rows.sort((a, b) => {
-    if (sort === "recent") {
-      if (a.date !== b.date) return a.date < b.date ? 1 : -1
-      return weightKey(b.weightKg) - weightKey(a.weightKg)
-    }
-    const diff = metric(b) - metric(a)
-    // Ties break on the harder set: more reps at the same weight.
-    return diff !== 0 ? diff : b.reps - a.reps
-  })
-
-  const maxMetric = rows.reduce((m, r) => (metric(r) > m ? metric(r) : m), 0)
-
-  // The single strongest row, by index rather than by value: several rep counts
-  // can estimate to the same 1RM, and marking every tie made the whole table
-  // gold. Ties go to the row that did more reps for it.
-  let topIdx = -1
-  for (let i = 0; i < rows.length; i++) {
-    if (topIdx < 0) {
-      topIdx = i
-      continue
-    }
-    const best = rows[topIdx]
-    if (rows[i].oneRmKg > best.oneRmKg) topIdx = i
-    else if (rows[i].oneRmKg === best.oneRmKg && rows[i].reps > best.reps) {
-      topIdx = i
-    }
-  }
-
-  return rows.map((r, i) => ({
-    ...r,
-    share: maxMetric > 0 ? metric(r) / maxMetric : 0,
-    isTopOneRm: i === topIdx,
-  }))
-}
-
-function formatShort(iso: string): string {
-  return parseLocalDate(iso).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "2-digit",
-  })
-}
-
-// "Yesterday" / "6 days ago" / "3 weeks ago". Both sides are floored to local
-// midnight so the answer follows calendar days, not elapsed hours — a session
-// 20 hours ago still reads "Yesterday".
-function agoLabel(iso: string): string {
-  const then = parseLocalDate(iso)
-  const now = new Date()
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const days = Math.round((today.getTime() - then.getTime()) / 86400000)
-  if (days <= 0) return "Today"
-  if (days === 1) return "Yesterday"
-  if (days < 7) return `${days} days ago`
-  if (days < 30) {
-    const w = Math.floor(days / 7)
-    return w === 1 ? "1 week ago" : `${w} weeks ago`
-  }
-  if (days < 365) {
-    const m = Math.floor(days / 30)
-    return m === 1 ? "1 month ago" : `${m} months ago`
-  }
-  const y = Math.floor(days / 365)
-  return y === 1 ? "1 year ago" : `${y} years ago`
 }

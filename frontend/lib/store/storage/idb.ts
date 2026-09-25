@@ -110,3 +110,46 @@ export class IdbStorage implements BlobStorage {
     )
   }
 }
+
+/**
+ * Moves an IndexedDB store from `fromSubPath` to `toSubPath` (see
+ * adoptLegacyWebStore): both keys in one transaction, so it either happens
+ * whole or not at all. Only when the new store has nothing yet.
+ */
+export async function adoptLegacyIdbStore(
+  fromSubPath: string,
+  toSubPath: string
+): Promise<boolean> {
+  const db = await open()
+  return new Promise<boolean>((resolve, reject) => {
+    const t = db.transaction(STORE, "readwrite")
+    const store = t.objectStore(STORE)
+    const keys = {
+      fromSnap: SNAPSHOT_KEY_PREFIX + fromSubPath,
+      fromPending: PENDING_KEY_PREFIX + fromSubPath,
+      toSnap: SNAPSHOT_KEY_PREFIX + toSubPath,
+      toPending: PENDING_KEY_PREFIX + toSubPath,
+    }
+    const values: Record<string, unknown> = {}
+    let moved = false
+    const names = Object.keys(keys) as (keyof typeof keys)[]
+    let left = names.length
+    for (const name of names) {
+      const req = store.get(keys[name])
+      req.onsuccess = () => {
+        values[name] = req.result
+        if (--left > 0) return
+        if (values.toSnap != null || values.toPending != null) return
+        if (values.fromSnap == null && values.fromPending == null) return
+        if (values.fromSnap != null) store.put(values.fromSnap, keys.toSnap)
+        if (values.fromPending != null) store.put(values.fromPending, keys.toPending)
+        store.delete(keys.fromSnap)
+        store.delete(keys.fromPending)
+        moved = true
+      }
+    }
+    t.oncomplete = () => resolve(moved)
+    t.onerror = () => reject(t.error)
+    t.onabort = () => reject(t.error)
+  })
+}

@@ -2,137 +2,123 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { Check, Pencil, Plus, Search, Trash2, X } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { fuzzyMatch, localApi as api } from "@/lib/store"
-import { type Category, type Exercise } from "@/types"
-import { categoryVar, cn } from "@/lib/utils"
-import { CategoryDot } from "./CategoryBadge"
-import { useCategoryStyles } from "@/components/categories/CategoryStylesProvider"
+import { ChevronLeft, ChevronRight, Plus, Search } from "lucide-react"
+import { useMemo, useState } from "react"
+import { formatExerciseSubtitle } from "@lift/core/format"
+import { listExercisesQ, localApi as api, useStore } from "@/lib/store"
+import type { Exercise } from "@/types"
+import { ActionMenu } from "@/components/ui/ActionMenu"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
-import { LoadingBlock } from "@/components/ui/Spinner"
+import { CategoryDot } from "./CategoryBadge"
+import { CategoryChips } from "./CategoryChips"
+import { EditExerciseModal } from "./EditExerciseModal"
+import { NewExerciseForm } from "./NewExerciseForm"
 
 interface Props {
   mode?: "browse" | "pick"
   onPick?: (exercise: Exercise) => void
+  /** Pick mode: what to do with an exercise made from the "New" form.
+   *  Defaults to `onPick`, since mobile sends a new exercise to the set
+   *  logger the same way as a picked one. */
+  onCreated?: (exercise: Exercise) => void
+  /** Pick mode: told when the in-place "New Exercise" form opens or closes,
+   *  so the page can drop its own "Choose Exercise" heading meanwhile. */
+  onViewChange?: (view: "list" | "new") => void
 }
 
-export function ExercisePicker({ mode = "browse", onPick }: Props) {
+/**
+ * The exercise list (browse) and the exercise picker (pick), the web copy of
+ * mobile's ExercisesScreen and ExercisePickerScreen. Reads the store live, so
+ * a sync, import, or edit elsewhere shows up without a reload.
+ */
+export function ExercisePicker({ mode = "browse", onPick, onCreated, onViewChange }: Props) {
+  const [view, setViewState] = useState<"list" | "new">("list")
+  function setView(next: "list" | "new") {
+    setViewState(next)
+    onViewChange?.(next)
+  }
+
+  if (mode === "pick" && view === "new") {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setView("list")}
+            className="flex size-8 items-center justify-center rounded-md hover:bg-foreground/[.06]"
+            aria-label="Back to exercises"
+          >
+            <ChevronLeft className="size-5" />
+          </button>
+          <h2 className="text-base font-bold">New Exercise</h2>
+        </div>
+        <NewExerciseForm
+          submitLabel="Create exercise"
+          placeholder="e.g. Bench Press"
+          onCreated={(ex) => (onCreated ?? onPick)?.(ex)}
+        />
+      </div>
+    )
+  }
+
+  return <ExerciseList mode={mode} onPick={onPick} onCreateNew={() => setView("new")} />
+}
+
+function ExerciseList({
+  mode,
+  onPick,
+  onCreateNew,
+}: {
+  mode: "browse" | "pick"
+  onPick?: (exercise: Exercise) => void
+  onCreateNew: () => void
+}) {
   const router = useRouter()
-  const { labels, categories } = useCategoryStyles()
   const confirm = useConfirm()
-  const [exercises, setExercises] = useState<Exercise[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
-  const [activeCats, setActiveCats] = useState<Set<Category>>(new Set())
-  const [editingId, setEditingId] = useState<number | null>(null)
-  const [draftName, setDraftName] = useState("")
-  const [draftCategory, setDraftCategory] = useState<Category>("chest")
-  const [savingId, setSavingId] = useState<number | null>(null)
+  const [category, setCategory] = useState<string | null>(null)
+  const [editing, setEditing] = useState<Exercise | null>(null)
+  const snapshot = useStore((s) => s.snapshot)
 
-  const load = useCallback(async () => {
-    try {
-      const data = await api.listExercises({ sort: "last_performed" })
-      setExercises(data)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load")
-    }
-  }, [])
+  const exercises = useMemo(
+    () =>
+      listExercisesQ({
+        q: search.trim() || undefined,
+        category: category ?? undefined,
+        sort: "last_performed",
+      }),
+    // The query reads the store directly; the snapshot is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [snapshot, search, category]
+  )
 
-  useEffect(() => {
-    queueMicrotask(() => {
-      void load()
-    })
-  }, [load])
-
-  function startEdit(ex: Exercise) {
-    setEditingId(ex.id)
-    setDraftName(ex.name)
-    setDraftCategory(ex.category)
-    setError(null)
-  }
-
-  function cancelEdit() {
-    setEditingId(null)
-    setDraftName("")
-  }
-
-  async function saveEdit(ex: Exercise) {
-    const name = draftName.trim()
-    if (!name) {
-      setError("Exercise name is required.")
-      return
-    }
-    if (name === ex.name && draftCategory === ex.category) {
-      cancelEdit()
-      return
-    }
-    setSavingId(ex.id)
-    setError(null)
-    try {
-      await api.patchExercise(ex.id, { name, category: draftCategory })
-      cancelEdit()
-      await load()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to update exercise")
-    } finally {
-      setSavingId(null)
-    }
-  }
-
-  async function handleDelete(ex: Exercise) {
-    const used = (ex.workouts_count ?? 0) > 0
+  async function deleteExercise(ex: Exercise) {
     const ok = await confirm({
-      title: "Delete this exercise?",
-      message: used
-        ? `"${ex.name}" will be removed from the exercises list. Past workouts that used it will keep their history.`
-        : `"${ex.name}" will be removed from your exercises list.`,
+      title: "Delete exercise?",
+      message: `${ex.name} will be removed. Past sets stay in history.`,
       destructive: true,
       confirmLabel: "Delete",
     })
-    if (!ok) return
-    setSavingId(ex.id)
-    try {
-      await api.deleteExercise(ex.id)
-      if (editingId === ex.id) cancelEdit()
-      setError(null)
-      await load()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to delete exercise")
-    } finally {
-      setSavingId(null)
-    }
+    if (ok) void api.deleteExercise(ex.id)
   }
 
-  const filtered = useMemo(() => {
-    if (!exercises) return []
-    const q = search.trim()
-    return exercises.filter((e) => {
-      if (activeCats.size > 0 && !activeCats.has(e.category)) return false
-      if (q && !fuzzyMatch(e.name, q)) return false
-      return true
-    })
-  }, [exercises, search, activeCats])
-
-  function toggleCat(c: Category) {
-    setActiveCats((prev) => {
-      const next = new Set(prev)
-      if (next.has(c)) next.delete(c)
-      else next.add(c)
-      return next
-    })
-  }
+  const newClass =
+    "inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-sm font-semibold text-primary hover:bg-primary/20"
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-end">
-        <Link
-          href="/exercises/new"
-          className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-sm font-semibold text-primary hover:bg-primary/20"
-        >
-          <Plus className="size-4" />
-          New
-        </Link>
+        {mode === "pick" ? (
+          <button type="button" onClick={onCreateNew} className={newClass}>
+            <Plus className="size-4" />
+            New
+          </button>
+        ) : (
+          <Link href="/exercises/new" className={newClass}>
+            <Plus className="size-4" />
+            New
+          </Link>
+        )}
       </div>
 
       <div className="relative">
@@ -142,218 +128,74 @@ export function ExercisePicker({ mode = "browse", onPick }: Props) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Exercise Name"
-          className="w-full rounded-md border border-white/10 bg-white/[.02] py-2 pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+          autoCorrect="off"
+          autoCapitalize="none"
+          className="w-full rounded-md border border-border bg-foreground/[.02] py-2 pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {categories.map((c) => {
-          const active = activeCats.has(c)
-          return (
-            <button
-              key={c}
-              onClick={() => toggleCat(c)}
-              className={cn(
-                "inline-flex items-center justify-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                active
-                  ? "border-white/40 bg-white/15 text-foreground"
-                  : "border-white/10 bg-white/[.02] text-foreground/80 hover:bg-white/5"
-              )}
-            >
-              <span
-                className="inline-block size-2 rounded-full"
-                style={{ backgroundColor: categoryVar(c) }}
-              />
-              {labels[c]}
-            </button>
-          )
-        })}
-      </div>
+      {/* One category at a time; clicking the chosen one again clears it. */}
+      <CategoryChips
+        selected={category}
+        onSelect={(c) => setCategory(category === c ? null : c)}
+      />
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      {exercises === null && <LoadingBlock />}
-
-      {exercises && (
-        <ul className="divide-y divide-white/5 rounded-md border border-white/10 bg-card">
-          {filtered.length === 0 && (
-            <li className="px-4 py-6 text-center text-sm text-muted-foreground">
-              No exercises match.
-            </li>
-          )}
-          {filtered.map((e) => (
-            <li key={e.id}>
-              {mode === "pick" ? (
+      <ul className="divide-y divide-border rounded-md border border-border bg-card">
+        {exercises.length === 0 && (
+          <li className="px-4 py-6 text-center text-sm text-muted-foreground">
+            No exercises match.
+          </li>
+        )}
+        {exercises.map((e) => (
+          <li key={e.id}>
+            {mode === "pick" ? (
+              <button
+                type="button"
+                onClick={() => onPick?.(e)}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-foreground/[.03]"
+              >
+                <ExerciseRowContent ex={e} />
+              </button>
+            ) : (
+              <div className="flex items-center gap-1 pr-2">
                 <button
-                  onClick={() => onPick?.(e)}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-white/[.02]"
+                  type="button"
+                  onClick={() => router.push(`/exercises/${e.id}`)}
+                  className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left hover:bg-foreground/[.03]"
                 >
                   <ExerciseRowContent ex={e} />
+                  <ChevronRight className="size-[18px] shrink-0 text-muted-foreground" />
                 </button>
-              ) : (
-                <div className="flex items-center gap-3 px-4 py-3">
-                  {editingId === e.id ? (
-                    <ExerciseRowEditor
-                      ex={e}
-                      value={draftName}
-                      category={draftCategory}
-                      categories={categories}
-                      labels={labels}
-                      busy={savingId === e.id}
-                      onChange={setDraftName}
-                      onCategoryChange={setDraftCategory}
-                      onSave={() => saveEdit(e)}
-                      onCancel={cancelEdit}
-                    />
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => router.push(`/exercises/${e.id}`)}
-                        className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                      >
-                        <ExerciseRowContent ex={e} />
-                      </button>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => startEdit(e)}
-                          className="rounded p-1.5 text-muted-foreground hover:bg-white/5 hover:text-foreground"
-                          aria-label={`Edit ${e.name}`}
-                          title="Edit exercise"
-                        >
-                          <Pencil className="size-4" />
-                        </button>
-                        <button
-                          type="button"
-                          disabled={savingId === e.id}
-                          onClick={() => handleDelete(e)}
-                          className="rounded p-1.5 text-muted-foreground hover:bg-destructive/15 hover:text-destructive disabled:opacity-50"
-                          aria-label={`Delete ${e.name}`}
-                          title="Delete exercise"
-                        >
-                          <Trash2 className="size-4" />
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+                <ActionMenu
+                  ariaLabel={`Actions for ${e.name}`}
+                  items={[
+                    { label: "Edit", onSelect: () => setEditing(e) },
+                    {
+                      label: "Delete",
+                      destructive: true,
+                      onSelect: () => void deleteExercise(e),
+                    },
+                  ]}
+                />
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      <EditExerciseModal exercise={editing} onClose={() => setEditing(null)} />
     </div>
   )
 }
 
-function ExerciseRowEditor({
-  ex,
-  value,
-  category,
-  categories,
-  labels,
-  busy,
-  onChange,
-  onCategoryChange,
-  onSave,
-  onCancel,
-}: {
-  ex: Exercise
-  value: string
-  category: Category
-  categories: Category[]
-  labels: Record<Category, string>
-  busy: boolean
-  onChange: (value: string) => void
-  onCategoryChange: (c: Category) => void
-  onSave: () => void
-  onCancel: () => void
-}) {
-  return (
-    <>
-      <select
-        value={category}
-        disabled={busy}
-        onChange={(event) => onCategoryChange(event.target.value as Category)}
-        className="rounded-md border border-white/10 bg-white/[.04] px-2 py-1.5 text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
-      >
-        {categories.map((c) => (
-          <option key={c} value={c} className="bg-neutral-900 text-foreground">
-            {labels[c] ?? c}
-          </option>
-        ))}
-      </select>
-      <input
-        type="text"
-        value={value}
-        disabled={busy}
-        onChange={(event) => onChange(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault()
-            onSave()
-          }
-          if (event.key === "Escape") onCancel()
-        }}
-        className="min-w-0 flex-1 rounded-md border border-white/10 bg-white/[.02] px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60"
-        aria-label={`Name for ${ex.name}`}
-        autoFocus
-      />
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onSave}
-          className="rounded p-1.5 text-muted-foreground hover:bg-primary/15 hover:text-primary disabled:opacity-50"
-          aria-label={`Save ${ex.name}`}
-          title="Save"
-        >
-          <Check className="size-4" />
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onCancel}
-          className="rounded p-1.5 text-muted-foreground hover:bg-white/5 hover:text-foreground disabled:opacity-50"
-          aria-label={`Cancel editing ${ex.name}`}
-          title="Cancel"
-        >
-          <X className="size-4" />
-        </button>
-      </div>
-    </>
-  )
-}
-
 function ExerciseRowContent({ ex }: { ex: Exercise }) {
-  const meta = formatLastPerformed(ex)
   return (
     <>
-      <CategoryDot category={ex.category} />
+      <CategoryDot category={ex.category} className="size-3 shrink-0" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-base font-semibold">{ex.name}</div>
-        <div className="text-xs text-muted-foreground">{meta}</div>
+        <div className="text-sm text-muted-foreground">{formatExerciseSubtitle(ex)}</div>
       </div>
-      {ex.is_custom && (
-        <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-          custom
-        </span>
-      )}
     </>
   )
-}
-
-function formatLastPerformed(ex: Exercise): string {
-  const count = ex.workouts_count ?? 0
-  if (count === 0) return "0 workouts"
-  const days = ex.last_performed_days_ago
-  let when = ""
-  if (days == null) when = ""
-  else if (days <= 0) when = "today"
-  else if (days === 1) when = "yesterday"
-  else if (days < 30) when = `${days} days ago`
-  else if (days < 365) when = `${Math.floor(days / 30)} months ago`
-  else when = "last year"
-  const label = count === 1 ? "1 workout" : `${count} workouts`
-  return when ? `${label} (${when})` : label
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useSyncExternalStore } from "react"
 
 type Theme = "dark" | "light"
 
@@ -20,25 +20,49 @@ function applyClass(theme: Theme) {
   html.classList.toggle("light", theme === "light")
 }
 
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("dark")
+// The stored theme as an external store: read straight from localStorage, so
+// there is no copy in state to sync after mount. The server (and hydration)
+// render dark, the default; themeBootstrapScript already set the page class.
+const THEME_EVENT = "lift:theme"
 
+function readTheme(): Theme {
+  try {
+    return window.localStorage.getItem(STORAGE_KEY) === "light" ? "light" : "dark"
+  } catch {
+    return "dark"
+  }
+}
+
+function subscribeTheme(cb: () => void): () => void {
+  window.addEventListener(THEME_EVENT, cb)
+  window.addEventListener("storage", cb)
+  return () => {
+    window.removeEventListener(THEME_EVENT, cb)
+    window.removeEventListener("storage", cb)
+  }
+}
+
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const theme = useSyncExternalStore<Theme>(subscribeTheme, readTheme, () => "dark")
+
+  // Keep the page class in step, including a change made in another tab.
   useEffect(() => {
-    const stored = window.localStorage.getItem(STORAGE_KEY) as Theme | null
-    const initial: Theme = stored === "light" ? "light" : "dark"
-    setThemeState(initial)
-    applyClass(initial)
-  }, [])
+    applyClass(theme)
+  }, [theme])
 
   const setTheme = useCallback((t: Theme) => {
-    setThemeState(t)
-    window.localStorage.setItem(STORAGE_KEY, t)
+    try {
+      window.localStorage.setItem(STORAGE_KEY, t)
+    } catch {
+      // Private mode: the class still changes for this page.
+    }
     applyClass(t)
+    window.dispatchEvent(new Event(THEME_EVENT))
   }, [])
 
   const toggle = useCallback(() => {
-    setTheme(theme === "dark" ? "light" : "dark")
-  }, [theme, setTheme])
+    setTheme(readTheme() === "dark" ? "light" : "dark")
+  }, [setTheme])
 
   return (
     <ThemeContext value={{ theme, setTheme, toggle }}>{children}</ThemeContext>

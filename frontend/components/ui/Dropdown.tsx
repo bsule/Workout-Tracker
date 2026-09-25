@@ -89,12 +89,14 @@ export function Dropdown<T extends string = string>({
     node?.scrollIntoView({ block: "nearest" })
   }, [open, activeIdx])
 
-  // Reset active highlight to the selected item each time we open.
-  useEffect(() => {
-    if (!open) return
-    const i = options.findIndex((o) => o.value === value)
-    if (i >= 0) setActiveIdx(i)
-  }, [open, options, value])
+  // Each time the list opens, the highlight starts on the selected item.
+  function toggleOpen() {
+    if (!open) {
+      const i = options.findIndex((o) => o.value === value)
+      if (i >= 0) setActiveIdx(i)
+    }
+    setOpen(!open)
+  }
 
   const heightCls = size === "sm" ? "h-8 text-xs" : "h-9 text-sm"
 
@@ -102,7 +104,7 @@ export function Dropdown<T extends string = string>({
     <div ref={wrapRef} className={cn("relative", className)}>
       <button
         type="button"
-        onClick={() => !disabled && setOpen((v) => !v)}
+        onClick={() => !disabled && toggleOpen()}
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}

@@ -3,6 +3,7 @@ import {
   previewFitnotesCsv as corePreviewCsv,
   importSnapshotJson as coreImportJson,
   previewSnapshotJson as corePreviewJson,
+  looksLikeJson,
   type FitNotesPreview,
   type SnapshotJsonPreview,
   type ImportMode,
@@ -20,16 +21,6 @@ export type Preview =
   | ({ kind: "fitnotes" } & FitNotesPreview)
   | ({ kind: "snapshot" } & SnapshotJsonPreview)
   | { kind: "unknown"; reason: string }
-
-function looksLikeJson(text: string): boolean {
-  for (let i = 0; i < text.length; i++) {
-    const ch = text.charCodeAt(i)
-    if (ch === 0xfeff) continue
-    if (ch === 0x20 || ch === 0x09 || ch === 0x0a || ch === 0x0d) continue
-    return text[i] === "{" || text[i] === "["
-  }
-  return false
-}
 
 export async function previewFile(file: File): Promise<Preview> {
   const text = await file.text()

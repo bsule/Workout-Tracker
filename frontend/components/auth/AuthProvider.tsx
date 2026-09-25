@@ -28,6 +28,7 @@ import {
   webSyncClockStore,
   writeStoredEtag,
 } from "@/lib/syncStorage"
+import { clearMark } from "@/lib/restTimerMark"
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8787/api"
@@ -134,6 +135,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   )
 
   const logout = useCallback(async () => {
+    // A reset or stop of the signed-out user's rest ticker must not carry
+    // over to the next account (mobile's unloadForSignOut does the same).
+    clearMark()
     try {
       await unloadStore()
     } catch (e) {
