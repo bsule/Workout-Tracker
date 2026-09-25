@@ -3,6 +3,8 @@ import {
   fuzzyMatch,
   listExercisesQ,
   getExerciseHistoryQ,
+  getExerciseHistorySourceRowsQ,
+  sameExerciseHistorySourceRows,
   listWorkoutsQ,
   getCalendarQ,
   getWorkoutByDateQ,
@@ -10,8 +12,45 @@ import {
   getDayNoteQ,
 } from "@lift/core/store/queries"
 import { SEED_EXERCISES } from "@lift/core/store/seed"
+import { addSet, setExerciseNote, updateSettings } from "@lift/core/store/mutations"
 import { loadSnapshot, resetStore } from "./helpers/store"
 import { blankSnapshot, exercise, workout, we, set } from "./helpers/build"
+
+describe("exercise history source rows", () => {
+  beforeEach(() => {
+    const snap = blankSnapshot()
+    snap.exercises = [exercise(100, "Bench"), exercise(101, "Squat", "legs")]
+    snap.workouts = [workout(1, "2026-01-05"), workout(2, "2026-01-06")]
+    snap.workout_exercises = [we(10, 1, 100), we(11, 2, 101)]
+    snap.sets = [
+      set(1000, 10, { weight: 60, reps: 5, is_pr: true, was_pr: true }),
+      set(1001, 11, { weight: 100, reps: 5 }),
+    ]
+    loadSnapshot(snap)
+  })
+
+  it("keeps history stable for settings and another exercise's sets", () => {
+    const before = getExerciseHistorySourceRowsQ(100)
+    updateSettings({ show_one_rm: true })
+    expect(sameExerciseHistorySourceRows(before, getExerciseHistorySourceRowsQ(100))).toBe(true)
+    addSet(11, { weight: 105, reps: 5 })
+    expect(sameExerciseHistorySourceRows(before, getExerciseHistorySourceRowsQ(100))).toBe(true)
+  })
+
+  it("invalidates for notes and PR changes on older sets", () => {
+    const before = getExerciseHistorySourceRowsQ(100)
+    setExerciseNote(10, "felt strong")
+    const afterNote = getExerciseHistorySourceRowsQ(100)
+    expect(sameExerciseHistorySourceRows(before, afterNote)).toBe(false)
+    expect(getExerciseHistoryQ(100)[0].note).toBe("felt strong")
+
+    addSet(10, { weight: 70, reps: 5 })
+    expect(sameExerciseHistorySourceRows(afterNote, getExerciseHistorySourceRowsQ(100))).toBe(false)
+    const history = getExerciseHistoryQ(100)
+    expect(history[0].sets.find((s) => s.id === 1000)?.is_pr).toBe(false)
+    expect(history[0].sets.find((s) => s.id === 1000)?.was_pr).toBe(true)
+  })
+})
 
 describe("fuzzyMatch", () => {
   it("matches exact substrings", () => {

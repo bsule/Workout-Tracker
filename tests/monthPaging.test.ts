@@ -5,7 +5,7 @@ import {
   monthHeightAtOffset,
   monthIndex,
   monthRowCount,
-} from "../mobile/src/calendar/monthPaging"
+} from "@lift/core/monthPaging"
 
 const width = 390
 const padding = 8

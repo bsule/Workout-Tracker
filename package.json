@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
+    "fake-indexeddb": "^6.2.5",
     "vitest": "^3.0.5"
   },
   "overrides": {
