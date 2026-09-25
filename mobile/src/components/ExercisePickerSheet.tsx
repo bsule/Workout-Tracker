@@ -1,3 +1,4 @@
+import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import { useEffect, useMemo, useState } from "react"
 import {
   FlatList,
@@ -12,7 +13,6 @@ import { Ionicons } from "@expo/vector-icons"
 import { SafeAreaView } from "react-native-safe-area-context"
 import {
   listExercisesQ,
-  useStore,
 } from "@lift/core"
 import type { Exercise } from "@lift/core"
 import { theme } from "../theme/theme"
@@ -103,7 +103,7 @@ function PickView({
 }) {
   const [search, setSearch] = useState("")
   const [category, setCategory] = useState<string | null>(null)
-  const snapshot = useStore((s) => s.snapshot)
+  const snapshot = useScreenSnapshot()
   const exercises = useMemo(
     () =>
       listExercisesQ({

@@ -1,3 +1,4 @@
+import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import {
   useCallback,
   useEffect,
@@ -29,7 +30,6 @@ import {
   lastSetTimeOf,
   startPlannedWorkout,
   useHydrated,
-  useStore,
   getState,
   getWorkoutByDateQ,
   getDayNoteQ,
@@ -431,7 +431,7 @@ function DayContent({
   }, [interactive])
 
   const hydrated = useHydrated()
-  const snapshot = useStore((s) => s.snapshot)
+  const snapshot = useScreenSnapshot()
 
   const rawWorkout = useMemo(
     () => (hydrated ? getWorkoutByDateQ(date) : undefined),
@@ -626,7 +626,7 @@ function DateNav({
   // than being gathered on press. DateNav subscribes here rather
   // than DayScreen doing it: this component is three buttons, while DayScreen
   // hosts the whole date pager and would re-render all of it.
-  const snapshot = useStore((s) => s.snapshot)
+  const snapshot = useScreenSnapshot()
 
   // The menu needs its items before the press, so this is derived on render
   // instead of gathered in an open handler. It is a few index lookups

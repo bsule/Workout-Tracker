@@ -1,3 +1,4 @@
+import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import { useCallback, useMemo, useState } from "react"
 import {
   ScrollView,
@@ -9,7 +10,6 @@ import {
   getExerciseHistoryQ,
   listExercisesQ,
   localApi as api,
-  useStore,
 } from "@lift/core"
 import type { Exercise, ExerciseHistoryDay } from "@lift/core"
 import { CategoryBadge } from "../components/CategoryBadge"
@@ -30,7 +30,7 @@ type SubTab = Exclude<LoggerSubTab, "workout">
 
 export function ExerciseDetailScreen({ navigation, route }: any) {
   const { exerciseId } = route.params
-  const snapshot = useStore((s) => s.snapshot)
+  const snapshot = useScreenSnapshot()
   const { weightUnit: unit, showOneRm } = useSettings()
   const [tab, setTab] = useState<SubTab>("history")
 

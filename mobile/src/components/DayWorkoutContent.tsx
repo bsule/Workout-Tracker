@@ -1,9 +1,9 @@
+import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import { useMemo } from "react"
 import { Pressable, StyleSheet, Text, View } from "react-native"
 import {
   getWorkoutByDateQ,
   startPlannedWorkout,
-  useStore,
 } from "@lift/core"
 import type { WorkoutExercise } from "@lift/core"
 import { Button } from "./Button"
@@ -20,7 +20,7 @@ interface Props {
 }
 
 export function DayWorkoutContent({ date, onPressExercise }: Props) {
-  const snapshot = useStore((s) => s.snapshot)
+  const snapshot = useScreenSnapshot()
   const workout = useMemo(() => getWorkoutByDateQ(date), [snapshot, date])
 
   if (!workout) {

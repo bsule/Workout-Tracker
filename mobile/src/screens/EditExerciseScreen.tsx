@@ -1,3 +1,4 @@
+import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import { useMemo, useState } from "react"
 import {
   Pressable,
@@ -11,7 +12,6 @@ import { SafeAreaView } from "react-native-safe-area-context"
 import {
   listExercisesQ,
   localApi as api,
-  useStore,
 } from "@lift/core"
 import { Button } from "../components/Button"
 import { theme } from "../theme/theme"
@@ -20,7 +20,7 @@ import { Input } from "../components/Input"
 
 export function EditExerciseScreen({ navigation, route }: any) {
   const { exerciseId } = route.params
-  const snapshot = useStore((s) => s.snapshot)
+  const snapshot = useScreenSnapshot()
 
   const exercise = useMemo(
     () => listExercisesQ({ sort: "name" }).find((e) => e.id === exerciseId) ?? null,

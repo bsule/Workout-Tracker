@@ -1,3 +1,4 @@
+import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import {
   memo,
   useCallback,
@@ -43,6 +44,7 @@ import {
   createWorkout,
   defaultStep,
   deleteWorkout,
+  deleteSets,
   estimateOneRm,
   formatWeight,
   fromKg,
@@ -57,7 +59,6 @@ import {
   toKg,
   topRepRecords,
   topRepRecordsByPosition,
-  useStore,
 } from "@lift/core"
 import {
   getExerciseHistorySourceRowsQ,
@@ -704,7 +705,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
   } = useSettings()
   const [tab, setTab] = useState<SubTab>("workout")
 
-  const snapshot = useStore((s) => s.snapshot)
+  const snapshot = useScreenSnapshot()
   // While `resolved` is null we render a stub workout/we synthesized from
   // the picker's `pendingCreate` payload — the real workoutId/weId land
   // ~one frame after the push animation finishes (see the
@@ -1022,9 +1023,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
           }
           leavingIdsRef.current = next
           const c0 = Date.now()
-          batchMutations(() => {
-            for (const deletedId of ids) api.deleteSet(deletedId)
-          })
+          deleteSets(ids)
           dbg(`store commit ${Date.now() - c0}ms ids=${ids.join(",")}`)
         })
       })
