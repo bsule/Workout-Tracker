@@ -16,19 +16,14 @@ import {
   recomputePrsForWe,
 } from "./prs"
 import { FIRST_CUSTOM_ID, SEED_EXERCISES, isSeedId } from "./seed"
+import { todayString } from "../dates"
+import { findSavedGym, renameGymIn } from "./gymRules"
 
 // All mutations follow the same shape:
 // 1. Compute next snapshot (immutable update).
 // 2. applyMutation -> rebuild indexes, emit, mark dirty.
 // 3. recordPending(op) for crash recovery + future R2 sync.
 
-function todayString(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-function pad(n: number) {
-  return String(n).padStart(2, "0")
-}
 function nowIso() {
   return new Date().toISOString()
 }
@@ -219,23 +214,30 @@ export function patchWorkout(
   >
 ): WorkoutRow | null {
   let result: WorkoutRow | null = null
+  // A gym name is stored in the saved gym's spelling ("golds" becomes the
+  // saved "Golds"), so the pickers highlight it and a rename carries it. The
+  // logged patch carries that spelling too, so a replay stores the same.
+  let effective = patch
+  if (typeof patch.gym === "string" && patch.gym.trim()) {
+    const saved = findSavedGym(getState().snapshot.gyms, patch.gym)
+    effective = { ...patch, gym: saved ? saved.name : patch.gym.trim() }
+  }
   applyMutation((snap) => {
     const idx = snap.workouts.findIndex((w) => w.id === id)
     if (idx < 0) return snap
-    const next = { ...snap.workouts[idx], ...patch }
+    const next = { ...snap.workouts[idx], ...effective }
     result = next
     const workouts = snap.workouts.slice()
     workouts[idx] = next
     let gyms = snap.gyms
-    if (typeof patch.gym === "string" && patch.gym.trim()) {
-      const name = patch.gym.trim()
-      if (!gyms.some((g) => g.name === name)) {
-        gyms = [...gyms, { id: nextId(), name }]
+    if (typeof effective.gym === "string" && effective.gym) {
+      if (!findSavedGym(gyms, effective.gym)) {
+        gyms = [...gyms, { id: nextId(), name: effective.gym }]
       }
     }
     return { ...snap, workouts, gyms }
   })
-  recordPending({ op: "patch_workout", id, patch })
+  recordPending({ op: "patch_workout", id, patch: effective })
   return result
 }
 
@@ -432,10 +434,16 @@ export function deleteSets(setIds: Iterable<number>): void {
 
 // ---- gyms ---------------------------------------------------------
 
+/** Saves a gym, or returns the saved one when the name matches it in any
+ *  case ("golds" and "Golds" are one gym). Only an added row is logged: a
+ *  logged row that was never added would be added by a crash-log replay. */
 export function createGym(name: string): GymRow {
-  const row: GymRow = { id: nextId(), name: name.trim() }
+  const trimmed = name.trim()
+  const saved = findSavedGym(getState().snapshot.gyms, trimmed)
+  if (saved) return saved
+  const row: GymRow = { id: nextId(), name: trimmed }
   applyMutation((snap) => {
-    if (snap.gyms.some((g) => g.name === row.name)) return snap
+    if (findSavedGym(snap.gyms, row.name)) return snap
     return { ...snap, gyms: [...snap.gyms, row] }
   })
   recordPending({ op: "create_gym", row })
@@ -451,8 +459,9 @@ export function deleteGym(id: number): void {
 }
 
 // Rename a gym and rewrite the `gym` field on every workout that
-// referenced the old name. Returns null on no-op (missing id, empty
-// name, or a name collision with another saved gym).
+// referenced the old name (renameGymIn, shared with the crash-log replay).
+// Returns null on no-op: missing id, empty name, or another saved gym's name
+// in any case. Changing only the case of its own name is allowed.
 export function renameGym(id: number, name: string): GymRow | null {
   const trimmed = name.trim()
   if (!trimmed) return null
@@ -466,16 +475,11 @@ export function renameGym(id: number, name: string): GymRow | null {
       result = current
       return snap
     }
-    if (snap.gyms.some((g, i) => i !== idx && g.name === trimmed)) return snap
+    const lower = trimmed.toLowerCase()
+    if (snap.gyms.some((g, i) => i !== idx && g.name.toLowerCase() === lower)) return snap
     oldName = current.name
-    const next: GymRow = { ...current, name: trimmed }
-    result = next
-    const gyms = snap.gyms.slice()
-    gyms[idx] = next
-    const workouts = snap.workouts.map((w) =>
-      w.gym === oldName ? { ...w, gym: trimmed } : w
-    )
-    return { ...snap, gyms, workouts }
+    result = { ...current, name: trimmed }
+    return renameGymIn(snap, id, trimmed)
   })
   if (result && oldName !== null) {
     recordPending({ op: "rename_gym", id, oldName, newName: trimmed })

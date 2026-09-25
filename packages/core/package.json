@@ -8,9 +8,20 @@
     ".": "./src/index.ts",
     "./types": "./src/types/index.ts",
     "./units": "./src/units.ts",
+    "./oneRepMax": "./src/oneRepMax.ts",
+    "./dates": "./src/dates.ts",
+    "./format": "./src/format.ts",
+    "./settings": "./src/settings.ts",
+    "./workouts": "./src/workouts.ts",
+    "./restTimer": "./src/restTimer.ts",
+    "./monthPaging": "./src/monthPaging.ts",
+    "./setLogger": "./src/setLogger.ts",
+    "./exerciseStats": "./src/exerciseStats.ts",
+    "./categoryStyles": "./src/categoryStyles.ts",
     "./store": "./src/store/index.ts",
     "./store/persist": "./src/store/persist.ts",
     "./store/storage": "./src/store/storage/types.ts",
+    "./store/paths": "./src/store/storePaths.ts",
     "./store/schema": "./src/store/schema.ts",
     "./store/seed": "./src/store/seed.ts",
     "./store/queries": "./src/store/queries.ts",
@@ -18,6 +29,7 @@
     "./store/ids": "./src/store/ids.ts",
     "./store/mutations": "./src/store/mutations.ts",
     "./store/prs": "./src/store/prs.ts",
+    "./store/repair": "./src/store/repair.ts",
     "./store/store": "./src/store/store.ts",
     "./store/blob": "./src/store/blob.ts",
     "./store/indexes": "./src/store/indexes.ts",
@@ -26,7 +38,8 @@
     "./sync/autoSync": "./src/sync/autoSync.ts",
     "./sync/syncClock": "./src/sync/syncClock.ts",
     "./import": "./src/import/index.ts",
-    "./export": "./src/export/index.ts"
+    "./export": "./src/export/index.ts",
+    "./ai": "./src/ai/index.ts"
   },
   "dependencies": {
     "fflate": "^0.8.2"

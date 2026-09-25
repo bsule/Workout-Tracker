@@ -121,8 +121,21 @@ export async function previewRemote(): Promise<RemotePreview | null> {
   if (!isSyncConfigured()) {
     throw new Error("sync transport not configured (not signed in?)")
   }
-  const result = await _internalPullBytes()
+  // A pull adopts the cloud's etag, and the next push sends it as If-Match.
+  // Only looking must not count as syncing with the cloud copy: that let the
+  // next "Sync now" after a conflict overwrite it without a prompt. Put the
+  // device's etag back; applyRemoteBytes adopts the cloud's when the user
+  // takes the copy.
+  const t = getTransport()
+  const ownEtag = t instanceof CloudflareTransport ? t.getEtag() : undefined
+  let result: Awaited<ReturnType<typeof _internalPullBytes>>
+  try {
+    result = await _internalPullBytes()
+  } finally {
+    if (t instanceof CloudflareTransport && ownEtag !== undefined) t.setEtag(ownEtag)
+  }
   if (!result) return null
+  previewEtags.set(result.bytes, result.etag)
   const { snapshot } = await parse(result.bytes)
   return {
     exportedAt: snapshot.exported_at ?? null,
@@ -134,9 +147,17 @@ export async function previewRemote(): Promise<RemotePreview | null> {
   }
 }
 
+/** The etag each previewRemote() result came with, so taking that copy
+ *  adopts its version. Weak: a preview nobody applies costs nothing. */
+const previewEtags = new WeakMap<Uint8Array, string>()
+
 /** Replace local snapshot with bytes already pulled (typically from previewRemote). */
 export async function applyRemoteBytes(bytes: Uint8Array): Promise<void> {
   await replaceSnapshotFromBytes(bytes)
+  // Local now is that cloud version, so the next push may go on top of it.
+  const etag = previewEtags.get(bytes)
+  const t = getTransport()
+  if (etag !== undefined && t instanceof CloudflareTransport) t.setEtag(etag)
   markSynced()
 }
 

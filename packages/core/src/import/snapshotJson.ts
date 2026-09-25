@@ -20,6 +20,7 @@ import type {
 import { applyMutation, getState } from "../store/store"
 import type { Category, ExerciseKind } from "../types"
 import { DEFAULT_CATEGORIES } from "../types"
+import { weightKey } from "../units"
 import { exerciseNameLookup, normalizeExerciseName } from "./exerciseNames"
 import type { ImportMode, ImportResult } from "./fitnotesCsv"
 
@@ -101,6 +102,19 @@ function tryParse(text: string): RawJsonPayload | null {
   } catch {
     return null
   }
+}
+
+/** True when the first character past any BOM and whitespace opens a JSON
+ *  object or array. Both import screens use it to pick the JSON path over
+ *  FitNotes CSV before parsing anything. */
+export function looksLikeJson(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    if (c === 0xfeff) continue
+    if (c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d) continue
+    return text[i] === "{" || text[i] === "["
+  }
+  return false
 }
 
 export function previewSnapshotJson(text: string): SnapshotJsonPreview {
@@ -208,16 +222,23 @@ export async function importSnapshotJson(
   const snap = getState().snapshot
 
   // Build merge keys: exercise by lowercase name, built-ins included (same as
-  // the FitNotes importer), workout by date+gym so a re-import of the same
-  // file is a no-op in merge mode.
+  // the FitNotes importer). Workouts: one per date, like createWorkout, the
+  // FitNotes importer and the date index. Matching on date + gym made a
+  // second workout that day whenever the gyms differed, and the screens then
+  // disagreed about which one the day was.
   const exerciseByName = exerciseNameLookup(
     mode === "replace" ? [] : snap.exercises
   )
-  const workoutByDateGym = new Map<string, WorkoutRow>(
-    mode === "replace"
-      ? []
-      : snap.workouts.map((w) => [`${w.date}|${(w.gym || "").toLowerCase()}`, w])
-  )
+  const workoutByDate = new Map<string, WorkoutRow>()
+  if (mode === "merge") {
+    for (const w of snap.workouts) {
+      // First per date, the one createWorkout returns.
+      if (!workoutByDate.has(w.date)) workoutByDate.set(w.date, w)
+    }
+  }
+  // Workouts this import created, so a second file workout on the same date
+  // can add its note and gym to it (rows from the device are left as they are).
+  const createdHere = new Set<number>()
   const wesByPair = new Map<string, WorkoutExerciseRow>(
     mode === "replace"
       ? []
@@ -226,10 +247,11 @@ export async function importSnapshotJson(
           we,
         ])
   )
+  // Both modes: Replace clears workouts and exercises but keeps the saved
+  // gyms (see `base` below), so the file's gyms must match against them too.
+  // Starting from an empty map here added every gym a second time.
   const gymsByName = new Map<string, GymRow>(
-    mode === "replace"
-      ? []
-      : snap.gyms.map((g) => [g.name.toLowerCase(), g])
+    snap.gyms.map((g) => [g.name.toLowerCase(), g])
   )
   // Track existing (workout, exercise, position) triples so re-importing the
   // same JSON doesn't duplicate sets in merge mode. We key sets by their order
@@ -315,6 +337,41 @@ export async function importSnapshotJson(
     exercisesCreated.add(name)
   }
 
+  // Per exercise row: the highest set order so far, whether a file entry
+  // already went into it, and (lazily) the device's own sets on it by value.
+  const maxOrder = new Map<number, number>()
+  if (mode === "merge") {
+    for (const s of snap.sets) {
+      if (s.is_planned) continue
+      maxOrder.set(
+        s.workout_exercise_id,
+        Math.max(maxOrder.get(s.workout_exercise_id) ?? -1, s.order)
+      )
+    }
+  }
+  const entriesSeen = new Set<number>()
+  const localValues = new Map<number, Map<string, number>>()
+  function localSetValues(weId: number): Map<string, number> {
+    let m = localValues.get(weId)
+    if (!m) {
+      m = new Map()
+      if (mode === "merge") {
+        for (const s of snap.sets) {
+          if (s.workout_exercise_id !== weId || s.is_planned) continue
+          const k = setValueKey({
+            weight_kg: s.weight,
+            reps: s.reps,
+            distance_m: s.distance_m,
+            time_seconds: s.time_seconds,
+          })
+          m.set(k, (m.get(k) ?? 0) + 1)
+        }
+      }
+      localValues.set(weId, m)
+    }
+    return m
+  }
+
   let imported = 0
   let workoutIndex = 0
 
@@ -331,9 +388,26 @@ export async function importSnapshotJson(
 
     if (!workoutNotesAreSessionNotes) takeDayNote(w.date, w.notes)
 
-    const gym = (w.gym ?? "").toString()
-    const workoutKey = `${w.date}|${gym.toLowerCase()}`
-    let workout = workoutByDateGym.get(workoutKey)
+    const rawGym = (w.gym ?? "").toString()
+    // The saved gym's spelling ("GOLDS" in the file, "Golds" saved), so the
+    // pickers highlight it and a rename carries it.
+    const gym = gymsByName.get(rawGym.trim().toLowerCase())?.name ?? rawGym
+    const sessionNote = workoutNotesAreSessionNotes ? (w.notes ?? "").toString().trim() : ""
+    let workout = workoutByDate.get(w.date)
+    // Same date and gym as a workout already on the device: this file is the
+    // same session (an earlier export of it), and its sets dedupe by
+    // position as before. Anything else joining an existing workout is added
+    // after that workout's sets.
+    const sameSession =
+      !!workout &&
+      !createdHere.has(workout.id) &&
+      workout.gym.toLowerCase() === gym.toLowerCase()
+    if (workout && createdHere.has(workout.id)) {
+      if (!workout.gym && gym) workout.gym = gym
+      if (sessionNote && !workout.notes.split("\n\n").includes(sessionNote)) {
+        workout.notes = workout.notes ? `${workout.notes}\n\n${sessionNote}` : sessionNote
+      }
+    }
     if (!workout) {
       const status =
         w.finished_at
@@ -348,10 +422,11 @@ export async function importSnapshotJson(
         started_at: w.started_at ?? null,
         finished_at: w.finished_at ?? null,
         gym,
-        notes: workoutNotesAreSessionNotes ? (w.notes ?? "").toString().trim() : "",
+        notes: sessionNote,
         created_at: nowIso(),
       }
-      workoutByDateGym.set(workoutKey, workout)
+      workoutByDate.set(w.date, workout)
+      createdHere.add(workout.id)
       newWorkouts.push(workout)
     }
 
@@ -405,15 +480,36 @@ export async function importSnapshotJson(
       }
 
       const sets = Array.isArray(we.sets) ? we.sets : []
+      // A second session joining this exercise row (another workout that
+      // day, in the file or on the device) goes after the sets already there.
+      const appendAfter = !sameSession && (entriesSeen.has(weRow.id) || localSetValues(weRow.id).size > 0)
+      entriesSeen.add(weRow.id)
       for (const s of sets) {
         if (!s) continue
-        const order =
-          typeof s.order === "number"
-            ? s.order
-            : weSetCounts.get(weRow.id) ?? 0
-        const dedupeKey = `${weRow.id}:${order}`
-        if (mode === "merge" && existingSetKeys.has(dedupeKey)) continue
-        existingSetKeys.add(dedupeKey)
+        let order: number
+        if (sameSession || !appendAfter) {
+          order =
+            typeof s.order === "number"
+              ? s.order
+              : weSetCounts.get(weRow.id) ?? 0
+          const dedupeKey = `${weRow.id}:${order}`
+          if (mode === "merge" && existingSetKeys.has(dedupeKey)) continue
+          existingSetKeys.add(dedupeKey)
+        } else {
+          // Skip a set the device already has on this exercise that day (same
+          // weight, reps, distance and time), so importing the file again
+          // adds nothing; each saved set matches one file set at most.
+          const values = localSetValues(weRow.id)
+          const key = setValueKey(s)
+          const left = values.get(key) ?? 0
+          if (left > 0) {
+            values.set(key, left - 1)
+            continue
+          }
+          order = (maxOrder.get(weRow.id) ?? -1) + 1
+          existingSetKeys.add(`${weRow.id}:${order}`)
+        }
+        maxOrder.set(weRow.id, Math.max(maxOrder.get(weRow.id) ?? -1, order))
 
         weSetCounts.set(weRow.id, (weSetCounts.get(weRow.id) ?? 0) + 1)
         newSets.push({
@@ -486,4 +582,18 @@ export async function importSnapshotJson(
     exercisesCreated: [...exercisesCreated].sort(),
     errors,
   }
+}
+
+/** What makes two sets the same set when a file is merged in: weight (by
+ *  weightKey, so float noise from another device matches), reps, distance and
+ *  time. */
+function setValueKey(s: {
+  weight_kg?: number | null
+  reps?: number | null
+  distance_m?: number | null
+  time_seconds?: number | null
+}): string {
+  const w = typeof s.weight_kg === "number" ? String(weightKey(s.weight_kg)) : "-"
+  const n = (v: number | null | undefined) => (typeof v === "number" ? String(v) : "-")
+  return `${w}|${n(s.reps)}|${n(s.distance_m)}|${n(s.time_seconds)}`
 }
