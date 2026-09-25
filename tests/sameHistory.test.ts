@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { sameHistory } from "../mobile/src/store/sameHistory"
+import { sameHistory } from "@lift/core/exerciseStats"
 import type { ExerciseHistoryDay, HistorySet } from "@lift/core/types"
 
 function set(id: number, over: Partial<HistorySet> = {}): HistorySet {

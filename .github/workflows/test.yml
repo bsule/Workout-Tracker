@@ -1,0 +1,37 @@
+name: Tests
+
+# Runs the Vitest suite (tests/) on every push and pull request. It covers
+# @lift/core, the pure logic under mobile/src, and the web storage adapters;
+# the UI and the Worker have no automated tests (see CLAUDE.md).
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      # The workspaces install together from the root lockfile, the same way
+      # the build workflows do. --ignore-scripts skips native postinstall steps
+      # (Expo, esbuild prompts) the tests do not need.
+      - name: Install
+        run: npm ci --ignore-scripts
+
+      - name: Test
+        run: npm test

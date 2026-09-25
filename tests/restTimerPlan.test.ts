@@ -14,7 +14,7 @@ import {
   parseCutoff,
   restTimerSettings,
   tickerAnchor,
-} from "../mobile/src/restTimer/plan"
+} from "@lift/core/restTimer"
 
 describe("rest timer settings", () => {
   it("defaults to on with a 6:00 cutoff when the keys are missing", () => {
