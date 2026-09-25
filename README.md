@@ -1,88 +1,20 @@
-# Workout Tracker
+# Lift
 
-Local-first workout tracker, inspired by FitNotes. Plan routines, log weight/reps per set, watch your estimated 1RM trend, import from / export to FitNotes. The web and mobile apps share a single TypeScript core and sync through a Cloudflare Worker.
+A mobile-first workout tracker inspired by [FitNotes](http://www.fitnotesapp.com/). Log your sets, plan the days ahead, and watch your lifts go up. It's built for iPhone and Android, with a web app alongside, and your data lives on your device first. The cloud is only there to sync between them.
 
-## Layout
+## What it does
 
-| Path          | What it is                                                                                                |
-|---------------|-----------------------------------------------------------------------------------------------------------|
-| `packages/core` | Shared store, sync, units, FitNotes import/export. Used by both `frontend` and `mobile`.                |
-| `frontend`    | Next.js 16 + React 19 + Tailwind. Persists to OPFS, with an IndexedDB fallback.                           |
-| `mobile`      | Expo / React Native. Persists to the app's filesystem sandbox, with local restore points on the Backup & Restore page. |
-| `cloudflare`  | Hono Worker on Cloudflare. Auth in D1, snapshot blob in R2. Replaces the old Django backend.              |
-| `tests`       | Vitest suite for `@lift/core`. See [tests/README.md](tests/README.md).                                    |
+- **Log sets fast.** Weight and reps, or distance and time for cardio. A "since last set" timer counts your rest, and on a phone it also shows on the Lock Screen and in the Dynamic Island (iOS) or as a notification (Android).
+- **See how you're doing.** Estimated 1RM trends, PRs, top weight for each rep count, and what you did last time, right next to the set you're logging.
+- **Plan ahead.** Build routines on the calendar, or have an AI model draft a plan with your own API key (Anthropic, OpenAI, Gemini, or DeepSeek).
+- **Take notes.** On a day, a session, one exercise, or a single set.
+- **Bring your FitNotes history.** Import a FitNotes CSV export, and export back out as CSV, a FitNotes `.fitnotesdb` file, or JSON whenever you like.
+- **Keep your data safe.** Everything saves on the device and works offline. Sync to the cloud when you want to, and the phone app keeps its own restore points in case something goes wrong.
 
-## Run it locally
+## Install it on your phone
 
-You'll typically want three terminals: the Worker, the web app, and the mobile app.
+The app isn't in the App Store or Play Store. You build it yourself with one command, for iPhone or Android. See **[docs/install.md](docs/install.md)**.
 
-### 1. Cloudflare Worker (port 8787)
+## Run it on your computer
 
-```bash
-cd cloudflare
-npm install
-npm run db:apply:local   # apply migrations to local D1 simulator
-npm run dev              # http://localhost:8787
-```
-
-See [cloudflare/README.md](cloudflare/README.md) for endpoints, deploy, and smoke tests.
-
-### 2. Web (port 3215)
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Open <http://localhost:3215>.
-
-### 3. Mobile
-
-```bash
-cd mobile
-npm install
-npm run start
-```
-
-Use the Expo dev client / Expo Go to load it on a device or simulator. Expo Go cannot load the app's own native code, so the rest timer (Live Activity on iOS, ongoing notification on Android) does nothing there. Use a build to test it.
-
-To build an unsigned iOS `.ipa` via GitHub Actions and download it into `mobile/builds/`:
-
-```bash
-cd mobile
-npm run ipa:gh
-```
-
-To build an installable Android `.apk` via GitHub Actions and download it into `mobile/builds/`:
-
-```bash
-cd mobile
-npm run apk:gh
-```
-
-Both require the `gh` CLI to be installed and authenticated; each build takes ~10–20 min. The iOS `.ipa` is unsigned — re-sign it with Sideloadly (or similar) and a free Apple ID before installing. The app contains one extension (`RestTimerWidget`, the Live Activity). Keep it when the signing tool asks; it uses one more App ID. The Android `.apk` is debug-signed and installs directly (`adb install <file>.apk`, or just open it on the device).
-
-You can also build through EAS instead of GitHub Actions (`npm run build:ios` / `npm run build:android`, plus `:prod` variants).
-
-## Tests
-
-The shared core has a Vitest suite. Run it from the repo root:
-
-```bash
-npm test            # one-shot
-npm run test:watch  # re-run on change
-```
-
-The suite covers `@lift/core` only. The two clients' UI and the Worker have no
-automated tests. Verify those by running the app, or by curling the Worker (see
-[cloudflare/README.md](cloudflare/README.md)).
-
-## Configuration
-
-Both clients fall back to `http://localhost:8787/api` in code. The checked-in `mobile/app.json` already overrides it with the production worker. Override per-client:
-
-- **Web** - `frontend/.env.local`: `NEXT_PUBLIC_API_BASE_URL=https://your-worker.example.com/api`
-- **Mobile** - `mobile/app.json` → `expo.extra.apiBaseUrl`. On a real device, use your LAN IP, not `localhost`.
-
-Worker CORS origins live in `cloudflare/wrangler.toml` under `ALLOWED_ORIGINS`.
+To run the app locally, test it, or deploy it, see **[docs/development.md](docs/development.md)**.
