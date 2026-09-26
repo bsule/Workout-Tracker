@@ -153,7 +153,7 @@ export function CalendarScreen({ navigation, route }: any) {
   }, [incomingDate])
 
   const { firstDayOfWeek } = useSettings()
-  const snapshot = useScreenSnapshot()
+  const snapshot = useScreenSnapshot(true)
   const weekdayLabels =
     firstDayOfWeek === 1 ? WEEKDAY_LABELS_MONDAY : WEEKDAY_LABELS_SUNDAY
   // Gated on detailReady alongside DayWorkoutContent: getWorkoutByDateQ fully
@@ -275,7 +275,9 @@ export function CalendarScreen({ navigation, route }: any) {
   }, [setActiveDate, pushed])
 
   function openSetLogger(workoutId: number, weId: number) {
-    navigation.navigate("SetLogger", { workoutId, weId })
+    // Preserve the actual calendar instance; the parent's stack state may
+    // not contain the nested tab's current state when the logger closes.
+    navigation.navigate("SetLogger", { workoutId, weId, returnRouteKey: route.key })
   }
 
   return (
@@ -477,7 +479,7 @@ const MonthPage = memo(function MonthPage({
   todayKey: string
   onOpenDay: (date: string) => void
 }) {
-  const snapshot = useScreenSnapshot()
+  const snapshot = useScreenSnapshot(active)
   const { year, month } = monthAtIndex(index)
   const cells = useMemo(() => buildMonthGrid(year, month, firstDayOfWeek), [year, month, firstDayOfWeek])
   const calendar = useMemo(() => detailReady ? getCalendarQ(year, month) : {}, [snapshot, year, month, detailReady])
