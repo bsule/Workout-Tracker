@@ -9,6 +9,7 @@ import {
   lastSessionSummary,
   lastTimeCardOpen,
   latestOtherSetIso,
+  matchPendingAdds,
   nextSetPosition,
   plannedSetTitle,
   restAnchorForEdit,
@@ -258,5 +259,40 @@ describe("Last time card", () => {
 
   it("counts history days through the workout date", () => {
     expect(historyDaysThrough(days, "2026-09-24")).toBe(3)
+  })
+})
+
+describe("matchPendingAdds", () => {
+  const ids = (...n: number[]) => n.map((id) => ({ id }))
+
+  it("waits while no row has landed", () => {
+    const pending = [{ key: 1, baseIds: new Set([10]) }]
+    expect(matchPendingAdds(ids(10), pending)).toEqual({ landed: [], waiting: pending })
+  })
+
+  it("pairs rows with a fast double tap's placeholders in tap order", () => {
+    // Both taps came before either write, so they share the same base.
+    const a = { key: 1, baseIds: new Set([10]) }
+    const b = { key: 2, baseIds: new Set([10]) }
+    expect(matchPendingAdds(ids(10, 11), [a, b])).toEqual({ landed: [[11, a]], waiting: [b] })
+    expect(matchPendingAdds(ids(10, 11, 12), [a, b])).toEqual({
+      landed: [[11, a], [12, b]],
+      waiting: [],
+    })
+  })
+
+  it("keeps the first row on the first placeholder when the second tap saw it land", () => {
+    const a = { key: 1, baseIds: new Set([10]) }
+    const b = { key: 2, baseIds: new Set([10, 11]) }
+    expect(matchPendingAdds(ids(10, 11), [a, b])).toEqual({ landed: [[11, a]], waiting: [b] })
+  })
+
+  it("finds the new row when a delete keeps the count the same", () => {
+    const a = { key: 1, baseIds: new Set([10, 11]) }
+    expect(matchPendingAdds(ids(10, 12), [a])).toEqual({ landed: [[12, a]], waiting: [] })
+  })
+
+  it("has nothing to do without placeholders", () => {
+    expect(matchPendingAdds(ids(10), [])).toEqual({ landed: [], waiting: [] })
   })
 })

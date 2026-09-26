@@ -58,3 +58,58 @@ it("never predicts a record for a tie with an earlier set", () => {
   })
   expect(predictPrFlags(getState().indexes, ex.id, we2.id, 100, 6).isPr).toBe(true)
 })
+
+it("counts sets queued by a fast second tap before they reach the store", () => {
+  const ex = M.createExercise({ name: "Queue Squat", category: "legs" })
+  const w1 = M.createWorkout("2026-03-01").row
+  M.addSet(M.addExerciseToWorkout(w1.id, ex.id).id, { weight: 90, reps: 5 })
+  const w2 = M.createWorkout("2026-03-02").row
+  const we2 = M.addExerciseToWorkout(w2.id, ex.id)
+  // First tap, 100x5, is still waiting on its write when the second lands.
+  const queued = [{ weight: 100, reps: 5 }]
+  const second = predictPrFlags(getState().indexes, ex.id, we2.id, 100, 5, queued)
+  expect(second.position).toBe(2)
+  // Now write both and check the preview against the stored flags.
+  M.addSet(we2.id, { weight: 100, reps: 5 })
+  const row = M.addSet(we2.id, { weight: 100, reps: 5 })
+  const saved = getState().snapshot.sets.find((s) => s.id === row.id)!
+  expect({ isPr: second.isPr, isPosPr: second.isPosPr }).toEqual({
+    isPr: saved.is_pr,
+    isPosPr: saved.is_position_pr,
+  })
+  expect(second.isPr).toBe(false)
+})
+
+it("matches the store for random bursts of queued sets", () => {
+  let seed = 11
+  const random = (max: number) => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+    return seed % max
+  }
+  const ex = M.createExercise({ name: "Burst Bench", category: "chest" })
+  let checked = 0
+  for (let day = 1; day <= 20; day++) {
+    const w = M.createWorkout(`2026-04-${String(day).padStart(2, "0")}`).row
+    const we = M.addExerciseToWorkout(w.id, ex.id)
+    const burst = Array.from({ length: 1 + random(4) }, () => ({
+      weight: 40 + random(5) * 5,
+      reps: 1 + random(8),
+    }))
+    // Predict every set of the burst before any of it is written.
+    const predicted = burst.map((s, i) =>
+      predictPrFlags(getState().indexes, ex.id, we.id, s.weight, s.reps, burst.slice(0, i))
+    )
+    // Each preview must match the flags its set holds right after it is
+    // written; a later set of the burst may take the record away again.
+    burst.forEach((s, i) => {
+      const row = M.addSet(we.id, s)
+      const saved = getState().snapshot.sets.find((x) => x.id === row.id)!
+      expect({ isPr: predicted[i].isPr, isPosPr: predicted[i].isPosPr }).toEqual({
+        isPr: saved.is_pr,
+        isPosPr: saved.is_position_pr,
+      })
+      checked++
+    })
+  }
+  expect(checked).toBeGreaterThan(30)
+})

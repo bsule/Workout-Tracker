@@ -380,7 +380,7 @@ describe("hydrate: crash-log replay", () => {
     expect(byId.get(heavy.id)!.is_pr).toBe(true)
     expect(byId.get(heavy.id)!.was_pr).toBe(true)
     expect(byId.get(light.id)!.is_pr).toBe(false)
-    expect(byId.get(light.id)!.was_pr).toBe(true) // sticky, as when logged
+    expect(byId.get(light.id)!.was_pr).toBe(true) // a record on its own day
   })
 })
 

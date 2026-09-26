@@ -734,7 +734,7 @@ function SetRow({
             {selected ? <Check className="size-4" aria-label="Selected" /> : index}
           </span>
           {restLabel && (
-            <span className="text-[9px] font-medium tabular-nums text-muted-foreground">
+            <span className="whitespace-nowrap text-[9px] font-medium tabular-nums text-muted-foreground">
               {restLabel}
             </span>
           )}

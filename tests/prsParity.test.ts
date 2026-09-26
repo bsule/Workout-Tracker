@@ -49,7 +49,7 @@ it("matches pairwise record rules across ties, positions, edits and deletions", 
         return (ow > sw && o.reps! >= s.reps!) || (ow === sw && o.reps! > s.reps!) ||
           (ow === sw && o.reps === s.reps && prior(o, s) < 0)
       })
-    const result = recomputePrsForExercise(snap, 1, { deriveHistorical: true })
+    const result = recomputePrsForExercise(snap, 1)
     for (const s of result.sets) {
       const eligible = candidates.some((c) => c.id === s.id)
       expect([s.is_pr, s.is_position_pr, s.was_pr, s.was_position_pr]).toEqual([

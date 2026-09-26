@@ -87,7 +87,6 @@ import {
   NOTE_SHIFT_ANIM,
   SET_ANIM,
   SHIFT_ANIM,
-  deferPastAnimation,
   usePresence,
   useExpandToggle,
   useToggleTiming,
@@ -114,11 +113,13 @@ import {
   lastSessionSummary,
   lastTimeCardOpen,
   latestOtherSetIso,
+  matchPendingAdds,
   plannedSetTitle,
   restAnchorForEdit,
   restSecondsFrom,
   setFormError,
   setRestLabels,
+  type PendingSetAdd,
 } from "@lift/core/setLogger"
 import {
   METRIC_OPTIONS,
@@ -154,9 +155,21 @@ function predictPrFlags(
   exerciseId: number,
   weId: number,
   weight: number,
-  reps: number
+  reps: number,
+  queued: readonly { weight: number; reps: number }[]
 ): { isPr: boolean; isPosPr: boolean; position: number } {
-  return corePredictPrFlags(getState().indexes, exerciseId, weId, weight, reps)
+  return corePredictPrFlags(getState().indexes, exerciseId, weId, weight, reps, queued)
+}
+
+// An optimistic row: a set tapped into the list whose store mutation has not
+// landed yet. See `pendingAdds` in SetLoggerScreen.
+type PendingAdd = PendingSetAdd & {
+  weight: number
+  reps: number
+  isPr: boolean
+  isPosPr: boolean
+  position: number
+  planned: boolean
 }
 
 // Animate the next layout change — used right before any mutation that adds or
@@ -270,6 +283,7 @@ function IndexCol({
         {display}
       </Animated.Text>
       <Animated.Text
+        numberOfLines={1}
         style={[
           styles.setRestLabel,
           { opacity: progress, transform: [{ translateY: labelY }] },
@@ -864,9 +878,9 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // renders that row under the placeholder's key, so the instance and its
   // fade-in carry on and nothing swaps. `baseIds` snapshots the set ids at
   // click time, which is how the new row is detected even if a concurrent
-  // delete keeps `sets.length` unchanged.
+  // delete keeps `sets.length` unchanged (matchPendingAdds).
 
-  // The planned-set save path has no `pendingAdd` placeholder: the row is
+  // The planned-set save path has no `pendingAdds` placeholder: the row is
   // already in `sets`, it just flips from planned to logged when the mutation
   // commits. Holding the id lets the record card count that set as logged on
   // the click frame, and stop counting it the moment `sets` agrees - so it is
@@ -875,21 +889,21 @@ export function SetLoggerScreen({ route, navigation }: any) {
     null
   )
 
-  const [pendingAdd, setPendingAdd] = useState<{
-    weight: number
-    reps: number
-    key: number
-    baseLen: number
-    baseIds: Set<number>
-    isPr: boolean
-    isPosPr: boolean
-    position: number
-    planned: boolean
-  } | null>(null)
-  const pendingAddRef = useRef(pendingAdd)
+  // One entry per tap, oldest first: a fast second tap on Save queues a second
+  // placeholder instead of replacing the first, so neither row blinks.
+  const [pendingAdds, setPendingAdds] = useState<PendingAdd[]>([])
+  const pendingAddsRef = useRef(pendingAdds)
   useEffect(() => {
-    pendingAddRef.current = pendingAdd
-  }, [pendingAdd])
+    pendingAddsRef.current = pendingAdds
+  }, [pendingAdds])
+  // Sets tapped but not yet written to the store, oldest first, and the
+  // scheduled write that drains them. A tap while a write is waiting joins it,
+  // so a double tap costs one PR recompute, index rebuild and list re-render.
+  const saveQueueRef = useRef<{ weight: number; reps: number; createdAt: string }[]>([])
+  const cancelSaveRef = useRef<(() => void) | null>(null)
+  // When the last edit was saved. The form flips back to add mode on that
+  // tap, so a fast second tap meant for Update would log a new set instead.
+  const editSavedAtRef = useRef(0)
 
   // The delete commit and the re-render behind it block JS. A swipe on
   // another row that releases inside that window sits frozen mid-swipe until
@@ -932,7 +946,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
       try {
         // Deletes still held for a swipe must land before the checks below.
         swipeHold.flush()
-        if (pendingAddRef.current) return
+        if (pendingAddsRef.current.length > 0) return
         const w = getWorkoutQ(workoutId)
         if (!w) return
         const currentWe = w.exercises.find((e) => e.id === weId)
@@ -993,14 +1007,15 @@ export function SetLoggerScreen({ route, navigation }: any) {
     [navigation]
   )
 
-  // Drop the placeholder as soon as the real row lands. SetList already
-  // renders the real row under the placeholder's key, so this is state
-  // cleanup only: the row instance and its fade-in are not touched.
+  // Drop the placeholders once every real row has landed. SetList already
+  // renders each real row under its placeholder's key, so this is state
+  // cleanup only: the row instances and their fade-ins are not touched.
+  // Held until all have landed: matchPendingAdds pairs rows by the first
+  // placeholder's baseIds, so dropping it early would re-pair the rest.
   useEffect(() => {
-    if (!pendingAdd) return
-    const baseIds = pendingAdd.baseIds
-    if (sets.some((s) => !baseIds.has(s.id))) setPendingAdd(null)
-  }, [sets, pendingAdd])
+    if (pendingAdds.length === 0) return
+    if (matchPendingAdds(sets, pendingAdds).waiting.length === 0) setPendingAdds([])
+  }, [sets, pendingAdds])
 
   // Keep rows mounted until their height has collapsed, then commit the
   // batch once so store recomputation cannot interrupt the visible motion.
@@ -1306,14 +1321,9 @@ export function SetLoggerScreen({ route, navigation }: any) {
       if (leavingIds.has(s.id)) continue
       logged++
     }
-    // `pendingAdd` clears one render after the real row lands. Count it only
-    // while the real row has yet to land, so that render never double-counts.
-    if (
-      pendingAdd?.baseIds &&
-      !sets.some((s) => !pendingAdd.baseIds.has(s.id))
-    ) {
-      logged++
-    }
+    // `pendingAdds` clears one render after the real rows land. Count only
+    // the placeholders whose row has yet to land, so that never double-counts.
+    logged += matchPendingAdds(sets, pendingAdds).waiting.length
     // Planned-set path: count the row until `sets` reports it logged.
     if (
       optimisticPlannedId != null &&
@@ -1322,7 +1332,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
       logged++
     }
     return logged + 1
-  }, [sets, pendingAdd, optimisticPlannedId, leavingIds])
+  }, [sets, pendingAdds, optimisticPlannedId, leavingIds])
 
   // Editing an existing set does not change what comes next, so the card holds
   // still. Without this it jumps as a side effect of tapping a row, which reads
@@ -1437,7 +1447,18 @@ export function SetLoggerScreen({ route, navigation }: any) {
     if (we) restTimer.setLogged(we.exercise.name, atMs)
   }
 
+  // Placeholder keys are tap times, kept unique so two taps in the same
+  // millisecond still get their own rows.
+  function nextPendingKey() {
+    const last = pendingAdds[pendingAdds.length - 1]?.key ?? 0
+    return Math.max(Date.now(), last + 1)
+  }
+
   function save() {
+    // The second tap of a double tap on Update: the edit is already saved.
+    if (editingSetId == null && Date.now() - editSavedAtRef.current < EDIT_MS + ANIM_SLACK_MS) {
+      return
+    }
     Keyboard.dismiss()
     setError(null)
     const formError = setFormError(weight, reps, isCardio)
@@ -1476,6 +1497,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
         setEditingSetId(null)
         setEditingRestAnchorIso(null)
         const loggedAt = Date.now()
+        editSavedAtRef.current = loggedAt
         if (editingPlanned) startRestTimer(loggedAt)
         setTimeout(() => {
           if (editingPlanned) {
@@ -1495,17 +1517,17 @@ export function SetLoggerScreen({ route, navigation }: any) {
         // fade starts on click instead of after the mutation commits.
         const w = isCardio ? weight : toKg(weight, unit)
         const r = reps
-        setPendingAdd({
+        const add: PendingAdd = {
           weight: w,
           reps: r,
-          key: Date.now(),
-          baseLen: sets.length,
+          key: nextPendingKey(),
           baseIds: new Set(sets.map((s) => s.id)),
           isPr: false,
           isPosPr: false,
           position: 0,
           planned: true,
-        })
+        }
+        setPendingAdds((prev) => [...prev, add])
         requestAnimationFrame(() => {
           api.addPlannedSet(weId, { weight: w, reps: r })
         })
@@ -1530,9 +1552,12 @@ export function SetLoggerScreen({ route, navigation }: any) {
           // block the fade from starting.
           const w = isCardio ? weight : toKg(weight, unit)
           const r = reps
+          // Sets from earlier taps that are not in the store yet still count
+          // against this one: a second 100x5 is no PR after the first.
+          const unsaved = matchPendingAdds(sets, pendingAdds).waiting.filter((p) => !p.planned)
           const pr =
             resolved && exerciseId != null
-              ? predictPrFlags(exerciseId, resolved.weId, w, r)
+              ? predictPrFlags(exerciseId, resolved.weId, w, r, unsaved)
               : { isPr: false, isPosPr: false, position: 0 }
           // The record card may change height on this save, and its height
           // animation runs on the JS driver, so the store commit - PR
@@ -1551,19 +1576,19 @@ export function SetLoggerScreen({ route, navigation }: any) {
           const cardMayResize = showLastTime
           // One timestamp for the placeholder row (the in-app ticker's
           // anchor) and the timer outside the app, so the two agree.
-          const savedAt = Date.now()
+          const savedAt = nextPendingKey()
           startRestTimer(savedAt)
-          setPendingAdd({
+          const add: PendingAdd = {
             weight: w,
             reps: r,
             key: savedAt,
-            baseLen: sets.length,
             baseIds: new Set(sets.map((s) => s.id)),
             isPr: pr.isPr,
             isPosPr: pr.isPosPr,
             position: pr.position,
             planned: false,
-          })
+          }
+          setPendingAdds((prev) => [...prev, add])
           // Capture resolved at click time. If still null, this is the
           // first save on a brand-new workout/exercise — lazy-create the
           // workout + WE inside the same rAF as addSet so all three
@@ -1583,10 +1608,23 @@ export function SetLoggerScreen({ route, navigation }: any) {
           // The row keeps the time of the tap, not of this deferred commit:
           // the in-app ticker counts from it, and so does the timer outside
           // the app (startRestTimer above).
-          const createdAt = new Date(savedAt).toISOString()
+          saveQueueRef.current.push({
+            weight: w,
+            reps: r,
+            createdAt: new Date(savedAt).toISOString(),
+          })
           const runMutation = () => {
+            cancelSaveRef.current = null
+            const queue = saveQueueRef.current.splice(0)
+            if (queue.length === 0) return
+            const addAll = (weId: number) =>
+              batchMutations(() => {
+                for (const q of queue) {
+                  api.addSet(weId, { weight: q.weight, reps: q.reps, created_at: q.createdAt })
+                }
+              })
             if (wasResolved) {
-              api.addSet(wasResolved.weId, { weight: w, reps: r, created_at: createdAt })
+              addAll(wasResolved.weId)
               return
             }
             if (!pending) return
@@ -1603,12 +1641,17 @@ export function SetLoggerScreen({ route, navigation }: any) {
             // alone so they keep their own fade-ins.
             LayoutAnimation.configureNext(SHIFT_ANIM)
             setResolved(ids)
-            api.addSet(ids.weId, { weight: w, reps: r, created_at: createdAt })
+            addAll(ids.weId)
           }
+          // A tap while a write is waiting pushes the write back to clear
+          // this tap's card animation too; the queue then lands in one commit.
+          cancelSaveRef.current?.()
           if (cardMayResize) {
-            deferPastAnimation(runMutation, LAST_TIME_COLLAPSE_MS)
+            const t = setTimeout(runMutation, LAST_TIME_COLLAPSE_MS + ANIM_SLACK_MS)
+            cancelSaveRef.current = () => clearTimeout(t)
           } else {
-            requestAnimationFrame(runMutation)
+            const f = requestAnimationFrame(runMutation)
+            cancelSaveRef.current = () => cancelAnimationFrame(f)
           }
         }
       }
@@ -1703,7 +1746,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
               exerciseName={we.exercise.name}
               workoutDate={workout.date}
               selectedIds={selectedIds}
-              pendingAdd={pendingAdd}
+              pendingAdds={pendingAdds}
               leavingIds={leavingIds}
               onDeleteExited={finishRowDelete}
               swipeHold={swipeHold}
@@ -4217,7 +4260,7 @@ const SetList = memo(function SetList({
   exerciseName,
   workoutDate,
   selectedIds,
-  pendingAdd,
+  pendingAdds,
   leavingIds,
   onDeleteExited,
   swipeHold,
@@ -4239,17 +4282,7 @@ const SetList = memo(function SetList({
   exerciseName: string
   workoutDate: string
   selectedIds: number[]
-  pendingAdd: {
-    weight: number
-    reps: number
-    key: number
-    baseLen: number
-    baseIds: Set<number>
-    isPr: boolean
-    isPosPr: boolean
-    position: number
-    planned: boolean
-  } | null
+  pendingAdds: PendingAdd[]
   leavingIds: Set<number>
   onDeleteExited: (id: number) => void
   swipeHold: SwipeHold
@@ -4265,7 +4298,7 @@ const SetList = memo(function SetList({
   // A row that unmounts mid-drag never dispatches its release.
   useEffect(() => () => swipeHold.releaseAll(), [swipeHold])
 
-  const emptying = !pendingAdd && sets.every((set) => leavingIds.has(set.id))
+  const emptying = pendingAdds.length === 0 && sets.every((set) => leavingIds.has(set.id))
   // A manual reset or stop from the ticker's menu. Not a set: it only moves
   // what the ticker counts from (tickerAnchor), and only on this workout's day.
   const timerMark = useSyncExternalStore(restTimer.subscribeMark, restTimer.getMark)
@@ -4283,7 +4316,7 @@ const SetList = memo(function SetList({
   )
   const listAnchorMs = tickerAnchor(
     lastSetAnchorMs({
-      pendingAddMs: pendingAdd?.key ?? null,
+      pendingAddMs: pendingAdds[pendingAdds.length - 1]?.key ?? null,
       sets,
       fallbackIso: prevWorkoutLastSetIso,
     }),
@@ -4302,39 +4335,33 @@ const SetList = memo(function SetList({
       )}
     </View>
   )
-  // The optimistic row is a real SetRow fed a synthetic set, so it is pixel
+  // Each optimistic row is a real SetRow fed a synthetic set, so it is pixel
   // identical to the row the store will produce: same index column, rest
-  // label, divider, and star. Once the real row lands it renders under the
+  // label, divider, and star. Once a real row lands it renders under its
   // placeholder's key, so React updates that instance in place: no swap, no
   // remount, and the fade-in that began on the click frame runs on.
-  const landedId = pendingAdd
-    ? sets.find((s) => !pendingAdd.baseIds.has(s.id))?.id ?? null
-    : null
+  // Placeholders take ids -1, -2, ... in tap order.
+  const { landed, waiting } = matchPendingAdds(sets, pendingAdds)
   const keyOverrides = useRef(new Map<number, string>()).current
-  if (pendingAdd && landedId != null) {
-    keyOverrides.set(landedId, `pending-${pendingAdd.key}`)
-  }
-  const placeholder: WorkoutSet | null =
-    pendingAdd && landedId == null
-      ? {
-          id: -1,
-          weight: pendingAdd.weight,
-          reps: pendingAdd.reps,
-          distance_m: null,
-          distance_unit_display: "",
-          time_seconds: null,
-          is_pr: pendingAdd.isPr,
-          was_pr: false,
-          is_position_pr: pendingAdd.isPosPr,
-          was_position_pr: false,
-          note: "",
-          order: sets.length,
-          is_planned: pendingAdd.planned,
-          // addSet stamps "now"; the click time is within a frame of it.
-          created_at: new Date(pendingAdd.key).toISOString(),
-        }
-      : null
-  const rows = placeholder ? [...sets, placeholder] : sets
+  for (const [id, add] of landed) keyOverrides.set(id, `pending-${add.key}`)
+  const placeholders: WorkoutSet[] = waiting.map((add, i) => ({
+    id: -1 - i,
+    weight: add.weight,
+    reps: add.reps,
+    distance_m: null,
+    distance_unit_display: "",
+    time_seconds: null,
+    is_pr: add.isPr,
+    was_pr: false,
+    is_position_pr: add.isPosPr,
+    was_position_pr: false,
+    note: "",
+    order: sets.length + i,
+    is_planned: add.planned,
+    // addSet stamps "now"; the click time is within a frame of it.
+    created_at: new Date(add.key).toISOString(),
+  }))
+  const rows = placeholders.length ? [...sets, ...placeholders] : sets
 
   // Per-row rest labels. Anchor on the most recent prior *logged* set:
   // planned rows have synthetic created_at and shouldn't anchor real rest.
@@ -4353,9 +4380,9 @@ const SetList = memo(function SetList({
     >
     {rows.length > 0 && <View style={styles.setListCard}>
       {rows.map((s, i) => {
-        const pending = s.id === -1
-        const key = pending && pendingAdd
-          ? `pending-${pendingAdd.key}`
+        const pending = s.id < 0
+        const key = pending
+          ? `pending-${waiting[-1 - s.id].key}`
           : keyOverrides.get(s.id) ?? String(s.id)
         return (
           <SetRow
@@ -4788,7 +4815,10 @@ const styles = StyleSheet.create({
   },
   setIndex: { width: 24, color: theme.colors.muted, fontSize: theme.fontSize.base, fontWeight: "700" },
   setIndexCol: { width: 36, alignItems: "flex-start", justifyContent: "center" },
-  setRestLabel: { color: theme.colors.muted, fontSize: 9, fontWeight: "500", marginTop: 1 },
+  // Wider than its 36pt column: "28m 13s" needs about 36 and wrapped onto a
+  // second line. The overflow runs into the gap before the centered weight,
+  // so the label stays on one line without moving the row's columns.
+  setRestLabel: { width: 60, color: theme.colors.muted, fontSize: 9, fontWeight: "500", marginTop: 1 },
   // The row's weight and reps: a box in the old layout slot, holding the
   // text that marks a change (ChangedText).
   setWeightBox: { flex: 1 },
