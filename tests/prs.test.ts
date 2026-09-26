@@ -25,7 +25,7 @@ describe("current PR (is_pr)", () => {
     expect(flags(s.id).is_pr).toBe(true)
   })
 
-  it("moves the gold star when a later set dominates, but keeps was_pr sticky", () => {
+  it("moves the gold star when a later set dominates, and the dethroned set keeps was_pr", () => {
     const w1 = M.createWorkout("2026-01-01").row
     const we1 = M.addExerciseToWorkout(w1.id, 1)
     const s1 = M.addSet(we1.id, { weight: 100, reps: 5 })
@@ -284,5 +284,82 @@ describe("weights that display the same compare the same", () => {
 
     expect(flags(first.id).is_pr).toBe(true)
     expect(flags(second.id).is_pr).toBe(false)
+  })
+})
+
+// The historical star (was_pr) used to be sticky on live changes and derived
+// only on import or migration, so an edit, a delete or a set logged on a past
+// day left stars an import would not give. Live flags must now match a
+// from-scratch pass after any of those.
+describe("historical PRs after edits", () => {
+  const allFlags = () =>
+    currentSnapshot().sets.map((s) => [s.id, s.is_pr, s.was_pr, s.is_position_pr, s.was_position_pr])
+  function expectMatchesFromScratch() {
+    const live = allFlags()
+    M.recomputeAllPrs()
+    expect(live).toEqual(allFlags())
+  }
+  function day(date: string, sets: [number, number][]) {
+    const wex = M.addExerciseToWorkout(M.createWorkout(date).row.id, 1)
+    return sets.map(([weight, reps]) => M.addSet(wex.id, { weight, reps }).id)
+  }
+
+  it("drops the star from a record edited down", () => {
+    day("2026-01-01", [[80, 5]])
+    const [typo] = day("2026-01-02", [[100, 5]])
+    M.updateSet(typo, { weight: 50 })
+    expect(flags(typo)).toMatchObject({ is_pr: false, was_pr: false })
+    expectMatchesFromScratch()
+  })
+
+  it("drops the stars from later sets when an older set is edited above them", () => {
+    const [old] = day("2026-01-01", [[60, 5]])
+    const [mid] = day("2026-01-02", [[70, 5]])
+    day("2026-01-03", [[80, 5]])
+    M.updateSet(old, { weight: 90 })
+    expect(flags(mid).was_pr).toBe(false)
+    expectMatchesFromScratch()
+  })
+
+  it("gives the star back to sets a deleted typo had blocked", () => {
+    const [typo] = day("2026-01-01", [[1000, 5]])
+    const [first] = day("2026-01-02", [[80, 5]])
+    day("2026-01-03", [[90, 5]])
+    M.deleteSet(typo)
+    expect(flags(first)).toMatchObject({ is_pr: false, was_pr: true })
+    expectMatchesFromScratch()
+  })
+
+  it("stars a set logged on a past day that was a record then", () => {
+    day("2026-01-05", [[100, 5]])
+    const [backfill] = day("2026-01-01", [[90, 5]])
+    expect(flags(backfill)).toMatchObject({ is_pr: false, was_pr: true })
+    expectMatchesFromScratch()
+  })
+
+  it("matches a from-scratch pass over a random run of adds, edits and deletes", () => {
+    let seed = 3
+    const random = (max: number) => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+      return seed % max
+    }
+    const ids: number[] = []
+    for (let step = 0; step < 120; step++) {
+      const roll = random(10)
+      if (roll < 5 || ids.length === 0) {
+        // Any day in a month, so some land before sets already logged.
+        const date = `2026-02-${String(1 + random(28)).padStart(2, "0")}`
+        const w = M.createWorkout(date).row
+        const wex = M.addExerciseToWorkout(w.id, 1)
+        ids.push(M.addSet(wex.id, { weight: 40 + random(8) * 5, reps: 1 + random(8) }).id)
+      } else if (roll < 8) {
+        M.updateSet(ids[random(ids.length)], { weight: 40 + random(8) * 5, reps: 1 + random(8) })
+      } else {
+        M.deleteSet(ids.splice(random(ids.length), 1)[0])
+      }
+      const live = allFlags()
+      M.recomputeAllPrs()
+      expect(allFlags()).toEqual(live)
+    }
   })
 })

@@ -608,7 +608,7 @@ export function recomputeAllPrs(): { recomputed: number } {
       snap.workout_exercises.map((we) => we.exercise_id)
     )
     for (const id of exerciseIds) {
-      next = recomputePrsForExercise(next, id, { deriveHistorical: true })
+      next = recomputePrsForExercise(next, id)
     }
     count = exerciseIds.size
     return next

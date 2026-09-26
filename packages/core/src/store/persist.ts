@@ -409,8 +409,7 @@ function applyPendingOps(snap: Snapshot, lines: string[]): Snapshot {
     // recorded pre-recompute, and `delete_set` is just an id), so replaying
     // them raw leaves is_pr / is_position_pr pointing at the wrong rows —
     // a deleted PR leaves no crown behind, and a new PR never gets one.
-    // Recomputing per-op rather than once at the end keeps the sticky
-    // was_pr / was_position_pr flags identical to the live mutation path.
+    // Recomputing per op matches the live mutation path step for step.
     out = recomputePrsForExercises(out, affected)
   }
   return out

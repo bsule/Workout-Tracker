@@ -41,14 +41,17 @@ export function sameEffort(o: Effort, s: Effort): boolean {
  * new set taken as the latest: any logged set that beats it or ties it rules
  * it out, overall and at its position. The mobile set logger calls it at tap
  * time so its placeholder row shows the right star before the (deferred)
- * mutation and the real recompute land.
+ * mutation and the real recompute land. `queued` holds sets already tapped
+ * into `weId` whose mutation has not landed yet (a fast second tap on Save):
+ * they count as logged sets after the existing ones, oldest first.
  */
 export function predictPrFlags(
   indexes: Pick<Indexes, "workoutExercisesByExercise" | "setsByWorkoutExercise">,
   exerciseId: number,
   weId: number,
   weight: number,
-  reps: number
+  reps: number,
+  queued: readonly Effort[] = []
 ): { isPr: boolean; isPosPr: boolean; position: number } {
   const wes = indexes.workoutExercisesByExercise.get(exerciseId) ?? []
   let isPr = true
@@ -59,9 +62,13 @@ export function predictPrFlags(
     if (s.weight == null || s.reps == null) continue
     loggedInTarget++
   }
-  const position = loggedInTarget + 1
+  const position = loggedInTarget + queued.length + 1
   let isPosPr = true
   const next: Effort = { weight, reps }
+  // Queued sets sit at earlier positions, so they only bear on the overall PR.
+  for (const prior of queued) {
+    if (dominatesEffort(prior, next) || sameEffort(prior, next)) isPr = false
+  }
   for (const we of wes) {
     const arr = (indexes.setsByWorkoutExercise.get(we.id) ?? [])
       .slice()
@@ -104,11 +111,7 @@ export function recomputePrsForExercises(
   return next
 }
 
-export function recomputePrsForExercise(
-  snap: Snapshot,
-  exerciseId: number,
-  opts: { deriveHistorical?: boolean } = {}
-): Snapshot {
+export function recomputePrsForExercise(snap: Snapshot, exerciseId: number): Snapshot {
   // PR logic only applies to weight×reps exercises. Cardio / time-only sets
   // are skipped — their is_pr stays false.
   const ex = snap.exercises.find((e) => e.id === exerciseId)
@@ -120,8 +123,11 @@ export function recomputePrsForExercise(
       .map((we) => we.id)
   )
   // A set is PR iff no *other* set dominates it — past or future. Once a
-  // later set beats it the gold star moves; the dethroned set keeps was_pr
-  // (sticky) and renders as the muted "historical PR" star.
+  // later set beats it the gold star moves, and the dethroned set renders as
+  // the muted "historical PR" star: was_pr, which holds when no *earlier* set
+  // matched or beat it. Both are derived from the rows on every pass, never
+  // carried over, so an edit, a delete or a set logged on a past day moves
+  // them the same way an import would.
   const workoutsById = new Map(snap.workouts.map((w) => [w.id, w]))
   const exercisesById = new Map(snap.workout_exercises.map((we) => [we.id, we]))
   const weToDate = new Map<number, string>()
@@ -154,9 +160,9 @@ export function recomputePrsForExercise(
     if (ot !== st) return ot < st
     return o.id < s.id
   }
-  // dominatesEffort / sameEffort above are the record rule; predictPrFlags
-  // uses the same two, so the set logger's preview and the saved flag agree.
-  const dominates = dominatesEffort
+  // Both passes below restate dominatesEffort / sameEffort above on weightKey
+  // (at least as heavy with at least as many reps). predictPrFlags calls those
+  // two directly, so the set logger's preview and the saved flag agree.
 
   type Cand = SetRow & { weight: number; reps: number }
   const computePrSets = (
@@ -176,20 +182,22 @@ export function recomputePrsForExercise(
       if (s.reps > maxReps) current.add(s.id)
       maxReps = Math.max(maxReps, s.reps)
     }
+    // An earlier set rules a set out when it dominates it or ties it, which
+    // together is: at least as heavy with at least as many reps. Walk in date
+    // order and keep only the earlier efforts no other earlier one covers.
+    // That frontier holds at most one entry per rep count, so this runs on
+    // every save without comparing each set against its whole history.
     const historical = new Set<number>()
-    if (opts.deriveHistorical) {
-      const ordered = pool
-        .slice()
-        .sort((a, b) => (isPriorTo(a, b) ? -1 : isPriorTo(b, a) ? 1 : 0))
-      const prior: Cand[] = []
-      for (const s of ordered) {
-        const hadPriorRecord = prior.some(
-          (o) =>
-            dominates(o, s) || (sameEffort(o, s) && isPriorTo(o, s))
-        )
-        if (!hadPriorRecord) historical.add(s.id)
-        prior.push(s)
-      }
+    const ordered = pool
+      .slice()
+      .sort((a, b) => (isPriorTo(a, b) ? -1 : isPriorTo(b, a) ? 1 : 0))
+    let frontier: { w: number; reps: number }[] = []
+    for (const s of ordered) {
+      const w = weightKey(s.weight)
+      if (frontier.some((f) => f.w >= w && f.reps >= s.reps)) continue
+      historical.add(s.id)
+      frontier = frontier.filter((f) => !(w >= f.w && s.reps >= f.reps))
+      frontier.push({ w, reps: s.reps })
     }
     return { current, historical }
   }
@@ -229,32 +237,21 @@ export function recomputePrsForExercise(
   const sets = snap.sets.map((s) => {
     if (!weIds.has(s.workout_exercise_id)) return s
     if (s.is_planned || s.weight == null || s.reps == null) {
-      const wasPr = opts.deriveHistorical ? false : s.was_pr
-      const wasPos = opts.deriveHistorical ? false : s.was_position_pr
-      if (
-        !s.is_pr &&
-        !s.is_position_pr &&
-        s.was_pr === wasPr &&
-        s.was_position_pr === wasPos
-      ) {
+      if (!s.is_pr && !s.is_position_pr && !s.was_pr && !s.was_position_pr) {
         return s
       }
       return {
         ...s,
         is_pr: false,
-        was_pr: wasPr,
+        was_pr: false,
         is_position_pr: false,
-        was_position_pr: wasPos,
+        was_position_pr: false,
       }
     }
     const isPr = overall.current.has(s.id)
-    const wasPr = opts.deriveHistorical
-      ? overall.historical.has(s.id)
-      : s.was_pr || isPr
+    const wasPr = overall.historical.has(s.id)
     const isPosPr = posCurrent.has(s.id)
-    const wasPosPr = opts.deriveHistorical
-      ? posHistorical.has(s.id)
-      : s.was_position_pr || isPosPr
+    const wasPosPr = posHistorical.has(s.id)
     if (
       s.is_pr === isPr &&
       s.was_pr === wasPr &&

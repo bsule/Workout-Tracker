@@ -20,14 +20,14 @@ live under `mobile/src`; they import those by relative path.
 |------|--------|
 | `units.test.ts` | kg/lb conversion, display formatting |
 | `seed.test.ts` | bundled exercise seed (id space, `isSeedId`) |
-| `blob.test.ts` | gzip serialize/parse + schema migrations v1→v8 (incl. day notes) |
+| `blob.test.ts` | gzip serialize/parse + schema migrations v1→v9 (incl. day notes) |
 | `indexes.test.ts` | snapshot → query indexes |
 | `materialize.test.ts` | view-model mapping, Brzycki 1RM, durations |
 | `queries.test.ts` | fuzzy match, exercise/workout/calendar/day-note queries |
 | `records.test.ts` | top-weight-per-rep records, overall and per position |
 | `mutations.test.ts` | every store mutation + cascade behavior (incl. `setDayNote`, and the `created_at` the set logger passes) |
-| `prs.test.ts` | PR / historical-PR / position-PR computation |
-| `predictPrFlags.test.ts` | the set logger's tap-time PR preview (`predictPrFlags` in `prs.ts`) matches the flags the store saves, over a random run of sets, and a tie with an earlier set is never a record |
+| `prs.test.ts` | PR / historical-PR / position-PR computation, and live flags matching a from-scratch pass after edits, deletes and sets logged on a past day |
+| `predictPrFlags.test.ts` | the set logger's tap-time PR preview (`predictPrFlags` in `prs.ts`) matches the flags the store saves, over a random run of sets and over bursts of sets tapped before any is written (a fast double tap on Save), and a tie with an earlier set is never a record |
 | `prsParity.test.ts` | randomized parity check: the incremental PR scan vs. pairwise rules |
 | `deleteSets.test.ts` | batched multi-set delete: one notification, records promoted |
 | `fitnotesCsv.test.ts` | FitNotes CSV import (incl. synthetic sample in `fixtures/`, built-in exercise names, kind mismatch with a built-in, deleted exercises, spacing and Unicode forms) |
@@ -40,7 +40,7 @@ live under `mobile/src`; they import those by relative path.
 | `sync.test.ts` | `CloudflareTransport` wire protocol (mocked `fetch`) |
 | `syncClock.test.ts` | the "last synced" clock and the daily `maybeAutoSync()` check |
 | `sharedHelpers.test.ts` | the helpers both clients share, lifted from the mobile screens: settings defaults (`readSettings`; 1RM off unless set), dates and the month grid, day/record/ago labels, durations and rest labels, the empty-workout rule, set-form prefill, gym name matching and rename checks |
-| `setLogger.test.ts` | set-logger rules both clients use (`@lift/core/setLogger`): form seed order, cardio and weight validation, rest editing, position counting, Last time card helpers |
+| `setLogger.test.ts` | set-logger rules both clients use (`@lift/core/setLogger`): form seed order, cardio and weight validation, rest editing, position counting, pairing saved rows with their tap-time placeholders (`matchPendingAdds`), Last time card helpers |
 | `exerciseStats.test.ts` | History / Graph / Summary derivations (`@lift/core/exerciseStats`): past days only, last-session pick, chart values and axis steps, rep-record rows |
 | `categoryStyles.test.ts` | the category styles model (`@lift/core/categoryStyles`): slugs, entry parsing, label/color edits, add/reset/remove |
 

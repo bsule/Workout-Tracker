@@ -1,5 +1,9 @@
 import type { Category, ExerciseKind, UserSettings, WorkoutStatus } from "../types"
 
+// v9: no shape change. was_pr / was_position_pr (the historical star) used to
+//     be sticky on live changes and derived only on import, so edits, deletes
+//     and sets logged on a past day left stale stars. They are now derived on
+//     every pass; the bump alone makes hydrate() run recomputeAllPrs() once.
 // v8: no shape change. PR comparison moved from raw kg floats to units.ts's
 //     weightKey, so every stored is_pr / is_position_pr flag computed under the
 //     old rule is stale. The bump alone makes hydrate() run recomputeAllPrs().
@@ -11,7 +15,7 @@ import type { Category, ExerciseKind, UserSettings, WorkoutStatus } from "../typ
 // v3: add soft-delete support to ExerciseRow.
 // v2: add kind to ExerciseRow, distance/time fields to SetRow.
 // Older snapshots are migrated in blob.ts:migrate().
-export const SCHEMA_VERSION = 8
+export const SCHEMA_VERSION = 9
 
 export interface ExerciseRow {
   id: number

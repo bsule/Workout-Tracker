@@ -117,6 +117,34 @@ export function nextSetPosition(
   return logged + 1
 }
 
+/** A tapped set whose store mutation has not landed yet. `baseIds` are the
+ *  set ids the list held at the tap. */
+export interface PendingSetAdd {
+  key: number
+  baseIds: ReadonlySet<number>
+}
+
+/**
+ * Pair saved rows with the placeholders that stood in for them. A fast second
+ * tap on Save queues a second placeholder before the first set lands, so the
+ * rows new since the first tap (not in its `baseIds`) are taken in list order
+ * and matched to the placeholders in tap order. Returns the matched pairs and
+ * the placeholders still waiting for their row.
+ */
+export function matchPendingAdds<P extends PendingSetAdd>(
+  sets: readonly Pick<WorkoutSet, "id">[],
+  pending: readonly P[]
+): { landed: [id: number, add: P][]; waiting: P[] } {
+  if (pending.length === 0) return { landed: [], waiting: [] }
+  const base = pending[0].baseIds
+  const fresh = sets.filter((s) => !base.has(s.id))
+  const landed: [number, P][] = []
+  for (let i = 0; i < pending.length && i < fresh.length; i++) {
+    landed.push([fresh[i].id, pending[i]])
+  }
+  return { landed, waiting: pending.slice(landed.length) }
+}
+
 /** Newest logged set time across a workout's exercises, skipping `skipWeId`.
  *  Anchors set 1's rest and the ticker before this exercise has a set. */
 export function latestOtherSetIso(
