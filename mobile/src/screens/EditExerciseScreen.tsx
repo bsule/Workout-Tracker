@@ -1,4 +1,4 @@
-import { useScreenSnapshot } from "../store/useScreenSnapshot"
+import { useScreenSnapshot, usePrepareScreenReturn } from "../store/useScreenSnapshot"
 import { useMemo, useState } from "react"
 import {
   Pressable,
@@ -19,6 +19,7 @@ import { CategoryChips } from "../components/CategoryChips"
 import { Input } from "../components/Input"
 
 export function EditExerciseScreen({ navigation, route }: any) {
+  const prepareReturn = usePrepareScreenReturn()
   const { exerciseId } = route.params
   const snapshot = useScreenSnapshot()
 
@@ -47,6 +48,7 @@ export function EditExerciseScreen({ navigation, route }: any) {
     setError(null)
     try {
       await api.patchExercise(exercise!.id, { name: trimmed, category })
+      prepareReturn()
       navigation.goBack()
     } catch (e: any) {
       setError(e?.message ?? "Failed to save")

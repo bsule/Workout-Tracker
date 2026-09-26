@@ -1,4 +1,4 @@
-import { useScreenSnapshot } from "../store/useScreenSnapshot"
+import { useScreenSnapshot, usePrepareScreenReturn } from "../store/useScreenSnapshot"
 import {
   memo,
   useCallback,
@@ -648,6 +648,7 @@ function SetRowFade({
 // so the web graph offers the same choices.
 
 export function SetLoggerScreen({ route, navigation }: any) {
+  const prepareReturn = usePrepareScreenReturn(route.params?.returnRouteKey)
   // `resolved` holds the real workoutId / weId once they exist in the
   // snapshot. We avoid mutating on screen entry (which would force a
   // post-slide buildIndexes + subscriber-emit + re-render hitch) by
@@ -928,31 +929,44 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // workout (no gym, no started_at, not planned), delete the workout too.
   useEffect(() => {
     const unsub = navigation.addListener("beforeRemove", () => {
-      // Deletes still held for a swipe must land before the checks below.
-      swipeHold.flush()
-      if (pendingAddRef.current) return
-      const w = getWorkoutQ(workoutId)
-      if (!w) return
-      const currentWe = w.exercises.find((e) => e.id === weId)
-      if (!currentWe) return
-      // Subtract sets that are mid-fade for delete — they're functionally
-      // gone, the api.deleteSet just hasn't fired yet. Without this, leaving
-      // the screen during the 180ms fade window leaves the workout/WE
-      // orphaned (the cleanup check sees a non-empty WE, the deferred
-      // deleteSet runs after we're gone).
-      const leaving = leavingIdsRef.current
-      const effectiveLen = currentWe.sets.filter((s) => !leaving.has(s.id)).length
-      if (effectiveLen > 0) return
-      const isOnlyExercise = w.exercises.length === 1
-      const isSideEffectWorkout = isOnlyExercise && isEmptyWorkoutShell(w)
-      if (isSideEffectWorkout) {
-        deleteWorkout(workoutId)
-      } else {
-        api.removeExerciseFromWorkout(workoutId, weId)
+      try {
+        // Deletes still held for a swipe must land before the checks below.
+        swipeHold.flush()
+        if (pendingAddRef.current) return
+        const w = getWorkoutQ(workoutId)
+        if (!w) return
+        const currentWe = w.exercises.find((e) => e.id === weId)
+        if (!currentWe) return
+        // Subtract sets that are mid-fade for delete — they're functionally
+        // gone, the api.deleteSet just hasn't fired yet. Without this, leaving
+        // the screen during the 180ms fade window leaves the workout/WE
+        // orphaned (the cleanup check sees a non-empty WE, the deferred
+        // deleteSet runs after we're gone).
+        const leaving = leavingIdsRef.current
+        const effectiveLen = currentWe.sets.filter((s) => !leaving.has(s.id)).length
+        if (effectiveLen > 0) return
+        const isOnlyExercise = w.exercises.length === 1
+        const isSideEffectWorkout = isOnlyExercise && isEmptyWorkoutShell(w)
+        if (isSideEffectWorkout) {
+          deleteWorkout(workoutId)
+        } else {
+          api.removeExerciseFromWorkout(workoutId, weId)
+        }
+      } finally {
+        // Include cleanup mutations, then refresh the day before the native
+        // back transition. Do not wake hidden lists on each set mutation.
+        prepareReturn()
       }
     })
-    return unsub
-  }, [navigation, workoutId, weId, swipeHold])
+    // Interactive back gestures can reveal the day before beforeRemove fires.
+    const stopTransition = navigation.addListener("transitionStart", (event: { data: { closing: boolean } }) => {
+      if (event.data.closing) prepareReturn()
+    })
+    return () => {
+      unsub()
+      stopTransition()
+    }
+  }, [navigation, workoutId, weId, swipeHold, prepareReturn])
 
   const showSummaryTab = useCallback(() => setTab("summary"), [])
 

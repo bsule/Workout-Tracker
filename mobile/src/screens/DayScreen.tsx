@@ -431,7 +431,9 @@ function DayContent({
   }, [interactive])
 
   const hydrated = useHydrated()
-  const snapshot = useScreenSnapshot()
+  // Prepare only the displayed day before the logger pops; adjacent pager
+  // pages and the other tabs keep their background subscriptions paused.
+  const snapshot = useScreenSnapshot(interactive)
 
   const rawWorkout = useMemo(
     () => (hydrated ? getWorkoutByDateQ(date) : undefined),
@@ -455,6 +457,7 @@ function DayContent({
     }
     return { ...rawWorkout, exercises: visibleExercises }
   }, [rawWorkout])
+
 
   function handleStart() {
     if (!workout || workout.status !== "planned") return
@@ -626,7 +629,7 @@ function DateNav({
   // than being gathered on press. DateNav subscribes here rather
   // than DayScreen doing it: this component is three buttons, while DayScreen
   // hosts the whole date pager and would re-render all of it.
-  const snapshot = useScreenSnapshot()
+  const snapshot = useScreenSnapshot(true)
 
   // The menu needs its items before the press, so this is derived on render
   // instead of gathered in an open handler. It is a few index lookups

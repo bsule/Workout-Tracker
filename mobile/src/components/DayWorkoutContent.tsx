@@ -20,7 +20,7 @@ interface Props {
 }
 
 export function DayWorkoutContent({ date, onPressExercise }: Props) {
-  const snapshot = useScreenSnapshot()
+  const snapshot = useScreenSnapshot(true)
   const workout = useMemo(() => getWorkoutByDateQ(date), [snapshot, date])
 
   if (!workout) {

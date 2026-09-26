@@ -24,7 +24,7 @@ import { formatExerciseSubtitle } from "../format"
 export function ExercisesScreen({ navigation }: any) {
   const [search, setSearch] = useState("")
   const openSwipeableRef = useRef<Swipeable | null>(null)
-  const snapshot = useScreenSnapshot()
+  const snapshot = useScreenSnapshot(true)
   const exercises = useMemo(
     () => listExercisesQ({ q: search || undefined, sort: "last_performed" }),
     [snapshot, search]

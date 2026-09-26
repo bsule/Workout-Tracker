@@ -1,3 +1,4 @@
+import { usePrepareScreenReturn } from "../store/useScreenSnapshot"
 import { useState } from "react"
 import { ScrollView, StyleSheet, Text, View } from "react-native"
 import { localApi as api } from "@lift/core"
@@ -7,6 +8,7 @@ import { theme } from "../theme/theme"
 import { useCategoryStyles } from "../categories/CategoryStylesProvider"
 
 export function NewExerciseScreen({ navigation, route }: any) {
+  const prepareReturn = usePrepareScreenReturn()
   const { date, workoutId } = route.params ?? {}
   const { categories, labels } = useCategoryStyles()
   const [name, setName] = useState("")
@@ -29,6 +31,7 @@ export function NewExerciseScreen({ navigation, route }: any) {
         const we = await api.addExerciseToWorkout(id, ex.id)
         navigation.replace("SetLogger", { workoutId: id, weId: we.id })
       } else {
+        prepareReturn()
         navigation.goBack()
       }
     } catch (e: any) {
