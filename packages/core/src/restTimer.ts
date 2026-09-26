@@ -149,3 +149,56 @@ export function lastSetAnchorMs({
   const parsed = Date.parse(fallbackIso)
   return Number.isFinite(parsed) ? parsed : null
 }
+
+export type SetsChangedAction =
+  | { kind: "none" }
+  | { kind: "end" }
+  // `setIso`: the created_at of the set it now counts from, or null when it
+  // counts from a reset.
+  | { kind: "move"; exerciseName: string; startedAt: number; setIso: string | null }
+
+/**
+ * What the timer outside the app does after the sets change, when it counts
+ * from a logged set. `anchorIso` is that set's created_at, and `workoutSets`
+ * are the sets of its workout (on `date`). While the set is there nothing
+ * changes. Once it is gone (deleted, its exercise removed, the workout
+ * deleted) the timer follows the in-app ticker: the newest logged set left,
+ * unless a later reset or stop on that day (tickerAnchor) says otherwise. It
+ * ends when that leaves nothing, or a start already past the cutoff. An edit
+ * that moves the set's time (its rest field) comes out as a move to the new
+ * time. `shownName` names a timer that now counts from a reset.
+ */
+export function decideOnSetsChanged({
+  anchorIso,
+  workoutSets,
+  date,
+  mark,
+  shownName,
+  now,
+  cutoffS,
+}: {
+  anchorIso: string
+  workoutSets: readonly { is_planned?: boolean; created_at: string; exerciseName: string }[]
+  date: string
+  mark: TimerMark | null
+  shownName: string
+  now: number
+  cutoffS: number
+}): SetsChangedAction {
+  let newest: { at: number; iso: string; exerciseName: string } | null = null
+  for (const s of workoutSets) {
+    // Planned rows carry a synthetic created_at and never anchor rest.
+    if (s.is_planned) continue
+    if (s.created_at === anchorIso) return { kind: "none" }
+    const at = Date.parse(s.created_at)
+    if (Number.isFinite(at) && (!newest || at > newest.at)) {
+      newest = { at, iso: s.created_at, exerciseName: s.exerciseName }
+    }
+  }
+  const startedAt = tickerAnchor(newest?.at ?? null, mark, date)
+  if (startedAt == null || now >= startedAt + cutoffS * 1000) return { kind: "end" }
+  if (newest && newest.at === startedAt) {
+    return { kind: "move", exerciseName: newest.exerciseName, startedAt, setIso: newest.iso }
+  }
+  return { kind: "move", exerciseName: shownName, startedAt, setIso: null }
+}

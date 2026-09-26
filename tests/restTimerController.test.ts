@@ -333,3 +333,114 @@ describe("rest timer controller", () => {
     })
   })
 })
+
+// A set can leave the store without the controller being told: a swipe
+// delete, removing the exercise, deleting the workout. The timer outside the
+// app must then follow the in-app ticker instead of counting on from it.
+describe("when the set the timer counts from goes", () => {
+  const DAY = "2026-09-21"
+
+  async function setup() {
+    const c = await load()
+    const M = await import("@lift/core/store/mutations")
+    const ex = M.createExercise({ name: "Bench Press", category: "chest" })
+    const w = M.createWorkout(DAY).row
+    const we = M.addExerciseToWorkout(w.id, ex.id)
+    // What the set logger does: the timer at the tap, the row a moment later.
+    const log = (atMs: number) => {
+      vi.setSystemTime(atMs)
+      c.setLogged("Bench Press", atMs)
+      return M.addSet(we.id, { weight: 100, reps: 5, created_at: new Date(atMs).toISOString() })
+    }
+    return { c, M, w, log }
+  }
+
+  it("ends the timer when its only set is deleted", async () => {
+    const { M, log } = await setup()
+    const set = log(T0)
+    await settle()
+    M.deleteSet(set.id)
+    await settle()
+    expect(native.calls).toEqual(["start Bench Press", "end"])
+    expect(native.shown).toBeNull()
+  })
+
+  it("counts from the set before when the newest is deleted", async () => {
+    const { M, log } = await setup()
+    log(T0)
+    const second = log(T0 + 90_000)
+    await settle()
+    M.deleteSet(second.id)
+    await settle()
+    expect(native.calls).toEqual(["start Bench Press", "update Bench Press", "update Bench Press"])
+    expect(native.shown).toEqual({ exerciseName: "Bench Press", startedAt: T0, endsAt: T0 + 360_000 })
+  })
+
+  it("stays stopped when the set logged after a stop is deleted", async () => {
+    const { c, M, log } = await setup()
+    log(T0)
+    await settle()
+    vi.setSystemTime(T0 + 30_000)
+    c.stop(DAY)
+    const after = log(T0 + 60_000)
+    await settle()
+    M.deleteSet(after.id)
+    await settle()
+    expect(native.calls).toEqual(["start Bench Press", "end", "start Bench Press", "end"])
+    expect(native.shown).toBeNull()
+  })
+
+  it("ends when the set left is past the cutoff", async () => {
+    const { M, log } = await setup()
+    log(T0)
+    const late = log(T0 + 400_000)
+    await settle()
+    M.deleteSet(late.id)
+    await settle()
+    expect(native.calls.at(-1)).toBe("end")
+  })
+
+  it("ends when the workout is deleted", async () => {
+    const { M, w, log } = await setup()
+    log(T0)
+    await settle()
+    M.deleteWorkout(w.id)
+    await settle()
+    expect(native.calls).toEqual(["start Bench Press", "end"])
+  })
+
+  it("leaves the timer alone before its set has landed, and after other edits", async () => {
+    const { M, log } = await setup()
+    const set = log(T0)
+    await settle()
+    M.updateSet(set.id, { reps: 6 })
+    M.createExercise({ name: "Row", category: "back" })
+    await settle()
+    expect(native.calls).toEqual(["start Bench Press"])
+  })
+
+  it("counts from a reset again when the set logged after it is deleted", async () => {
+    const { c, M, log } = await setup()
+    log(T0)
+    await settle()
+    vi.setSystemTime(T0 + 30_000)
+    c.reset("Bench Press", DAY)
+    const after = log(T0 + 60_000)
+    await settle()
+    M.deleteSet(after.id)
+    await settle()
+    expect(native.calls.at(-1)).toBe("update Bench Press")
+    expect(native.shown?.startedAt).toBe(T0 + 30_000)
+  })
+
+  it("does not bring back a timer that was stopped when an older set is deleted", async () => {
+    const { c, M, log } = await setup()
+    const first = log(T0)
+    log(T0 + 60_000)
+    await settle()
+    c.stop(DAY)
+    M.deleteSet(first.id)
+    await settle()
+    expect(native.calls).toEqual(["start Bench Press", "update Bench Press", "end"])
+  })
+})
