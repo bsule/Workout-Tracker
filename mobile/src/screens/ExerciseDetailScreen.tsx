@@ -31,7 +31,7 @@ type SubTab = Exclude<LoggerSubTab, "workout">
 export function ExerciseDetailScreen({ navigation, route }: any) {
   const { exerciseId } = route.params
   const snapshot = useScreenSnapshot()
-  const { weightUnit: unit, showOneRm } = useSettings()
+  const { weightUnit: unit } = useSettings()
   const [tab, setTab] = useState<SubTab>("history")
 
   const exercise: Exercise | null = useMemo(() => {

@@ -9,8 +9,6 @@ import { restTimerSettings } from "./restTimer"
 export interface DisplaySettings {
   weightUnit: WeightUnit
   firstDayOfWeek: 0 | 1
-  /** Off unless the user turned it on. */
-  showOneRm: boolean
   showPositionPrs: boolean
   showRestTime: boolean
   showTimeSinceLastSet: boolean
@@ -26,7 +24,6 @@ export function readSettings(settings: UserSettings): DisplaySettings {
   return {
     weightUnit: settings.weight_unit,
     firstDayOfWeek: settings.first_day_of_week,
-    showOneRm: !!settings.show_one_rm,
     showPositionPrs: settings.show_position_prs ?? true,
     showRestTime: settings.show_rest_time ?? true,
     showTimeSinceLastSet: settings.show_time_since_last_set ?? true,

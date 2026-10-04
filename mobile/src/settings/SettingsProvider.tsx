@@ -15,7 +15,6 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [
       settings.weight_unit,
       settings.first_day_of_week,
-      settings.show_one_rm,
       settings.show_position_prs,
       settings.show_rest_time,
       settings.show_time_since_last_set,
