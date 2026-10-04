@@ -31,7 +31,7 @@ describe("exercise history source rows", () => {
 
   it("keeps history stable for settings and another exercise's sets", () => {
     const before = getExerciseHistorySourceRowsQ(100)
-    updateSettings({ show_one_rm: true })
+    updateSettings({ show_position_prs: false })
     expect(sameExerciseHistorySourceRows(before, getExerciseHistorySourceRowsQ(100))).toBe(true)
     addSet(11, { weight: 105, reps: 5 })
     expect(sameExerciseHistorySourceRows(before, getExerciseHistorySourceRowsQ(100))).toBe(true)

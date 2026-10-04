@@ -39,7 +39,6 @@ describe("readSettings", () => {
     expect(readSettings({ weight_unit: "kg", first_day_of_week: 0 })).toEqual({
       weightUnit: "kg",
       firstDayOfWeek: 0,
-      showOneRm: false,
       showPositionPrs: true,
       showRestTime: true,
       showTimeSinceLastSet: true,
@@ -49,17 +48,24 @@ describe("readSettings", () => {
     })
   })
 
+  it("ignores the retired per-set 1RM setting in older snapshots", () => {
+    const legacySettings = {
+      weight_unit: "lb",
+      first_day_of_week: 0,
+      show_one_rm: true,
+    } as const
+    expect(readSettings(legacySettings)).not.toHaveProperty("showOneRm")
+  })
+
   it("keeps explicit values", () => {
     const s = readSettings({
       weight_unit: "lb",
       first_day_of_week: 1,
-      show_one_rm: true,
       show_position_prs: false,
       show_rest_time: false,
       show_time_since_last_set: false,
       show_last_time: false,
     })
-    expect(s.showOneRm).toBe(true)
     expect(s.showPositionPrs).toBe(false)
     expect(s.showRestTime).toBe(false)
     expect(s.showTimeSinceLastSet).toBe(false)

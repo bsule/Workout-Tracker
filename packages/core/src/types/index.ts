@@ -118,9 +118,6 @@ export interface ExerciseHistoryDay {
 export interface UserSettings {
   weight_unit: "kg" | "lb"
   first_day_of_week: 0 | 1
-  /** Optional UI flag: when true, the set logger shows estimated 1RM next to
-   *  each logged set. Defaults to false when missing in older snapshots. */
-  show_one_rm?: boolean
   /** Optional UI flag: when true (default), set lists render a "{n}PR" badge
    *  for sets that are PRs at their set position. When false, only overall
    *  exercise PRs render. */

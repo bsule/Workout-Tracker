@@ -13,7 +13,6 @@ import {
   getWorkoutByDateQ,
   lastSetTimeOf,
   setDayNote,
-  setWorkoutNote,
   startPlannedWorkout,
   useHydrated,
   useStore,
@@ -40,15 +39,11 @@ interface Props {
   date: string
 }
 
-/** The day view carries two notes: one on the date, one on the session. */
-type NoteKind = "day" | "workout"
-
 interface NoteState {
   /** The date the sheet was opened on: a date change drops it, like mobile. */
   date: string
   open: boolean
   mode: "view" | "edit"
-  kind: NoteKind
   draft: string
   original: string
 }
@@ -133,19 +128,15 @@ export function DayView({ date }: Props) {
     date,
     open: false,
     mode: "view",
-    kind: "day",
     draft: "",
     original: "",
   })
   const noteOpen = noteState.open && noteState.date === date
 
   const openNoteSheet = useCallback(
-    (mode: "view" | "edit", kind: NoteKind) => {
-      const n =
-        kind === "day"
-          ? getDayNoteQ(date)
-          : (getState().indexes.workoutsByDate.get(date)?.notes ?? "")
-      setNoteState({ date, open: true, mode, kind, draft: n, original: n })
+    (mode: "view" | "edit") => {
+      const n = getDayNoteQ(date)
+      setNoteState({ date, open: true, mode, draft: n, original: n })
     },
     [date]
   )
@@ -156,12 +147,7 @@ export function DayView({ date }: Props) {
 
   function saveNote() {
     const text = noteState.draft.trim()
-    if (noteState.kind === "day") {
-      setDayNote(date, text)
-      return
-    }
-    const id = getState().indexes.workoutsByDate.get(date)?.id
-    if (id != null) setWorkoutNote(id, text)
+    setDayNote(date, text)
   }
 
   const deleteThisDaysWorkout = useCallback(async () => {
@@ -185,7 +171,7 @@ export function DayView({ date }: Props) {
     const items: ActionMenuItem[] = [
       {
         label: noteActionLabel(date, !!dayNote.trim()),
-        onSelect: () => openNoteSheet("edit", "day"),
+        onSelect: () => openNoteSheet("edit"),
       },
       {
         label: "Open calendar",
@@ -269,8 +255,7 @@ export function DayView({ date }: Props) {
                 <SummaryCard
                   workout={workout}
                   note={dayNote}
-                  onOpenDayNote={() => openNoteSheet("view", "day")}
-                  onOpenWorkoutNote={() => openNoteSheet("view", "workout")}
+                  onOpenDayNote={() => openNoteSheet("view")}
                 />
               )}
               {showBanner && workout && (
@@ -338,12 +323,8 @@ export function DayView({ date }: Props) {
       <NoteSheet
         open={noteOpen}
         mode={noteState.mode}
-        title={noteState.kind === "day" ? "Day notes" : "Workout notes"}
-        placeholder={
-          noteState.kind === "day"
-            ? "How did today go?"
-            : "How did the session go?"
-        }
+        title="Day notes"
+        placeholder="How did today go?"
         original={noteState.original}
         draft={noteState.draft}
         onChangeDraft={(draft) => setNoteState((s) => ({ ...s, draft }))}
@@ -359,12 +340,10 @@ function SummaryCard({
   workout,
   note,
   onOpenDayNote,
-  onOpenWorkoutNote,
 }: {
   workout: Workout | null
   note: string
   onOpenDayNote: () => void
-  onOpenWorkoutNote: () => void
 }) {
   // Start / end / duration whenever the workout has a real `started_at`: it
   // is set when a workout is created on its own day. Past workouts logged
@@ -376,7 +355,6 @@ function SummaryCard({
   const finished = lastTime ? formatTime(lastTime) : null
   const duration =
     hasTime && workout ? formatDuration(workoutDurationSeconds(workout)) : null
-  const workoutNote = workout?.notes ?? ""
 
   return (
     <div className="rounded-lg border border-border bg-foreground/[.02] px-4 py-3">
@@ -387,13 +365,6 @@ function SummaryCard({
           {duration && <SummaryMeta label="Duration" value={duration} />}
           {!!note.trim() && (
             <NoteRow label="Day note" note={note} onClick={onOpenDayNote} />
-          )}
-          {!!workoutNote.trim() && (
-            <NoteRow
-              label="Workout note"
-              note={workoutNote}
-              onClick={onOpenWorkoutNote}
-            />
           )}
         </div>
         {workout && <GymEditor workoutId={workout.id} gym={workout.gym} />}

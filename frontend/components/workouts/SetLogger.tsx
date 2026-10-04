@@ -20,13 +20,11 @@ import {
   localApi as api,
   batchMutations,
   deleteSets,
-  estimateOneRm,
   logPlannedSet,
 } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { defaultStep, formatWeight, fromKg, roundForDisplay, toKg } from "@/lib/units"
 import {
-  useShowOneRm,
   useShowPositionPrs,
   useShowRestTime,
   useShowTimeSinceLastSet,
@@ -632,10 +630,8 @@ function SetRow({
 }) {
   const unit = useWeightUnit()
   const showPositionPrs = useShowPositionPrs()
-  const showOneRm = useShowOneRm()
   const planned = !!s.is_planned
   const badge = setPrBadge(s, showPositionPrs)
-  const oneRm = !planned ? estimateOneRm(s.weight, s.reps) : 0
 
   // Hold to select, with mouse or touch. The click that ends a hold is
   // swallowed so it doesn't toggle the row straight back.
@@ -758,11 +754,7 @@ function SetRow({
         >
           {isCardio ? `Lvl ${s.reps ?? "-"}` : s.reps ?? "-"}
         </span>
-        {!isCardio && !planned && showOneRm && oneRm > 0 ? (
-          <span className="whitespace-nowrap text-[11px] font-semibold tabular-nums text-muted-foreground">
-            {formatWeight(oneRm, unit)} 1RM
-          </span>
-        ) : planned ? (
+        {planned ? (
           <span className="text-[11px] font-semibold italic text-muted-foreground">planned</span>
         ) : null}
       </div>

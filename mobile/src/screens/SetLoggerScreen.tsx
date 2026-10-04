@@ -45,7 +45,6 @@ import {
   defaultStep,
   deleteWorkout,
   deleteSets,
-  estimateOneRm,
   formatWeight,
   fromKg,
   getDayNoteQ,
@@ -712,7 +711,6 @@ export function SetLoggerScreen({ route, navigation }: any) {
   const unit = useWeightUnit()
   const step = defaultStep(unit)
   const {
-    showOneRm,
     showPositionPrs,
     showRestTime,
     showTimeSinceLastSet,
@@ -1738,7 +1736,6 @@ export function SetLoggerScreen({ route, navigation }: any) {
               sets={sets}
               unit={unit}
               isCardio={isCardio}
-              showOneRm={showOneRm}
               showPositionPrs={showPositionPrs}
               showRestTime={showRestTime}
               showTimeSinceLastSet={showTimeSinceLastSet}
@@ -3848,7 +3845,6 @@ type SetRowProps = {
   restLabel: string | null
   unit: "kg" | "lb"
   isCardio: boolean
-  showOneRm: boolean
   showPositionPrs: boolean
   registry: SwipeRegistry
   swipeHold: SwipeHold
@@ -3962,7 +3958,6 @@ const SetRow = memo(function SetRow({
   restLabel,
   unit,
   isCardio,
-  showOneRm,
   showPositionPrs,
   registry,
   swipeHold,
@@ -3985,7 +3980,6 @@ const SetRow = memo(function SetRow({
     []
   )
 
-  const oneRm = !s.is_planned ? estimateOneRm(s.weight, s.reps) : 0
   const isPr = !!s.is_pr
   const wasPr = !s.is_pr && !!s.was_pr
   const isPosPr = !s.is_pr && !s.was_pr && !!s.is_position_pr
@@ -4065,12 +4059,8 @@ const SetRow = memo(function SetRow({
             onChanging={onChanging}
           />
         </View>
-        {!isCardio && !s.is_planned && showOneRm && oneRm > 0 ? (
-          <Text style={styles.oneRm}>
-            {formatWeight(oneRm, unit)} 1RM
-          </Text>
-        ) : s.is_planned ? (
-          <Text style={[styles.oneRm, { fontStyle: "italic" }]}>
+        {s.is_planned ? (
+          <Text style={[styles.plannedLabel, { fontStyle: "italic" }]}>
             planned
           </Text>
         ) : null}
@@ -4252,7 +4242,6 @@ const SetList = memo(function SetList({
   sets,
   unit,
   isCardio,
-  showOneRm,
   showPositionPrs,
   showRestTime,
   showTimeSinceLastSet,
@@ -4274,7 +4263,6 @@ const SetList = memo(function SetList({
   sets: WorkoutSet[]
   unit: "kg" | "lb"
   isCardio: boolean
-  showOneRm: boolean
   showPositionPrs: boolean
   showRestTime: boolean
   showTimeSinceLastSet: boolean
@@ -4398,7 +4386,6 @@ const SetList = memo(function SetList({
             restLabel={showRestTime && !s.is_planned ? restLabels[i] : null}
             unit={unit}
             isCardio={isCardio}
-            showOneRm={showOneRm}
             showPositionPrs={showPositionPrs}
             registry={registry}
             swipeHold={swipeHold}
@@ -4926,7 +4913,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  oneRm: {
+  plannedLabel: {
     color: theme.colors.muted,
     fontSize: 11,
     fontWeight: "600",

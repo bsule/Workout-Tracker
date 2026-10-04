@@ -39,7 +39,7 @@ live under `mobile/src`; they import those by relative path.
 | `previewRemote.test.ts` | looking at the cloud copy (`previewRemote`, used by the conflict dialog and restore screens) keeps the device's etag, so the next Sync now is still refused instead of overwriting a newer cloud copy; taking the copy (`applyRemoteBytes`) adopts its etag |
 | `sync.test.ts` | `CloudflareTransport` wire protocol (mocked `fetch`) |
 | `syncClock.test.ts` | the "last synced" clock and the daily `maybeAutoSync()` check |
-| `sharedHelpers.test.ts` | the helpers both clients share, lifted from the mobile screens: settings defaults (`readSettings`; 1RM off unless set), dates and the month grid, day/record/ago labels, durations and rest labels, the empty-workout rule, set-form prefill, gym name matching and rename checks |
+| `sharedHelpers.test.ts` | the helpers both clients share, lifted from the mobile screens: settings defaults (`readSettings`, which ignores the retired `show_one_rm` key), dates and the month grid, day/record/ago labels, durations and rest labels, the empty-workout rule, set-form prefill, gym name matching and rename checks |
 | `setLogger.test.ts` | set-logger rules both clients use (`@lift/core/setLogger`): form seed order, cardio and weight validation, rest editing, position counting, pairing saved rows with their tap-time placeholders (`matchPendingAdds`), Last time card helpers |
 | `exerciseStats.test.ts` | History / Graph / Summary derivations (`@lift/core/exerciseStats`): past days only, last-session pick, chart values and axis steps, rep-record rows |
 | `categoryStyles.test.ts` | the category styles model (`@lift/core/categoryStyles`): slugs, entry parsing, label/color edits, add/reset/remove |

@@ -34,7 +34,6 @@ import {
   getWorkoutByDateQ,
   getDayNoteQ,
   setDayNote,
-  setWorkoutNote,
   deleteWorkout,
   workoutDurationSeconds,
 } from "@lift/core"
@@ -183,8 +182,6 @@ export function DayScreen({ navigation, route }: any) {
 
   const [noteSheetOpen, setNoteSheetOpen] = useState(false)
   const [noteSheetMode, setNoteSheetMode] = useState<"view" | "edit">("view")
-  // Which note the one shared sheet is editing: the date's or the session's.
-  const [noteKind, setNoteKind] = useState<NoteKind>("day")
   const [noteDraft, setNoteDraft] = useState("")
   const [noteOriginal, setNoteOriginal] = useState("")
 
@@ -196,29 +193,21 @@ export function DayScreen({ navigation, route }: any) {
   }, [date])
 
   const openNoteSheet = useCallback(
-    (mode: "view" | "edit", kind: NoteKind) => {
-      const n =
-        kind === "day"
-          ? getDayNoteQ(date)
-          : getState().indexes.workoutsByDate.get(date)?.notes ?? ""
+    (mode: "view" | "edit") => {
+      const n = getDayNoteQ(date)
       setNoteDraft(n)
       setNoteOriginal(n)
-      setNoteKind(kind)
       setNoteSheetMode(mode)
       setNoteSheetOpen(true)
     },
     [date]
   )
   const openNoteViewer = useCallback(
-    () => openNoteSheet("view", "day"),
+    () => openNoteSheet("view"),
     [openNoteSheet]
   )
   const openNoteEditor = useCallback(
-    () => openNoteSheet("edit", "day"),
-    [openNoteSheet]
-  )
-  const openWorkoutNoteViewer = useCallback(
-    () => openNoteSheet("view", "workout"),
+    () => openNoteSheet("edit"),
     [openNoteSheet]
   )
 
@@ -282,7 +271,6 @@ export function DayScreen({ navigation, route }: any) {
             onToggleSelected={isCurrent ? toggleSelected : noop}
             onClearSelection={isCurrent ? clearSelection : noop}
             onOpenNotes={isCurrent ? openNoteViewer : noop}
-            onOpenWorkoutNotes={isCurrent ? openWorkoutNoteViewer : noop}
           />
         </View>
       )
@@ -297,7 +285,6 @@ export function DayScreen({ navigation, route }: any) {
       toggleSelected,
       clearSelection,
       openNoteViewer,
-      openWorkoutNoteViewer,
     ]
   )
 
@@ -345,10 +332,8 @@ export function DayScreen({ navigation, route }: any) {
       <NoteSheet
         visible={noteSheetOpen}
         mode={noteSheetMode}
-        title={noteKind === "day" ? "Day notes" : "Workout notes"}
-        placeholder={
-          noteKind === "day" ? "How did today go?" : "How did the session go?"
-        }
+        title="Day notes"
+        placeholder="How did today go?"
         draft={noteDraft}
         original={noteOriginal}
         onChangeDraft={setNoteDraft}
@@ -358,12 +343,7 @@ export function DayScreen({ navigation, route }: any) {
           // The summary card grows or shrinks by the note's height. This
           // animates that shift; the note line's own fade-in is NoteReveal's.
           LayoutAnimation.configureNext(NOTE_SHIFT_ANIM)
-          if (noteKind === "day") {
-            setDayNote(date, noteDraft)
-            return
-          }
-          const id = getState().indexes.workoutsByDate.get(date)?.id
-          if (id != null) setWorkoutNote(id, noteDraft)
+          setDayNote(date, noteDraft)
         }}
       />
     </StaticSafeAreaView>
@@ -379,7 +359,6 @@ function DayContent({
   onToggleSelected,
   onClearSelection,
   onOpenNotes,
-  onOpenWorkoutNotes,
 }: {
   date: string
   navigation: any
@@ -389,7 +368,6 @@ function DayContent({
   onToggleSelected: (weId: number) => void
   onClearSelection: () => void
   onOpenNotes: () => void
-  onOpenWorkoutNotes: () => void
 }) {
   // The bar outlives selectionMode so it can play its exit. barCount holds the
   // last real count, or the label would read "0 selected" as it fades out.
@@ -547,9 +525,7 @@ function DayContent({
               <SummaryStrip
                 workout={workout ?? null}
                 note={dayNote}
-                workoutNote={workout?.notes ?? ""}
                 onOpenNotes={onOpenNotes}
-                onOpenWorkoutNotes={onOpenWorkoutNotes}
                 onOpenPicker={() => setGymPickerOpen(true)}
               />
             )}
@@ -708,9 +684,6 @@ function DateNav({
   )
 }
 
-/** The day screen carries two notes: one on the date, one on the session. */
-type NoteKind = "day" | "workout"
-
 function TodayPill({
   visible,
   onPress,
@@ -786,16 +759,12 @@ function TodayPill({
 function SummaryStrip({
   workout,
   note,
-  workoutNote,
   onOpenNotes,
-  onOpenWorkoutNotes,
   onOpenPicker,
 }: {
   workout: Workout | null
   note: string
-  workoutNote: string
   onOpenNotes: () => void
-  onOpenWorkoutNotes: () => void
   onOpenPicker: () => void
 }) {
   // Show start/end/duration whenever the workout has a real `started_at` -
@@ -833,22 +802,6 @@ function SummaryStrip({
             >
               <Text style={styles.summaryMetaLabel}>Day note</Text>
               <NotePreview note={note} style={styles.summaryNoteLine} />
-            </Pressable>
-          </NoteReveal>
-          <NoteReveal note={workoutNote} style={styles.summaryNoteReveal}>
-            <Pressable
-              onPress={onOpenWorkoutNotes}
-              unstable_pressDelay={0}
-              // Dim rather than wash: the row runs the width of the meta
-              // column, so a background fill reads as a bar across the card.
-              style={({ pressed }) => [
-                styles.summaryNoteHit,
-                pressed && { opacity: 0.55 },
-              ]}
-              hitSlop={8}
-            >
-              <Text style={styles.summaryMetaLabel}>Workout note</Text>
-              <NotePreview note={workoutNote} style={styles.summaryNoteLine} />
             </Pressable>
           </NoteReveal>
         </View>

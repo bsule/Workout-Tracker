@@ -45,12 +45,6 @@ export function useWeightUnit() {
 // The show_* defaults come from @lift/core/settings, the same reader the
 // mobile app uses, so a synced snapshot shows the same things on both.
 
-/** Whether to show estimated 1RM under each set in the logger. Off unless
- *  the user turned it on. */
-export function useShowOneRm(): boolean {
-  return readSettings(useSettings().settings).showOneRm
-}
-
 /** Whether to render per-set-position PR badges. Defaults to true. */
 export function useShowPositionPrs(): boolean {
   return readSettings(useSettings().settings).showPositionPrs

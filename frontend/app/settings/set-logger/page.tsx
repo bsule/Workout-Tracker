@@ -36,12 +36,6 @@ export default function SetLoggerSettingsPage() {
           onChange={(v) => void update({ show_time_since_last_set: v })}
         />
         <SwitchRow
-          label="Estimated 1RM"
-          subtitle="Your estimated one-rep max, under each set"
-          value={s.showOneRm}
-          onChange={(v) => void update({ show_one_rm: v })}
-        />
-        <SwitchRow
           label="Last time"
           subtitle="Your last session and top weights, under the set list"
           value={s.showLastTime}
