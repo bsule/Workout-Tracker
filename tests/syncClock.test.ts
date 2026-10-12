@@ -245,17 +245,19 @@ describe("maybeAutoSync", () => {
     expect(r).toEqual({ kind: "skipped", reason: "empty" })
   })
 
-  it("stays quiet until the first manual sync", async () => {
+  it("automatically pushes on open if the device has never synced", async () => {
     loadSnapshot(snapshotWithData())
     configureSyncClock(memoryClock())
     configureTransport()
+    mockFetch(okPush)
     const r = await autoSync.maybeAutoSync()
-    expect(r).toEqual({ kind: "skipped", reason: "never-synced" })
+    expect(r).toEqual({ kind: "synced" })
+    expect(getLastSyncedAt()).toBeGreaterThan(Date.now() - 5_000)
   })
 
-  it("does nothing when the last sync is under a day old", async () => {
+  it("does nothing when the last sync is under the sync period", async () => {
     loadSnapshot(snapshotWithData())
-    configureSyncClock(memoryClock(String(Date.now() - DAY + 60_000)))
+    configureSyncClock(memoryClock(String(Date.now() - 10 * 60 * 60 * 1000))) // 10 hours ago
     configureTransport()
     mockFetch(() => {
       throw new Error("must not reach the network")
@@ -264,7 +266,7 @@ describe("maybeAutoSync", () => {
     expect(r).toEqual({ kind: "skipped", reason: "not-due" })
   })
 
-  it("pushes once the clock is a day old, and resets it", async () => {
+  it("pushes once the clock is due, and resets it", async () => {
     loadSnapshot(snapshotWithData())
     const store = memoryClock(String(Date.now() - DAY - 1000))
     configureSyncClock(store)

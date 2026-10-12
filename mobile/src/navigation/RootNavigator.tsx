@@ -1,11 +1,14 @@
+import { useEffect } from "react"
 import { Pressable, StyleSheet, View } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import {
   createNavigationContainerRef,
   NavigationContainer,
   DefaultTheme,
+  type ParamListBase,
+  useNavigation,
 } from "@react-navigation/native"
-import { createNativeStackNavigator } from "@react-navigation/native-stack"
+import { createNativeStackNavigator, type NativeStackNavigationProp } from "@react-navigation/native-stack"
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs"
 import { useAuth } from "../auth/AuthProvider"
 import { isLight, theme } from "../theme/theme"
@@ -30,6 +33,8 @@ import { SetLoggerSettingsScreen } from "../screens/settings/SetLoggerSettingsSc
 import { RestTimerSettingsScreen } from "../screens/settings/RestTimerSettingsScreen"
 // import { AiPlanScreen } from "../screens/AiPlanScreen" // AI disabled for now
 import { TabFadeIn } from "../components/TabFadeIn"
+import { pickerOpeningGuard } from "./workoutPickerGuard"
+import { bindPickerPreload } from "./pickerLifecycle"
 
 const Stack = createNativeStackNavigator()
 const Tabs = createBottomTabNavigator()
@@ -70,7 +75,7 @@ const stackScreenOptions = {
   animationDuration: 180,
 }
 
-const navigationRef = createNavigationContainerRef()
+const navigationRef = createNavigationContainerRef<ParamListBase>()
 
 // Stub component used as the route target for the center "+" tab. The tab's
 // custom button intercepts the press and opens the picker sheet instead of
@@ -133,6 +138,11 @@ function TabIcon({
 }
 
 function MainTabs() {
+  const navigation = useNavigation<NativeStackNavigationProp<ParamListBase>>()
+  useEffect(() => bindPickerPreload(navigation, {
+    request: (callback) => requestIdleCallback(callback),
+    cancel: cancelIdleCallback,
+  }), [navigation])
   return (
     <>
       <Tabs.Navigator
@@ -191,11 +201,13 @@ function MainTabs() {
             tabBarButton: (props: any) => (
               <Pressable
                 accessibilityRole="button"
-                onPress={() => (navigationRef as any).navigate("ExercisePicker")}
-                // Pressable's iOS default delays onPress until pressOut +
-                // a scroll-detection window (~130ms). The "+" tab button
-                // isn't inside a scrollable, so the delay is pure latency
-                // — drop it so the picker push starts on touch-up.
+                accessibilityLabel="Add workout"
+                onPress={() => {
+                  if (!navigationRef.isReady()) return
+                  const state = navigationRef.getRootState()
+                  if (!state || state.routes[state.index]?.name !== "Main") return
+                  pickerOpeningGuard.open(() => navigationRef.navigate("ExercisePicker"))
+                }}
                 unstable_pressDelay={0}
                 style={[props.style, styles.fabBtn]}
               >
@@ -230,7 +242,14 @@ function MainTabs() {
 export function RootNavigator() {
   const { user } = useAuth()
   return (
-    <NavigationContainer theme={navTheme} ref={navigationRef}>
+    <NavigationContainer
+      theme={navTheme}
+      ref={navigationRef}
+      onReady={() => pickerOpeningGuard.reset()}
+      onStateChange={() => {
+        if (navigationRef.getCurrentRoute()?.name !== "ExercisePicker") pickerOpeningGuard.reset()
+      }}
+    >
       <Stack.Navigator screenOptions={stackScreenOptions}>
         {user ? (
           <>
@@ -273,10 +292,6 @@ export function RootNavigator() {
             <Stack.Screen
               name="ExercisePicker"
               component={ExercisePickerScreen}
-              // Standard right-to-left push. Using the native default keeps the
-              // picker → SetLogger transition (via navigation.replace) as a
-              // single continuous slide, and avoids the slower bottom-sheet
-              // feel of `slide_from_bottom`.
               options={{ headerShown: false }}
             />
             <Stack.Screen

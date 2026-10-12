@@ -65,6 +65,7 @@ import { useActiveDateAndSetter } from "../state/activeDate"
 import { addDays, todayString } from "../dates"
 import { formatDuration, labelForDate, noteActionLabel } from "@lift/core/format"
 import { isEmptyWorkoutShell, matchGymName } from "@lift/core/workouts"
+import { pickerOpeningGuard } from "../navigation/workoutPickerGuard"
 
 // ~6 year sliding window (3 each side of today). Generous enough that
 // the user effectively never hits the edge in normal use, and the
@@ -561,7 +562,9 @@ function DayContent({
         ) : (
           <Pressable
             onPress={() => {
-              if (interactive) navigation.navigate("ExercisePicker")
+              if (interactive && navigation.isFocused()) {
+                pickerOpeningGuard.open(() => navigation.navigate("ExercisePicker"))
+              }
             }}
             disabled={!interactive}
             style={({ pressed }) => [

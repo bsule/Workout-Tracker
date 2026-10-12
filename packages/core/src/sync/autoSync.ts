@@ -175,10 +175,10 @@ export function getCachedQuota(): Quota | null {
   return t.getCachedQuota()
 }
 
-/** Auto-sync fires when the clock is this old. */
-const AUTO_SYNC_PERIOD_MS = 24 * 60 * 60 * 1000
-/** After a failed attempt, stay off the network for this long. */
-const AUTO_SYNC_RETRY_MS = 6 * 60 * 60 * 1000
+/** Auto-sync fires when the clock is this old (20 hours: daily cadence with leeway for workout time variation). */
+export const AUTO_SYNC_PERIOD_MS = 20 * 60 * 60 * 1000
+/** After a failed attempt, stay off the network for this long before retrying on app open. */
+export const AUTO_SYNC_RETRY_MS = 15 * 60 * 1000
 
 let autoInFlight = false
 let lastAutoAttemptAt = 0
@@ -207,7 +207,7 @@ export type AutoSyncResult =
  * memory, so the common "not due" answer costs one subtraction — no disk, no
  * network, no render. Offline is not a special case: the push rejects, the
  * clock does not move, the sync stays due, and the cooldown keeps the app off
- * the network for 6 hours. Nothing is shown to the user either way.
+ * the network for 15 minutes. Nothing is shown to the user either way.
  *
  * Never throws.
  */
@@ -228,12 +228,12 @@ export async function maybeAutoSync(
 
   await loadSyncClock()
   const clock = getSyncClock()
-  // Never synced on this device. The first sync stays a deliberate act.
-  if (clock.lastSyncedAt === null) return skipped("never-synced")
   // A refused push stays refused until the user chooses pull or overwrite.
   // Retrying can only fail again, so stay off the network entirely.
   if (hasCloudConflict()) return skipped("cloud-newer")
-  if (now - clock.lastSyncedAt < AUTO_SYNC_PERIOD_MS) return skipped("not-due")
+  if (clock.lastSyncedAt !== null && now - clock.lastSyncedAt < AUTO_SYNC_PERIOD_MS) {
+    return skipped("not-due")
+  }
   if (lastAutoAttemptAt > 0 && now - lastAutoAttemptAt < AUTO_SYNC_RETRY_MS) {
     return skipped("cooling-down")
   }
