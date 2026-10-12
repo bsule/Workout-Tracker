@@ -355,7 +355,12 @@ export function RootNavigator() {
               // on nav-bar buttons. On iOS 26 that highlight is the liquid
               // glass back button, so the reason to avoid it is gone and the
               // custom chevron was the odd one out.
-              options={{ title: "" }}
+              options={({ route }) => ({
+                title: "",
+                // Disable before the first native frame; the logger restores
+                // swipe-back once opening and picker removal have finished.
+                gestureEnabled: !(route.params as { pickerRouteKey?: string } | undefined)?.pickerRouteKey,
+              })}
             />
           </>
         ) : (

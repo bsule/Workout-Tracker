@@ -1,4 +1,5 @@
 import { useScreenSnapshot, usePrepareScreenReturn } from "../store/useScreenSnapshot"
+import { useOpeningBackGuard } from "../navigation/useOpeningBackGuard"
 import {
   memo,
   useCallback,
@@ -661,6 +662,7 @@ function SetRowFade({
 // so the web graph offers the same choices.
 
 export function SetLoggerScreen({ route, navigation }: any) {
+  const openingFromPicker = useOpeningBackGuard(route.params?.pickerRouteKey)
   const prepareReturn = usePrepareScreenReturn(route.params?.returnRouteKey)
   // `resolved` holds the real workoutId / weId once they exist in the
   // snapshot. We avoid mutating on screen entry (which would force a
@@ -940,7 +942,10 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // animation. If the exercise was the only thing on a freshly-created
   // workout (no gym, no started_at, not planned), delete the workout too.
   useEffect(() => {
-    const unsub = navigation.addListener("beforeRemove", () => {
+    const unsub = navigation.addListener("beforeRemove", (event: { defaultPrevented: boolean }) => {
+      // An early Back is replayed after the picker handoff finishes.
+      // Cleanup belongs to that actual departure, not the deferred request.
+      if (openingFromPicker || event.defaultPrevented) return
       try {
         // Deletes still held for a swipe must land before the checks below.
         swipeHold.flush()
@@ -978,7 +983,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
       unsub()
       stopTransition()
     }
-  }, [navigation, workoutId, weId, swipeHold, prepareReturn])
+  }, [navigation, workoutId, weId, swipeHold, prepareReturn, openingFromPicker])
 
   const showSummaryTab = useCallback(() => setTab("summary"), [])
 
