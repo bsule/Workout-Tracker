@@ -9,7 +9,7 @@ A mobile-first workout tracker inspired by [FitNotes](http://www.fitnotesapp.com
 - **Plan ahead.** Build routines on the calendar, or have an AI model draft a plan with your own API key (Anthropic, OpenAI, Gemini, or DeepSeek).
 - **Take notes.** On a day, one exercise, or a single set.
 - **Bring your FitNotes history.** Import a FitNotes CSV export, and export back out as CSV, a FitNotes `.fitnotesdb` file, or JSON whenever you like.
-- **Keep your data safe.** Everything saves on the device and works offline. Sync to the cloud when you want to, and the phone app keeps its own restore points in case something goes wrong.
+- **Keep your data safe.** Everything saves on the device and works offline. Cloud sync runs automatically when you open the app and a sync is due, and you can also sync manually from Settings. The phone app keeps its own restore points in case something goes wrong.
 
 ## Install it on your phone
 

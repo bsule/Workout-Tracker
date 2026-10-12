@@ -29,11 +29,12 @@ type Mode = "pick" | "new"
 
 /**
  * Picker rendered as a stack screen. Picking
- * an exercise calls `navigation.replace("SetLogger", ...)` so the user goes
- * straight to the logger as a single transition (no two-stage animation
- * where the modal slides down and then SetLogger pushes in).
+ * an exercise pushes the logger. The logger removes this route after its
+ * opening transition, so Back goes to Main. Swipe-back is disabled during
+ * that handoff. Keeping the picker mounted during the push avoids
+ * snapshotting an outgoing replacement.
  */
-export function ExercisePickerScreen({ navigation }: any) {
+export function ExercisePickerScreen({ route, navigation }: any) {
   const [mode, setMode] = useState<Mode>("pick")
   const activeDate = useActiveDate()
   const [selectionReady, setSelectionReady] = useState(false)
@@ -74,7 +75,8 @@ export function ExercisePickerScreen({ navigation }: any) {
     selectionGuard.select(touchStartedAt, () => {
       leaving.current = true
       interaction.current?.block()
-      navigation.replace("SetLogger", {
+      navigation.push("SetLogger", {
+        pickerRouteKey: route.key,
         pendingCreate: {
           date: activeDate,
           exerciseId: ex.id,
