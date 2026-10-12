@@ -1,8 +1,7 @@
 import { useScreenSnapshot } from "../store/useScreenSnapshot"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
   FlatList,
-  InteractionManager,
   Keyboard,
   Pressable,
   StyleSheet,
@@ -23,11 +22,13 @@ import { useCategoryStyles } from "../categories/CategoryStylesProvider"
 import { formatExerciseSubtitle } from "../format"
 import { CategoryChips } from "../components/CategoryChips"
 import { NewExerciseView } from "../components/NewExerciseView"
+import { createPickerSelectionGuard } from "../navigation/workoutPickerGuard"
+import { bindPickerInteraction } from "../navigation/pickerLifecycle"
 
 type Mode = "pick" | "new"
 
 /**
- * Picker rendered as a stack screen with `presentation: "modal"`. Picking
+ * Picker rendered as a stack screen. Picking
  * an exercise calls `navigation.replace("SetLogger", ...)` so the user goes
  * straight to the logger as a single transition (no two-stage animation
  * where the modal slides down and then SetLogger pushes in).
@@ -35,25 +36,60 @@ type Mode = "pick" | "new"
 export function ExercisePickerScreen({ navigation }: any) {
   const [mode, setMode] = useState<Mode>("pick")
   const activeDate = useActiveDate()
+  const [selectionReady, setSelectionReady] = useState(false)
+  const leaving = useRef(false)
+  const selectionGuard = useRef(createPickerSelectionGuard()).current
+  const interaction = useRef<ReturnType<typeof bindPickerInteraction> | null>(null)
+
+  // Preloaded screens receive a new navigation object when they become active.
+  // Rebind here, before paint, so the opening completion is observed.
+  useLayoutEffect(() => {
+    const controller = bindPickerInteraction(navigation, selectionGuard, setSelectionReady, {
+      request: requestAnimationFrame,
+      cancel: cancelAnimationFrame,
+      now: () => performance.now(),
+    })
+    interaction.current = controller
+    return () => {
+      controller.dispose()
+      interaction.current = null
+    }
+  }, [navigation, selectionGuard])
+
+  useEffect(() => {
+    interaction.current?.rearm()
+  }, [mode])
 
   // Hand off the create-workout + add-exercise work to SetLogger itself.
   // Doing the mutations here would re-render every snapshot subscriber on
   // the JS thread BEFORE the navigation message reaches native, blocking the
   // push animation. Forwarding only `pendingCreate` keeps this handler a
   // no-op: native gets the nav command immediately, the push animation
-  // starts, and SetLogger commits the mutations once the animation has
-  // settled. We pass the exercise name + category too so SetLogger can
+  // starts. SetLogger creates the workout on the first set save. We pass
+  // the exercise name + category too so SetLogger can
   // render its full UI shell from the very first frame, before the actual
   // workoutId/weId are resolved.
-  function gotoLogger(ex: Exercise) {
-    navigation.replace("SetLogger", {
-      pendingCreate: {
-        date: activeDate,
-        exerciseId: ex.id,
-        exerciseName: ex.name,
-        exerciseCategory: ex.category,
-      },
+  function gotoLogger(ex: Exercise, touchStartedAt?: number) {
+    if (leaving.current || !navigation.isFocused()) return
+    selectionGuard.select(touchStartedAt, () => {
+      leaving.current = true
+      interaction.current?.block()
+      navigation.replace("SetLogger", {
+        pendingCreate: {
+          date: activeDate,
+          exerciseId: ex.id,
+          exerciseName: ex.name,
+          exerciseCategory: ex.category,
+        },
+      })
     })
+  }
+
+  function close() {
+    if (leaving.current || !navigation.isFocused()) return
+    leaving.current = true
+    interaction.current?.block()
+    navigation.goBack()
   }
 
   return (
@@ -61,18 +97,21 @@ export function ExercisePickerScreen({ navigation }: any) {
       style={{ flex: 1, backgroundColor: theme.colors.background }}
       edges={["top"]}
     >
-      {mode === "pick" ? (
-        <PickView
-          onClose={() => navigation.goBack()}
-          onPick={gotoLogger}
-          onCreateNew={() => setMode("new")}
-        />
-      ) : (
-        <NewExerciseView
-          onBack={() => setMode("pick")}
-          onCreated={(ex) => gotoLogger(ex)}
-        />
-      )}
+      <View style={{ flex: 1 }}>
+        {mode === "pick" ? (
+          <PickView
+            onClose={close}
+            onPick={gotoLogger}
+            onCreateNew={() => setMode("new")}
+            selectionReady={selectionReady}
+          />
+        ) : (
+          <NewExerciseView
+            onBack={() => setMode("pick")}
+            onCreated={(ex) => gotoLogger(ex)}
+          />
+        )}
+      </View>
     </SafeAreaView>
   )
 }
@@ -81,48 +120,25 @@ function PickView({
   onClose,
   onPick,
   onCreateNew,
+  selectionReady,
 }: {
   onClose: () => void
-  onPick: (ex: Exercise) => void
+  onPick: (ex: Exercise, touchStartedAt?: number) => void
   onCreateNew: () => void
+  selectionReady: boolean
 }) {
   const [search, setSearch] = useState("")
   const [category, setCategory] = useState<string | null>(null)
   const searchRef = useRef<TextInput>(null)
   const snapshot = useScreenSnapshot()
-  // Defer the exercise-list query + FlatList until the picker's slide-in
-  // animation has fully settled. listExercisesQ iterates every exercise and
-  // annotates each with workouts_count + last_performed by joining through
-  // workout_exercises × sets — heavy enough to stutter the push animation if
-  // it runs on the same JS frames. `InteractionManager.runAfterInteractions`
-  // waits for the navigation transition to finish, so the chrome paints on
-  // the first frame, the slide stays smooth, and the list lands the moment
-  // the animation completes.
-  const [listReady, setListReady] = useState(false)
-  useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => setListReady(true))
-    return () => handle.cancel()
-  }, [])
-  // Gate the category chips and the FlatList shell off the very first commit
-  // so iOS native-stack can begin the picker's slide-in as soon as possible
-  // after the "+" tap. The header + search input are the only things visible
-  // during the slide; the chips + list shell mount one rAF later — invisible
-  // to the user since the slide hasn't finished yet.
-  const [chromeReady, setChromeReady] = useState(false)
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setChromeReady(true))
-    return () => cancelAnimationFrame(id)
-  }, [])
   const exercises = useMemo(
     () =>
-      listReady
-        ? listExercisesQ({
-            q: search || undefined,
-            category: category ?? undefined,
-            sort: "last_performed",
-          })
-        : [],
-    [snapshot, search, category, listReady]
+      listExercisesQ({
+        q: search || undefined,
+        category: category ?? undefined,
+        sort: "last_performed",
+      }),
+    [snapshot, search, category]
   )
 
   return (
@@ -154,45 +170,58 @@ function PickView({
         />
       </Pressable>
 
-      {/* Chips + list shell are off the first commit so iOS can start the
-       *  picker's slide as soon as possible. Both mount one rAF later. */}
-      {chromeReady && (
-        <CategoryChips
-          selected={category}
-          onSelect={(cat) => setCategory(category === cat ? null : cat)}
-          padded
-        />
-      )}
+      <CategoryChips
+        selected={category}
+        onSelect={(cat) => setCategory(category === cat ? null : cat)}
+        padded
+      />
 
-      {chromeReady && (
-        <FlatList
-          data={exercises}
-          keyExtractor={(e) => String(e.id)}
-          contentContainerStyle={{ paddingBottom: 40 }}
-          keyboardShouldPersistTaps="handled"
-          renderItem={({ item }) => <ExerciseRow ex={item} onPress={() => onPick(item)} />}
-          ItemSeparatorComponent={() => <View style={styles.sep} />}
-          ListEmptyComponent={
-            listReady ? (
-              <Text style={{ color: theme.colors.muted, padding: theme.spacing[4] }}>
-                No exercises match.
-              </Text>
-            ) : null
-          }
-        />
-      )}
+      <FlatList
+        data={exercises}
+        keyExtractor={(e) => String(e.id)}
+        contentContainerStyle={{ paddingBottom: 40 }}
+        keyboardShouldPersistTaps="handled"
+        extraData={selectionReady}
+        renderItem={({ item }) => (
+          <ExerciseRow
+            ex={item}
+            disabled={!selectionReady}
+            onPress={(startedAt) => onPick(item, startedAt)}
+          />
+        )}
+        ItemSeparatorComponent={() => <View style={styles.sep} />}
+        ListEmptyComponent={
+          <Text style={{ color: theme.colors.muted, padding: theme.spacing[4] }}>
+            No exercises match.
+          </Text>
+        }
+      />
     </Pressable>
   )
 }
 
-function ExerciseRow({ ex, onPress }: { ex: Exercise; onPress: () => void }) {
+function ExerciseRow({ ex, onPress, disabled }: {
+  ex: Exercise
+  onPress: (touchStartedAt?: number) => void
+  disabled: boolean
+}) {
+  const touchStartedAt = useRef<number | undefined>(undefined)
   const { colors: catColors } = useCategoryStyles()
   const dotColor =
     catColors[ex.category] ?? theme.colors.cat[ex.category] ?? theme.colors.muted
   const subtitle = formatExerciseSubtitle(ex)
   return (
     <Pressable
-      onPress={onPress}
+      disabled={disabled}
+      onPressIn={(event) => { touchStartedAt.current = event.nativeEvent.timestamp }}
+      onPress={(event) => {
+        // Accessibility activation may omit native touch data.
+        const startedAt = event.nativeEvent.timestamp == null
+          ? undefined
+          : touchStartedAt.current ?? event.nativeEvent.timestamp
+        touchStartedAt.current = undefined
+        onPress(startedAt)
+      }}
       style={({ pressed }) => [styles.row, pressedStyle(pressed)]}
     >
       <View style={[styles.rowDot, { backgroundColor: dotColor }]} />
