@@ -161,6 +161,6 @@ To deploy a change later, run `npm run db:apply:remote` (if you added a migratio
 
 ## Where your data lives
 
-- **Web:** in the browser, in OPFS, or IndexedDB when OPFS isn't available. Clearing site data deletes it, so sync first.
+- **Web:** in the browser, in OPFS, or IndexedDB when OPFS isn't available. Backup & Restore lists the previous save, a daily restore point, and an undo copy saved before replacing data from a file or the cloud. Recovery copies use IndexedDB and are scoped to your account. Clearing site data deletes all of these, so sync first. Only one tab edits data at a time: other tabs wait until the editor closes, then load the latest saved data. This requires a browser with Web Locks support.
 - **Phone:** in the app's file sandbox, with local restore points (the last save and one about a day old) you can roll back to from Settings → Backup & Restore.
 - **Cloud:** one snapshot per account in R2, written only when you sync. Each account can push 5 times per UTC day.

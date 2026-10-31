@@ -72,7 +72,7 @@ export function ExerciseSettingsPanel({
 
   return (
     <div className="space-y-6">
-      <form onSubmit={handleSave} className="space-y-4 rounded-xl border border-white/10 bg-white/[.02] p-5">
+      <form onSubmit={handleSave} className="space-y-4 rounded-xl border border-foreground/10 bg-foreground/[.02] p-5">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
           Exercise Details
         </p>
@@ -83,7 +83,7 @@ export function ExerciseSettingsPanel({
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="mt-1 w-full rounded-md border border-white/10 bg-white/[.04] px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="mt-1 w-full rounded-md border border-foreground/10 bg-foreground/[.04] px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </div>
 
@@ -92,7 +92,7 @@ export function ExerciseSettingsPanel({
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value as Category)}
-            className="mt-1 w-full rounded-md border border-white/10 bg-white/[.04] px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="mt-1 w-full rounded-md border border-foreground/10 bg-foreground/[.04] px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
           >
             {/* A category the list does not know (a FitNotes import keeps
                 unrecognized ones) stays an option, so saving the name does
@@ -120,7 +120,7 @@ export function ExerciseSettingsPanel({
         </p>
         <Link
           href="/one-rep-max"
-          className="group flex items-start gap-3 rounded-xl border border-white/10 bg-white/[.02] p-4 hover:border-white/20 hover:bg-white/[.04] transition-colors"
+          className="group flex items-start gap-3 rounded-xl border border-foreground/10 bg-foreground/[.02] p-4 hover:border-foreground/20 hover:bg-foreground/[.04] transition-colors"
         >
           <div className="flex-1">
             <p className="text-sm font-semibold text-foreground">

@@ -1,6 +1,10 @@
 import type { BlobStorage } from "@lift/core/store/storage"
 import { adoptLegacyIdbStore, IdbStorage } from "./idb"
 import { adoptLegacyOpfsStore, isOpfsAvailable, OpfsStorage } from "./opfs"
+import { RecoveryStorage } from "./recovery"
+
+let activeStorage: RecoveryStorage | null = null
+export function getActiveWebStorage() { return activeStorage }
 
 export type { BlobStorage } from "@lift/core/store/storage"
 
@@ -11,10 +15,9 @@ export function pickWebStorage(subPath: string): BlobStorage {
   if (typeof window === "undefined") {
     return new MemoryStorage()
   }
-  if (isOpfsAvailable()) {
-    return new OpfsStorage(subPath)
-  }
-  return new IdbStorage(subPath)
+  activeStorage = new RecoveryStorage(subPath,
+    isOpfsAvailable() ? new OpfsStorage(subPath) : new IdbStorage(subPath))
+  return activeStorage
 }
 
 /**

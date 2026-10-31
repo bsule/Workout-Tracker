@@ -10,6 +10,8 @@ import {
 import { DEFAULT_CATEGORIES, type Category } from "@/types"
 import {
   CATEGORY_STYLES_STORAGE_KEY,
+  DARK_CATEGORY_COLORS,
+  LIGHT_CATEGORY_COLORS,
   COLOR_PALETTE,
   addCategoryEntry,
   canResetCategory,
@@ -195,8 +197,9 @@ export function CategoryStylesProvider({
       const color = view.colors[c]
       if (color) decls.push(`--cat-${c}: ${color};`)
     }
-    if (decls.length === 0) return ""
-    return `:root{${decls.join("")}}`
+    const palette = (colors: Record<string, string>) =>
+      Object.entries(colors).map(([slug, color]) => `--cat-${slug}: ${color};`).join("")
+    return `:root,.dark{${palette(DARK_CATEGORY_COLORS)}${decls.join("")}}.light{${palette(LIGHT_CATEGORY_COLORS)}${decls.join("")}}`
   }, [view])
 
   return (

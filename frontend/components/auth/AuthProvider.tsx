@@ -21,13 +21,13 @@ import {
   clearSyncClock,
   configureSyncClock,
   sync as syncModule,
-  unloadStore,
 } from "@lift/core"
 import {
   readStoredEtag,
   webSyncClockStore,
   writeStoredEtag,
 } from "@/lib/syncStorage"
+import { unloadWebStore } from "@/lib/store/session"
 import { clearMark } from "@/lib/restTimerMark"
 
 const API_BASE =
@@ -42,6 +42,13 @@ const syncTransport = new CloudflareTransport({
 /** Point the core's sync clock at localStorage. Idempotent. */
 function installSyncClock() {
   configureSyncClock(webSyncClockStore)
+}
+
+/** Re-read sync metadata only after this tab becomes the sole store editor. */
+export function refreshWebSync() {
+  installSyncClock()
+  syncTransport.setEtag(readStoredEtag())
+  syncModule.configureSync(syncTransport)
 }
 
 interface AuthState {
@@ -139,7 +146,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // over to the next account (mobile's unloadForSignOut does the same).
     clearMark()
     try {
-      await unloadStore()
+      await unloadWebStore()
     } catch (e) {
       console.error("Failed to unload store on logout:", e)
     }

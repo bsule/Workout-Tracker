@@ -52,7 +52,7 @@ export function CategoryBadge({
     <span
       className={cn(
         "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
-        "bg-white/5 text-foreground/90 border border-white/10",
+        "bg-foreground/5 text-foreground/90 border border-foreground/10",
         className
       )}
     >

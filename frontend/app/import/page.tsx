@@ -22,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { FullPageLoader, LoadingBlock } from "@/components/ui/Spinner"
+import { saveRecoveryCopy } from "@/lib/store/restorePoints"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
@@ -133,7 +134,7 @@ function ImportExport({ username }: { username: string }) {
       const ok = await confirm({
         title: "Replace everything?",
         message:
-          "This permanently deletes every workout, exercise, and set currently in the app, then loads the file. Settings are kept. This cannot be undone.",
+          "This permanently deletes every workout, exercise, and set currently in the app, then loads the file. Settings are kept. A recovery copy will be saved in Backup & Restore.",
         confirmLabel: "Replace",
         destructive: true,
       })
@@ -142,6 +143,7 @@ function ImportExport({ username }: { username: string }) {
     setBusy("import")
     setError(null)
     try {
+      if (mode === "replace") await saveRecoveryCopy()
       const res =
         pending.kind === "snapshot"
           ? await importSnapshotJson(pending.text, { mode })
@@ -253,7 +255,7 @@ function ImportExport({ username }: { username: string }) {
             />
             <ModeRow
               title="Replace everything"
-              description="Wipes all current workouts, exercises, sets, and PRs. Settings are kept. Cannot be undone."
+              description="Wipes all current workouts, exercises, sets, and PRs. Settings are kept. A recovery copy is saved in Backup & Restore."
               checked={mode === "replace"}
               onSelect={() => setMode("replace")}
               disabled={busy === "import"}

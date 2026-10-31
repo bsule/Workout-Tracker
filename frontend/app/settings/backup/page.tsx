@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { LocalRestorePoints } from "@/components/sync/LocalRestorePoints"
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react"
 import {
   autoSync,
   formatLastSynced,
@@ -22,13 +23,12 @@ import {
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
 
-/**
- * Cloud sync, the web half of mobile's Backup & Restore screen. Mobile also
- * lists restore points (older copies kept on the phone); the web keeps one
- * copy in browser storage, so it has none.
- */
+type CloudAction = null | "sync" | "preview" | "apply" | "pull-stale" | "force-push"
+
 export default function BackupRestorePage() {
   const [error, setError] = useState<string | null>(null)
+  const [cloudBusy, setCloudBusy] = useState<CloudAction>(null)
+  const [restoring, setRestoring] = useState(false)
   return (
     <SettingsPage
       title="Backup & Restore"
@@ -36,17 +36,20 @@ export default function BackupRestorePage() {
     >
       {error && <p className="text-sm text-destructive">{error}</p>}
       <SettingsHeading>Cloud sync</SettingsHeading>
-      <CloudSyncCard onError={setError} />
+      <CloudSyncCard onError={setError} busy={cloudBusy} setBusy={setCloudBusy} disabled={restoring} />
+      <LocalRestorePoints disabled={cloudBusy !== null} onBusyChange={setRestoring} />
     </SettingsPage>
   )
 }
 
-function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
+function CloudSyncCard({ onError, busy, setBusy, disabled }: {
+  onError: (msg: string | null) => void
+  busy: CloudAction
+  setBusy: Dispatch<SetStateAction<CloudAction>>
+  disabled: boolean
+}) {
   const confirm = useConfirm()
   const [quota, setQuota] = useState<Quota | null>(null)
-  const [busy, setBusy] = useState<
-    null | "sync" | "preview" | "apply" | "pull-stale" | "force-push"
-  >(null)
   const [preview, setPreview] = useState<RemotePreview | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [clock, setClock] = useState<SyncClockSnapshot>(() => getSyncClock())
@@ -99,11 +102,10 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
   }
 
   async function pullCloudOverLocal() {
-    // Mobile saves an undo copy before a pull; the web keeps one copy, so ask
-    // first instead.
+    // Replacement also saves an undo copy in this browser.
     const ok = await confirm({
       title: "Replace this device's data?",
-      message: "The cloud copy replaces everything here. Changes not pushed yet will be gone.",
+      message: "The cloud copy replaces everything here. Your current data will be kept in local restore points.",
       destructive: true,
       confirmLabel: "Get cloud",
     })
@@ -170,7 +172,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
     const ok = await confirm({
       title: "Replace local data with cloud?",
       message:
-        "This wipes every workout, exercise, and set on this device, then loads the cloud copy. Cannot be undone.",
+        "This wipes every workout, exercise, and set on this device, then loads the cloud copy. Your current data will be kept in local restore points.",
       destructive: true,
       confirmLabel: "Replace",
     })
@@ -187,7 +189,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
     }
   }
 
-  const pushDisabled = busy != null || (quota != null && quota.remaining <= 0)
+  const pushDisabled = disabled || busy != null || (quota != null && quota.remaining <= 0)
   // Web keeps the reset time next to the count (mobile shows the count only).
   const resetsAt = quota?.resets_at ? formatResetTime(quota.resets_at) : null
 
@@ -217,7 +219,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
                 size="lg"
                 className="flex-1"
                 onClick={() => void pullCloudOverLocal()}
-                disabled={busy != null}
+                disabled={disabled || busy != null}
               >
                 {busy === "pull-stale" ? "Getting…" : "Get cloud"}
               </Button>
@@ -226,7 +228,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
                 size="lg"
                 className="flex-1"
                 onClick={() => void overwriteCloud()}
-                disabled={busy != null}
+                disabled={disabled || busy != null}
               >
                 {busy === "force-push" ? "Overwriting…" : "Overwrite cloud"}
               </Button>
@@ -255,7 +257,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
           variant="outline"
           className="flex-1"
           onClick={() => void loadPreview()}
-          disabled={busy != null}
+          disabled={disabled || busy != null}
         >
           {busy === "preview" ? "Loading…" : "Import from cloud"}
         </Button>
@@ -282,7 +284,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
               size="lg"
               className="flex-1"
               onClick={() => setPreview(null)}
-              disabled={busy === "apply"}
+              disabled={disabled || busy != null}
             >
               Cancel
             </Button>
@@ -291,7 +293,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
               size="lg"
               className="flex-1"
               onClick={() => void applyPreview()}
-              disabled={busy === "apply"}
+              disabled={disabled || busy != null}
             >
               {busy === "apply" ? "Replacing…" : "Replace local"}
             </Button>

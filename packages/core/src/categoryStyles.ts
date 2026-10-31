@@ -5,10 +5,32 @@
 // here touches the Snapshot, so nothing here syncs.
 //
 // Colors not set by the user are left out of `colors`; each client falls back
-// to its own theme's default category palette.
+// to the shared dark/light category palettes below.
 
 import { DEFAULT_CATEGORIES } from "./types"
 import type { Category } from "./types"
+
+export const DARK_CATEGORY_COLORS: Record<string, string> = {
+  abs: "#22d3ee",
+  back: "#22c55e",
+  biceps: "#ef4444",
+  cardio: "#facc15",
+  chest: "#ec4899",
+  legs: "#3b82f6",
+  shoulders: "#f97316",
+  triceps: "#8b5cf6",
+}
+
+export const LIGHT_CATEGORY_COLORS: Record<string, string> = {
+  abs: "#0e7490",
+  back: "#15803d",
+  biceps: "#b91c1c",
+  cardio: "#a16207",
+  chest: "#be185d",
+  legs: "#1d4ed8",
+  shoulders: "#c2410c",
+  triceps: "#6d28d9",
+}
 
 export const COLOR_PALETTE: string[] = [
   "#f87171",

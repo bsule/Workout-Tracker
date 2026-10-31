@@ -1,5 +1,5 @@
 "use client"
-import { setStorageFactory, flushOnHide } from "@lift/core"
+import { setStorageFactory, flushOnHide, getState } from "@lift/core"
 import { pickWebStorage } from "./storage"
 
 let installed = false
@@ -14,7 +14,7 @@ export function installWebStore() {
   installed = true
   setStorageFactory((sub) => pickWebStorage(sub))
   if (typeof window !== "undefined") {
-    const onHide = () => flushOnHide()
+    const onHide = () => { if (getState().hydrated) flushOnHide() }
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") onHide()
     })

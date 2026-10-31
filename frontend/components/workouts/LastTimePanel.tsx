@@ -85,7 +85,7 @@ export function LastTimePanel({
   const collapsedLine = last ? lastSessionSummary(last.sets, unit) : ""
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-card/60 shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset]">
+    <div className="rounded-2xl border border-foreground/10 bg-card/60 shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset]">
       <div className="flex items-center gap-2 px-4 pt-3 pb-2">
         <button
           type="button"
@@ -114,7 +114,7 @@ export function LastTimePanel({
           <Link
             href={`/calendar?date=${last.date}`}
             aria-label="Open this session on the calendar"
-            className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
           >
             <CalendarDays className="size-4" />
           </Link>
@@ -138,7 +138,7 @@ export function LastTimePanel({
                   {last.sets.map((s) => (
                     <span
                       key={s.id}
-                      className="inline-flex items-center rounded-full border border-white/10 bg-card px-2 py-1 text-xs font-bold tabular-nums text-foreground"
+                      className="inline-flex items-center rounded-full border border-foreground/10 bg-card px-2 py-1 text-xs font-bold tabular-nums text-foreground"
                     >
                       {formatWeight(s.weight, unit)}
                       <span className="mx-1 font-normal text-muted-foreground">×</span>
@@ -153,7 +153,7 @@ export function LastTimePanel({
               )}
               {top.length > 0 && (
                 <>
-                  <div className="border-t border-white/5 pt-2 text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                  <div className="border-t border-foreground/5 pt-2 text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
                     Top weights
                   </div>
                   {top.map((r) => (
@@ -177,7 +177,7 @@ export function LastTimePanel({
         <button
           type="button"
           onClick={onShowMore}
-          className="flex min-h-10 w-full items-center justify-center gap-1 rounded-b-2xl border-t border-white/10 text-xs font-bold text-foreground transition-colors hover:bg-white/[.03]"
+          className="flex min-h-10 w-full items-center justify-center gap-1 rounded-b-2xl border-t border-foreground/10 text-xs font-bold text-foreground transition-colors hover:bg-foreground/[.03]"
         >
           Show more
           <ChevronRight className="size-3.5 text-muted-foreground" />

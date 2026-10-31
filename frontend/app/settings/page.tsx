@@ -9,7 +9,6 @@ import {
   Palette,
   Pencil,
   SlidersHorizontal,
-  Sparkles,
 } from "lucide-react"
 import {
   hasCloudConflict,
@@ -126,16 +125,6 @@ export default function SettingsHubPage() {
           title="Customize categories"
           subtitle="Names and colors"
           href="/settings/categories"
-        />
-      </SettingsGroup>
-
-      <SettingsHeading>AI</SettingsHeading>
-      <SettingsGroup inset>
-        <NavRow
-          icon={Sparkles}
-          title="AI planning"
-          subtitle="Provider and API keys"
-          href="/settings/ai"
         />
       </SettingsGroup>
 

@@ -51,7 +51,7 @@ function PasswordStrength({ password }: { password: string }) {
           <div
             key={i}
             className={`h-1 flex-1 rounded-full transition-all ${
-              i <= score ? colors[score] : "bg-white/8"
+              i <= score ? colors[score] : "bg-foreground/8"
             }`}
           />
         ))}
@@ -114,7 +114,7 @@ export default function SignupPage() {
           </div>
 
           {/* Card */}
-          <div className="rounded-2xl border border-white/8 bg-card p-6 shadow-2xl">
+          <div className="rounded-2xl border border-foreground/8 bg-card p-6 shadow-2xl">
             <div className="mb-6 h-0.5 w-full rounded-full bg-gradient-to-r from-primary/60 via-primary to-primary/60" />
 
             <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">

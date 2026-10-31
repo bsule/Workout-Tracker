@@ -56,10 +56,10 @@ export function ExerciseChart({ history }: Props) {
   if (points.length === 0) {
     return (
       <div className="space-y-3">
-        <div className="rounded-2xl border border-white/[.12] bg-background p-4">
+        <div className="rounded-2xl border border-foreground/[.12] bg-background p-4">
           <ChartHeader label={headerLabel} value="-" unit={unit} count={0} />
           <LegendRow label={opt.label} right="-" />
-          <div className="flex h-[220px] items-center justify-center rounded-xl border border-dashed border-white/10 px-4 text-center text-sm text-muted-foreground">
+          <div className="flex h-[220px] items-center justify-center rounded-xl border border-dashed border-foreground/10 px-4 text-center text-sm text-muted-foreground">
             {graphEmptyMessage(metric, setIndex)}
           </div>
           <StatsRow peak="-" avg="-" latest="-" unit={unit} />
@@ -78,7 +78,7 @@ export function ExerciseChart({ history }: Props) {
 
   return (
     <div className="space-y-3">
-      <div className="rounded-2xl border border-white/[.12] bg-background p-4">
+      <div className="rounded-2xl border border-foreground/[.12] bg-background p-4">
         <ChartHeader
           label={headerLabel}
           value={fmtMetric(latest.value)}
@@ -180,7 +180,7 @@ function StatsRow({
   unit: string
 }) {
   return (
-    <div className="mt-3 flex gap-1.5 border-t border-white/[.06] pt-3">
+    <div className="mt-3 flex gap-1.5 border-t border-foreground/[.06] pt-3">
       <Stat label="Peak" value={peak} unit={unit} dotClass="bg-secondary" />
       <Stat
         label="Average"
@@ -205,7 +205,7 @@ function Stat({
   dotClass: string
 }) {
   return (
-    <div className="flex-1 rounded-lg border border-white/5 bg-white/[.02] px-2 py-2">
+    <div className="flex-1 rounded-lg border border-foreground/5 bg-foreground/[.02] px-2 py-2">
       <div className="flex items-center gap-1.5">
         <span className={cn("inline-block size-1.5 rounded-full", dotClass)} />
         <span className="text-[9px] font-extrabold uppercase tracking-wider text-muted-foreground">
@@ -447,7 +447,7 @@ function LineChart({
 
           {active && activeIdx != null && (
             <div
-              className="pointer-events-none absolute rounded-lg border border-white/10 bg-card px-2.5 py-1.5"
+              className="pointer-events-none absolute rounded-lg border border-foreground/10 bg-card px-2.5 py-1.5"
               style={{
                 width: BUBBLE_W,
                 left: Math.min(
@@ -485,7 +485,7 @@ function Segmented<T extends string | number>({
 }) {
   return (
     <div
-      className="flex gap-1 rounded-lg border border-white/10 bg-white/[.02] p-1"
+      className="flex gap-1 rounded-lg border border-foreground/10 bg-foreground/[.02] p-1"
       role="tablist"
     >
       {options.map((o) => {
@@ -500,8 +500,8 @@ function Segmented<T extends string | number>({
             className={cn(
               "flex-1 rounded-md px-1.5 py-2 text-[11px] font-bold transition-colors",
               active
-                ? "bg-white/10 text-foreground"
-                : "text-muted-foreground hover:bg-white/[.04] hover:text-foreground"
+                ? "bg-foreground/10 text-foreground"
+                : "text-muted-foreground hover:bg-foreground/[.04] hover:text-foreground"
             )}
           >
             {o.label}

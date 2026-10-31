@@ -62,7 +62,7 @@ export default function LoginPage() {
           </div>
 
           {/* Card */}
-          <div className="rounded-2xl border border-white/8 bg-card p-6 shadow-2xl">
+          <div className="rounded-2xl border border-foreground/8 bg-card p-6 shadow-2xl">
             {/* Accent line */}
             <div className="mb-6 h-0.5 w-full rounded-full bg-gradient-to-r from-primary/60 via-primary to-primary/60" />
 

@@ -66,7 +66,7 @@ export function ActionMenu({
         className={cn(
           trigger
             ? "inline-flex items-center"
-            : "inline-flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground",
+            : "inline-flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground",
           triggerClassName
         )}
       >
@@ -76,7 +76,7 @@ export function ActionMenu({
         <div
           role="menu"
           className={cn(
-            "absolute top-full z-50 mt-1 min-w-52 overflow-hidden rounded-xl border border-white/10 bg-popover py-1 text-popover-foreground shadow-xl",
+            "absolute top-full z-50 mt-1 min-w-52 overflow-hidden rounded-xl border border-foreground/10 bg-popover py-1 text-popover-foreground shadow-xl",
             align === "end" && "right-0",
             align === "start" && "left-0",
             align === "center" && "left-1/2 -translate-x-1/2"
@@ -101,7 +101,7 @@ export function ActionMenu({
                 "flex w-full flex-col items-start px-3 py-2 text-left text-sm transition-colors",
                 item.disabled
                   ? "cursor-not-allowed opacity-50"
-                  : "hover:bg-white/5",
+                  : "hover:bg-foreground/5",
                 item.destructive && !item.disabled && "text-destructive"
               )}
             >

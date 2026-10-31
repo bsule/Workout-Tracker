@@ -30,7 +30,7 @@ export default function HomePage() {
   return (
     <PageWrapper>
       {/* Hero */}
-      <section className="relative h-[calc(100vh-3.5rem)] overflow-hidden border-b-2 border-white/15">
+      <section className="relative h-[calc(100vh-3.5rem)] overflow-hidden border-b-2 border-foreground/15">
         {/* Diagonal accent stripe */}
         <div
           className="pointer-events-none absolute inset-0 opacity-[0.06]"
@@ -84,7 +84,7 @@ export default function HomePage() {
       </section>
 
       {/* Feature blocks */}
-      <section className="border-b-2 border-white/15 bg-background px-6 py-24">
+      <section className="border-b-2 border-foreground/15 bg-background px-6 py-24">
         <div className="mx-auto max-w-6xl">
           <div className="mb-16 flex flex-wrap items-end justify-between gap-6">
             <div>
@@ -103,13 +103,13 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 gap-0 border-2 border-white/15 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-0 border-2 border-foreground/15 md:grid-cols-3">
             {features.map(({ n, icon: Icon, label, description }, i) => (
               <div
                 key={label}
                 className={`group relative bg-card p-8 transition-colors hover:bg-card/60 ${
-                  i < 2 ? "md:border-r-2 md:border-white/15" : ""
-                } ${i > 0 ? "border-t-2 border-white/15 md:border-t-0" : ""}`}
+                  i < 2 ? "md:border-r-2 md:border-foreground/15" : ""
+                } ${i > 0 ? "border-t-2 border-foreground/15 md:border-t-0" : ""}`}
               >
                 <div className="mb-8 flex items-center justify-between">
                   <span className="font-mono text-xs font-bold uppercase tracking-[0.25em] text-muted-foreground">
@@ -189,7 +189,7 @@ export default function HomePage() {
       </section>
 
       {/* Footer marquee strip */}
-      <section className="overflow-hidden border-t-2 border-white/15 bg-background py-6">
+      <section className="overflow-hidden border-t-2 border-foreground/15 bg-background py-6">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-6 px-6 font-mono text-[11px] font-bold uppercase tracking-[0.3em] text-muted-foreground">
           <span className="flex items-center gap-2">
             <Dumbbell className="size-3.5" /> Squat · Bench · Deadlift

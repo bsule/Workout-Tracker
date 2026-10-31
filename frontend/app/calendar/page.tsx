@@ -1,9 +1,8 @@
 "use client"
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react"
-import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { ArrowRight, Sparkles } from "lucide-react"
+import { ArrowRight } from "lucide-react"
 import {
   getCalendarQ,
   getDayNoteQ,
@@ -205,14 +204,6 @@ function CalendarInner() {
             )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {/* Mobile has this entry point switched off; web keeps it. */}
-            <Link
-              href={`/ai-plan?startDate=${selectedDate}`}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-foreground/[.04] px-3 py-1.5 text-xs font-bold transition-colors hover:bg-foreground/10"
-            >
-              <Sparkles className="size-3.5" />
-              AI Plan
-            </Link>
             <button
               type="button"
               onClick={() => {

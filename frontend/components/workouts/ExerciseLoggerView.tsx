@@ -139,7 +139,7 @@ export function ExerciseLoggerView({
               <button
                 type="button"
                 onClick={openExerciseNote}
-                className="-mx-1 mt-1 flex w-full min-w-0 items-start gap-1.5 rounded px-1 pt-0.5 text-left hover:bg-white/5"
+                className="-mx-1 mt-1 flex w-full min-w-0 items-start gap-1.5 rounded px-1 pt-0.5 text-left hover:bg-foreground/5"
                 aria-label="Exercise note"
               >
                 <FileText className="mt-1 size-3 shrink-0 text-muted-foreground" />
@@ -229,7 +229,7 @@ function Tabs({
     { id: "settings", label: "Settings", icon: <SettingsIcon className="size-4" /> },
   ]
   return (
-    <div className="grid grid-cols-5 gap-1 rounded-xl border border-white/10 bg-white/[.02] p-1">
+    <div className="grid grid-cols-5 gap-1 rounded-xl border border-foreground/10 bg-foreground/[.02] p-1">
       {items.map((it) => {
         const isActive = active === it.id
         return (
@@ -240,8 +240,8 @@ function Tabs({
             className={cn(
               "relative inline-flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-[11px] font-medium transition-colors sm:flex-row sm:gap-1.5 sm:px-2 sm:py-2 sm:text-sm",
               isActive
-                ? "bg-white/10 text-foreground shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset]"
-                : "text-muted-foreground hover:bg-white/[.04] hover:text-foreground"
+                ? "bg-foreground/10 text-foreground shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset]"
+                : "text-muted-foreground hover:bg-foreground/[.04] hover:text-foreground"
             )}
           >
             {it.icon}
@@ -250,7 +250,7 @@ function Tabs({
               <span
                 className={cn(
                   "absolute right-1 top-1 rounded-full px-1.5 text-[10px] font-semibold tabular-nums sm:static sm:ml-1",
-                  isActive ? "bg-primary/20 text-primary" : "bg-white/10 text-foreground/70"
+                  isActive ? "bg-primary/20 text-primary" : "bg-foreground/10 text-foreground/70"
                 )}
               >
                 {it.badge}

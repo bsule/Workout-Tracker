@@ -206,7 +206,7 @@ function Tabs({
     },
   ]
   return (
-    <div className="grid grid-cols-4 gap-1 rounded-xl border border-white/10 bg-white/[.02] p-1">
+    <div className="grid grid-cols-4 gap-1 rounded-xl border border-foreground/10 bg-foreground/[.02] p-1">
       {items.map((it) => {
         const isActive = active === it.id
         return (
@@ -216,8 +216,8 @@ function Tabs({
             className={cn(
               "inline-flex min-w-0 items-center justify-center gap-1 rounded-lg px-1.5 py-2 text-xs font-medium transition-colors sm:gap-1.5 sm:text-sm",
               isActive
-                ? "bg-white/10 text-foreground shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset]"
-                : "text-muted-foreground hover:bg-white/[.04] hover:text-foreground"
+                ? "bg-foreground/10 text-foreground shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset]"
+                : "text-muted-foreground hover:bg-foreground/[.04] hover:text-foreground"
             )}
           >
             {it.icon}
@@ -228,7 +228,7 @@ function Tabs({
                   "ml-1 rounded-full px-1.5 py-0 text-[10px] font-semibold tabular-nums",
                   isActive
                     ? "bg-primary/20 text-primary"
-                    : "bg-white/10 text-foreground/70"
+                    : "bg-foreground/10 text-foreground/70"
                 )}
               >
                 {it.badge}
@@ -301,7 +301,7 @@ function ExerciseSettingsPanel({
 
   return (
     <div className="space-y-6">
-      <form onSubmit={handleSave} className="space-y-4 rounded-xl border border-white/10 bg-white/[.02] p-5">
+      <form onSubmit={handleSave} className="space-y-4 rounded-xl border border-foreground/10 bg-foreground/[.02] p-5">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
           Exercise Details
         </p>
@@ -312,7 +312,7 @@ function ExerciseSettingsPanel({
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="mt-1 w-full rounded-md border border-white/10 bg-white/[.04] px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="mt-1 w-full rounded-md border border-foreground/10 bg-foreground/[.04] px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </div>
 
@@ -321,7 +321,7 @@ function ExerciseSettingsPanel({
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value as Category)}
-            className="mt-1 w-full rounded-md border border-white/10 bg-white/[.04] px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="mt-1 w-full rounded-md border border-foreground/10 bg-foreground/[.04] px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
           >
             {/* A category the list does not know (a FitNotes import keeps
                 unrecognized ones) stays an option, so saving the name does
@@ -349,7 +349,7 @@ function ExerciseSettingsPanel({
         </p>
         <Link
           href="/one-rep-max"
-          className="group flex items-start gap-3 rounded-xl border border-white/10 bg-white/[.02] p-4 hover:border-white/20 hover:bg-white/[.04] transition-colors"
+          className="group flex items-start gap-3 rounded-xl border border-foreground/10 bg-foreground/[.02] p-4 hover:border-foreground/20 hover:bg-foreground/[.04] transition-colors"
         >
           <div className="flex-1">
             <p className="text-sm font-semibold text-foreground">

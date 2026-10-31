@@ -5,7 +5,7 @@ import { Check, Plus } from "lucide-react"
 import { localApi as api, listGymsQ } from "@/lib/store"
 import { matchGymName } from "@lift/core/workouts"
 import { cn } from "@/lib/utils"
-import { useBackdropClose } from "@/components/ui/useBackdropClose"
+import { Modal } from "@/components/ui/Modal"
 
 /**
  * The workout's gym on the day view: "📍 {gym}", or a muted "📍 Add gym"
@@ -101,7 +101,6 @@ function GymPicker({
   const [newGym, setNewGym] = useState("")
   const inputRef = useRef<HTMLInputElement | null>(null)
 
-  const backdrop = useBackdropClose(onClose)
 
   function startAdding() {
     setAdding(true)
@@ -112,17 +111,6 @@ function GymPicker({
     setAdding(false)
     setNewGym("")
   }
-
-  useEffect(() => {
-    if (!shown) return
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== "Escape") return
-      if (adding) cancelAdd()
-      else onClose()
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [shown, adding, onClose])
 
   function selectGym(name: string) {
     onClose()
@@ -148,94 +136,77 @@ function GymPicker({
     "flex min-h-11 w-full items-center justify-between gap-3 px-3 text-left text-base transition-colors"
 
   return (
-    <div
-      className={cn(
-        "fixed inset-0 z-[100] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm transition-opacity duration-150",
-        shown ? "opacity-100" : "opacity-0"
-      )}
-      {...backdrop}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Gym"
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className={cn(
-          "flex max-h-[80vh] w-full max-w-sm flex-col gap-3 rounded-2xl border border-border bg-card p-5 text-foreground shadow-2xl transition-all duration-150 ease-out",
-          shown ? "scale-100 opacity-100" : "scale-95 opacity-0"
-        )}
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold tracking-tight">Gym</h2>
-          <button
-            type="button"
-            onClick={adding ? cancelAdd : onClose}
-            className="text-base font-semibold text-primary transition-opacity hover:opacity-70"
-          >
-            {adding ? "Cancel" : "Done"}
-          </button>
+    <Modal open={shown} onClose={adding ? cancelAdd : onClose} title="Gym" className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold tracking-tight">Gym</h2>
+        <button
+          type="button"
+          onClick={adding ? cancelAdd : onClose}
+          className="text-base font-semibold text-primary transition-opacity hover:opacity-70"
+        >
+          {adding ? "Cancel" : "Done"}
+        </button>
+      </div>
+
+      <div className="flex min-h-0 shrink flex-col overflow-hidden rounded-md border border-border">
+        <div
+          className={cn(
+            "min-h-0 shrink overflow-y-auto",
+            adding ? "max-h-[132px]" : "max-h-[264px]"
+          )}
+        >
+          <GymRow label="No gym" muted selected={!gym} first onClick={clearGym} rowCls={rowCls} />
+          {gyms.map((g) => (
+            <GymRow
+              key={g.id ?? `name:${g.name}`}
+              label={g.name}
+              selected={g.name === gym}
+              onClick={() => selectGym(g.name)}
+              rowCls={rowCls}
+            />
+          ))}
         </div>
 
-        <div className="flex min-h-0 shrink flex-col overflow-hidden rounded-md border border-border">
-          <div
-            className={cn(
-              "min-h-0 shrink overflow-y-auto",
-              adding ? "max-h-[132px]" : "max-h-[264px]"
-            )}
-          >
-            <GymRow label="No gym" muted selected={!gym} first onClick={clearGym} rowCls={rowCls} />
-            {gyms.map((g) => (
-              <GymRow
-                key={g.id ?? `name:${g.name}`}
-                label={g.name}
-                selected={g.name === gym}
-                onClick={() => selectGym(g.name)}
-                rowCls={rowCls}
-              />
-            ))}
-          </div>
-
-          {adding ? (
-            <div className={cn(rowCls, "border-t border-border")}>
-              <input
-                ref={inputRef}
-                value={newGym}
-                onChange={(e) => setNewGym(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault()
-                    commitNew()
-                  }
-                }}
-                placeholder="New gym name"
-                autoCapitalize="words"
-                autoCorrect="off"
-                className="min-w-0 flex-1 bg-transparent py-2.5 text-base outline-none placeholder:text-muted-foreground"
-              />
-              <button
-                type="button"
-                onClick={commitNew}
-                disabled={!newGym.trim()}
-                className="text-base font-semibold text-primary transition-opacity hover:opacity-70 disabled:text-muted-foreground disabled:hover:opacity-100"
-              >
-                Add
-              </button>
-            </div>
-          ) : (
+        {adding ? (
+          <div className={cn(rowCls, "border-t border-border")}>
+            <input
+              ref={inputRef}
+              value={newGym}
+              onChange={(e) => setNewGym(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault()
+                  commitNew()
+                }
+              }}
+              placeholder="New gym name"
+              autoCapitalize="words"
+              autoCorrect="off"
+              className="min-w-0 flex-1 bg-transparent py-2.5 text-base outline-none placeholder:text-muted-foreground"
+            />
             <button
               type="button"
-              onClick={startAdding}
-              className={cn(rowCls, "justify-start border-t border-border hover:bg-foreground/[.06]")}
+              onClick={commitNew}
+              disabled={!newGym.trim()}
+              className="text-base font-semibold text-primary transition-opacity hover:opacity-70 disabled:text-muted-foreground disabled:hover:opacity-100"
             >
-              <span className="flex items-center gap-1.5 font-semibold text-primary">
-                <Plus className="size-[18px]" />
-                Add gym
-              </span>
+              Add
             </button>
-          )}
-        </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={startAdding}
+            className={cn(rowCls, "justify-start border-t border-border hover:bg-foreground/[.06]")}
+          >
+            <span className="flex items-center gap-1.5 font-semibold text-primary">
+              <Plus className="size-[18px]" />
+              Add gym
+            </span>
+          </button>
+        )}
       </div>
-    </div>
+    </Modal>
   )
 }
 

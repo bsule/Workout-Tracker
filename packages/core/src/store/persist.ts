@@ -319,6 +319,11 @@ export async function replaceSnapshotFromBytes(bytes: Uint8Array): Promise<void>
   try {
     const { snapshot } = await parse(bytes)
     checkAccount()
+    if (s.beforeReplace && getState().hydrated) {
+      const outgoing = getState().snapshot
+      await s.beforeReplace(await serialize(outgoing), snapshotStats(outgoing))
+      checkAccount()
+    }
     // The log holds edits to the outgoing snapshot. Cleared first, so a kill
     // after the write cannot replay them onto the new one at next boot.
     await s.clearPending()

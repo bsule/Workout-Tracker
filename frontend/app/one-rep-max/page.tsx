@@ -35,7 +35,7 @@ export default function OneRepMaxPage() {
           </p>
         </header>
 
-        <div className="rounded-2xl border border-white/10 bg-card/40 p-6 text-center">
+        <div className="rounded-2xl border border-foreground/10 bg-card/40 p-6 text-center">
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
             Estimated 1RM
           </p>
@@ -49,7 +49,7 @@ export default function OneRepMaxPage() {
           </div>
         </div>
 
-        <div className="mt-4 rounded-2xl border border-white/10 bg-card/40 p-5">
+        <div className="mt-4 rounded-2xl border border-foreground/10 bg-card/40 p-5">
           <NumericField
             label="Weight"
             unit={unit}
@@ -69,7 +69,7 @@ export default function OneRepMaxPage() {
         </div>
 
         {oneRmDisplay > 0 && reps > 0 && (
-          <div className="mt-4 rounded-2xl border border-white/10 bg-card/40 p-4">
+          <div className="mt-4 rounded-2xl border border-foreground/10 bg-card/40 p-4">
             <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
               % of 1RM
             </p>
@@ -78,7 +78,7 @@ export default function OneRepMaxPage() {
               return (
                 <div
                   key={pct}
-                  className="flex items-center border-b border-white/5 py-2 last:border-b-0"
+                  className="flex items-center border-b border-foreground/5 py-2 last:border-b-0"
                 >
                   <span className="w-14 text-sm font-semibold text-muted-foreground">
                     {pct}%
@@ -130,7 +130,7 @@ function NumericField({
         <button
           type="button"
           onClick={() => onChange(Math.max(min, value - step))}
-          className="flex size-12 items-center justify-center rounded-xl border border-white/10 bg-white/[.03] text-foreground/80 hover:border-white/20 hover:bg-white/[.06] active:translate-y-px transition-colors"
+          className="flex size-12 items-center justify-center rounded-xl border border-foreground/10 bg-foreground/[.03] text-foreground/80 hover:border-foreground/20 hover:bg-foreground/[.06] active:translate-y-px transition-colors"
           aria-label={`Decrease ${label}`}
         >
           <Minus className="size-5" />
@@ -144,12 +144,12 @@ function NumericField({
             onChange(Number.isFinite(n) ? n : 0)
           }}
           onFocus={(e) => e.target.select()}
-          className="font-mono h-12 w-full flex-1 rounded-xl border border-white/10 bg-white/[.03] px-3 text-center text-3xl font-semibold tabular-nums tracking-tight focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/30"
+          className="font-mono h-12 w-full flex-1 rounded-xl border border-foreground/10 bg-foreground/[.03] px-3 text-center text-3xl font-semibold tabular-nums tracking-tight focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/30"
         />
         <button
           type="button"
           onClick={() => onChange(value + step)}
-          className="flex size-12 items-center justify-center rounded-xl border border-white/10 bg-white/[.03] text-foreground/80 hover:border-white/20 hover:bg-white/[.06] active:translate-y-px transition-colors"
+          className="flex size-12 items-center justify-center rounded-xl border border-foreground/10 bg-foreground/[.03] text-foreground/80 hover:border-foreground/20 hover:bg-foreground/[.06] active:translate-y-px transition-colors"
           aria-label={`Increase ${label}`}
         >
           <Plus className="size-5" />

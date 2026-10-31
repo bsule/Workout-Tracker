@@ -16,7 +16,7 @@ import {
 import { formatTimestamp } from "@lift/core/format"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/components/auth/AuthProvider"
-import { cn } from "@/lib/utils"
+import { Modal } from "@/components/ui/Modal"
 
 /**
  * Tells the user, once, that a push was refused because the cloud moved ahead.
@@ -152,123 +152,111 @@ export function CloudConflictPrompt() {
   if (!open) return null
 
   return (
-    <div
-      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Cloud has newer data"
-    >
-      <div
-        className={cn(
-          "w-full max-w-md overflow-hidden rounded-2xl border border-white/10",
-          "bg-card text-foreground shadow-2xl"
-        )}
-      >
-        <div className="flex items-start gap-3 px-5 pt-5">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-destructive/15 text-destructive">
-            <AlertTriangle className="size-5" />
-          </span>
-          <div className="flex-1 pt-0.5">
-            <h2 className="text-base font-semibold tracking-tight">
-              {done
-                ? done.title
-                : confirmOverwrite
-                  ? "Overwrite the cloud copy?"
-                  : "Cloud has newer data"}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {done
-                ? done.message
-                : confirmOverwrite
-                  ? "The cloud's newer changes will be gone. This cannot be undone."
-                  : "Another device pushed changes this one hasn't seen, so the sync was refused. Nothing was lost. Get the cloud copy, or overwrite it with this device's data?"}
-            </p>
-            {!done && !confirmOverwrite && (
-              <dl className="mt-3 space-y-1.5 rounded-md border border-white/10 bg-white/[.02] p-3 text-xs">
-                <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                  <dt className="font-medium">Cloud copy</dt>
-                  <dd className="text-muted-foreground">
-                    {previewState === "loading"
-                      ? "Reading…"
-                      : previewState === "failed" || !preview
-                        ? "Couldn't read the cloud copy just now"
-                        : `${
-                            preview.exportedAt
-                              ? `saved ${formatTimestamp(preview.exportedAt)}`
-                              : "save time unknown"
-                          } · ${counts(preview.workoutCount, preview.setCount)}`}
-                  </dd>
-                </div>
-                <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                  <dt className="font-medium">This device</dt>
-                  <dd className="text-muted-foreground">
-                    {formatLastSynced(getSyncClock().lastSyncedAt).toLowerCase()}{" "}
-                    · {counts(snapshot.workouts.length, snapshot.sets.length)}
-                  </dd>
-                </div>
-              </dl>
-            )}
-          </div>
-        </div>
-
-        <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-white/5 bg-white/[.02] px-4 py-3">
-          {done ? (
-            <Button size="lg" onClick={closeDialog} autoFocus>
-              Close
-            </Button>
-          ) : confirmOverwrite ? (
-            <>
-              <Button
-                variant="outline"
-                size="lg"
-                onClick={() => setConfirmOverwrite(false)}
-                disabled={busy != null}
-                autoFocus
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                size="lg"
-                onClick={() => void resolve("push")}
-                disabled={busy != null}
-              >
-                {busy === "push" && <Loader2 className="size-4 animate-spin" />}
-                Overwrite
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button
-                variant="outline"
-                size="lg"
-                onClick={closeDialog}
-                disabled={busy != null}
-                autoFocus
-              >
-                Later
-              </Button>
-              <Button
-                variant="destructive"
-                size="lg"
-                onClick={() => setConfirmOverwrite(true)}
-                disabled={busy != null}
-              >
-                Overwrite cloud
-              </Button>
-              <Button
-                size="lg"
-                onClick={() => void resolve("pull")}
-                disabled={busy != null}
-              >
-                {busy === "pull" && <Loader2 className="size-4 animate-spin" />}
-                Get cloud
-              </Button>
-            </>
+    <Modal open={open} onClose={() => { if (!busy) closeDialog() }} title={done?.title ?? "Cloud has newer data"} className="max-w-md p-0">
+      <div className="flex items-start gap-3 px-5 pt-5">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-destructive/15 text-destructive">
+          <AlertTriangle className="size-5" />
+        </span>
+        <div className="flex-1 pt-0.5">
+          <h2 className="text-base font-semibold tracking-tight">
+            {done
+              ? done.title
+              : confirmOverwrite
+                ? "Overwrite the cloud copy?"
+                : "Cloud has newer data"}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {done
+              ? done.message
+              : confirmOverwrite
+                ? "The cloud's newer changes will be gone. This cannot be undone."
+                : "Another device pushed changes this one hasn't seen, so the sync was refused. Nothing was lost. Get the cloud copy, or overwrite it with this device's data?"}
+          </p>
+          {!done && !confirmOverwrite && (
+            <dl className="mt-3 space-y-1.5 rounded-md border border-foreground/10 bg-foreground/[.02] p-3 text-xs">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                <dt className="font-medium">Cloud copy</dt>
+                <dd className="text-muted-foreground">
+                  {previewState === "loading"
+                    ? "Reading…"
+                    : previewState === "failed" || !preview
+                      ? "Couldn't read the cloud copy just now"
+                      : `${
+                          preview.exportedAt
+                            ? `saved ${formatTimestamp(preview.exportedAt)}`
+                            : "save time unknown"
+                        } · ${counts(preview.workoutCount, preview.setCount)}`}
+                </dd>
+              </div>
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                <dt className="font-medium">This device</dt>
+                <dd className="text-muted-foreground">
+                  {formatLastSynced(getSyncClock().lastSyncedAt).toLowerCase()}{" "}
+                  · {counts(snapshot.workouts.length, snapshot.sets.length)}
+                </dd>
+              </div>
+            </dl>
           )}
         </div>
       </div>
-    </div>
+
+      <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-foreground/5 bg-foreground/[.02] px-4 py-3">
+        {done ? (
+          <Button size="lg" onClick={closeDialog} autoFocus>
+            Close
+          </Button>
+        ) : confirmOverwrite ? (
+          <>
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => setConfirmOverwrite(false)}
+              disabled={busy != null}
+              autoFocus
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="lg"
+              onClick={() => void resolve("push")}
+              disabled={busy != null}
+            >
+              {busy === "push" && <Loader2 className="size-4 animate-spin" />}
+              Overwrite
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={closeDialog}
+              disabled={busy != null}
+              autoFocus
+            >
+              Later
+            </Button>
+            <Button
+              variant="destructive"
+              size="lg"
+              onClick={() => setConfirmOverwrite(true)}
+              disabled={busy != null}
+            >
+              Overwrite cloud
+            </Button>
+            <Button
+              size="lg"
+              onClick={() => void resolve("pull")}
+              disabled={busy != null}
+            >
+              {busy === "pull" && <Loader2 className="size-4 animate-spin" />}
+              Get cloud
+            </Button>
+          </>
+        )}
+      </div>
+    </Modal>
   )
 }
 

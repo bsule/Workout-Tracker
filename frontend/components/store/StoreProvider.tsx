@@ -7,10 +7,10 @@ import { RestoreBackupScreen } from "@/components/sync/RestoreBackupScreen"
 import {
   configureStore,
   hydrateStore,
-  unloadStore,
   useHydrated,
   useStore,
 } from "@/lib/store"
+import { unloadWebStore, waitForWebUnload } from "@/lib/store/session"
 import { installWebStore } from "@/lib/store/setupWebStore"
 import { useIsClient } from "@/lib/useIsClient"
 import { adoptLegacyWebStore } from "@/lib/store/storage"
@@ -19,16 +19,6 @@ import { autoSync, SnapshotTooNewError } from "@lift/core"
 
 interface Props {
   children: React.ReactNode
-}
-
-// A sign-out's save must finish before a sign-in configures the next store.
-let unloading: Promise<void> = Promise.resolve()
-
-function unloadQueued(): Promise<void> {
-  unloading = unloading.then(unloadStore).catch((e) => {
-    console.error("Failed to unload the store", e)
-  })
-  return unloading
 }
 
 export function StoreProvider({ children }: Props) {
@@ -72,7 +62,7 @@ export function StoreProvider({ children }: Props) {
       // Signed out: keep nothing in memory for the next user to see, or for
       // a flush or auto sync to write under their account.
       loadedKey.current = null
-      void unloadQueued()
+      void unloadWebStore()
       return
     }
     let cancelled = false
@@ -82,9 +72,9 @@ export function StoreProvider({ children }: Props) {
         // Save and drop the outgoing user before the incoming one loads.
         if (loadedKey.current && loadedKey.current !== key) {
           loadedKey.current = null
-          await unloadQueued()
+          await unloadWebStore()
         } else {
-          await unloading
+          await waitForWebUnload()
         }
         if (cancelled) return
         const subPath = accountStorePath(Number(key))
@@ -116,11 +106,8 @@ export function StoreProvider({ children }: Props) {
     }
   }, [loading, userKey])
 
-  // No auto sync on tab refocus, unlike mobile's AppState "active". Each web
-  // tab holds its own copy of the snapshot, sync clock and etag in memory, so
-  // a tab left in the background since yesterday would push its old snapshot
-  // over newer data another tab logged. Auto sync runs once, right after
-  // hydrate, when this tab's data has just come from disk.
+  // StoreOwner holds the browser-wide editor lock throughout this provider's
+  // lifetime. Waiting tabs hydrate from disk only after the previous owner saves.
 
   // Signed out: the pages render without a store. Only after hydration:
   // the server has no localStorage, so it always sees "signed out", and
@@ -167,8 +154,7 @@ function isStoreEmpty(snapshot: {
 }
 
 /**
- * Push if this device hasn't synced in a day. Runs after hydrate and each
- * time the tab becomes visible again. Deferred to browser idle so serialize()
+ * Push if this device hasn't synced in a day. Runs after hydrate. Deferred to browser idle so serialize()
  * (JSON.stringify + gzip, both synchronous) can't stall a paint. When not due
  * it is one comparison; offline, signed out, or unhydrated it does nothing.
  * See autoSync.maybeAutoSync().

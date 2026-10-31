@@ -6,6 +6,7 @@ import { AuthProvider } from "@/components/auth/AuthProvider"
 import { ConfirmDialogProvider } from "@/components/ui/ConfirmDialog"
 import { CategoryStylesProvider } from "@/components/categories/CategoryStylesProvider"
 import { SettingsProvider } from "@/components/settings/SettingsProvider"
+import { StoreOwner } from "@/components/store/StoreOwner"
 import { StoreProvider } from "@/components/store/StoreProvider"
 import { CloudConflictPrompt } from "@/components/sync/CloudConflictPrompt"
 import { ThemeProvider, themeBootstrapScript } from "@/components/settings/ThemeProvider"
@@ -56,18 +57,20 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <ThemeProvider>
           <AuthProvider>
-            <StoreProvider>
-              <SettingsProvider>
-                <CategoryStylesProvider>
-                  <ConfirmDialogProvider>
-                    <Navbar />
-                    <main className="flex-1">{children}</main>
-                    {/* Asks once when a push was refused as out of date. */}
-                    <CloudConflictPrompt />
-                  </ConfirmDialogProvider>
-                </CategoryStylesProvider>
-              </SettingsProvider>
-            </StoreProvider>
+            <StoreOwner>
+              <StoreProvider>
+                <SettingsProvider>
+                  <CategoryStylesProvider>
+                    <ConfirmDialogProvider>
+                      <Navbar />
+                      <main className="flex-1">{children}</main>
+                      {/* Asks once when a push was refused as out of date. */}
+                      <CloudConflictPrompt />
+                    </ConfirmDialogProvider>
+                  </CategoryStylesProvider>
+                </SettingsProvider>
+              </StoreProvider>
+            </StoreOwner>
           </AuthProvider>
         </ThemeProvider>
       </body>

@@ -1,3 +1,5 @@
+import { DARK_CATEGORY_COLORS, LIGHT_CATEGORY_COLORS } from "@lift/core/categoryStyles"
+
 // Color palettes for dark and light theme modes. Kept in a leaf module
 // so theme.ts and themeMode.ts can both import from here without a
 // circular dependency.
@@ -30,16 +32,7 @@ export const darkColors = {
   prHistoricalText: "#1a1a1a",
   // Gold for the best-1RM marker on the rep rows.
   gold: "#facc15",
-  cat: {
-    abs: "#22d3ee",
-    back: "#22c55e",
-    biceps: "#ef4444",
-    cardio: "#facc15",
-    chest: "#ec4899",
-    legs: "#3b82f6",
-    shoulders: "#f97316",
-    triceps: "#8b5cf6",
-  } as Record<string, string>,
+  cat: DARK_CATEGORY_COLORS,
 }
 
 // Light tokens mirror frontend/app/globals.css :root (dark stripped).
@@ -65,16 +58,7 @@ export const lightColors: typeof darkColors = {
   prHistorical: "#e5e5e5",
   prHistoricalText: "#525252",
   gold: "#ca8a04",
-  cat: {
-    abs: "#0e7490",
-    back: "#15803d",
-    biceps: "#b91c1c",
-    cardio: "#a16207",
-    chest: "#be185d",
-    legs: "#1d4ed8",
-    shoulders: "#c2410c",
-    triceps: "#6d28d9",
-  } as Record<string, string>,
+  cat: LIGHT_CATEGORY_COLORS,
 }
 
 export type ThemeColors = typeof darkColors

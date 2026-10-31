@@ -1,5 +1,7 @@
 "use client"
 
+import { Modal } from "@/components/ui/Modal"
+
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
   ArrowUpDown,
@@ -97,7 +99,7 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
 
   if (history.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-white/10 bg-white/[.01] p-6 text-center text-sm text-muted-foreground">
+      <div className="rounded-2xl border border-dashed border-foreground/10 bg-foreground/[.01] p-6 text-center text-sm text-muted-foreground">
         Nothing logged for this exercise yet. Log a few sets to see your last
         session and your records here.
       </div>
@@ -118,7 +120,7 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
           calendarHref={calendarHref(lastDay.date)}
         />
       ) : (
-        <div className="rounded-2xl border border-dashed border-white/10 bg-white/[.01] p-6 text-center text-sm text-muted-foreground">
+        <div className="rounded-2xl border border-dashed border-foreground/10 bg-foreground/[.01] p-6 text-center text-sm text-muted-foreground">
           No earlier session for this exercise.
         </div>
       )}
@@ -171,7 +173,7 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
             />
           </div>
 
-          <div className="overflow-hidden rounded-2xl border border-white/5 bg-card">
+          <div className="overflow-hidden rounded-2xl border border-foreground/5 bg-card">
             {repRows.slice(0, REP_ROWS_COLLAPSED).map((row, i) => (
               <RepRow
                 key={row.reps}
@@ -208,7 +210,7 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
               <button
                 type="button"
                 onClick={() => setShowAllRows((v) => !v)}
-                className="flex w-full items-center justify-center gap-1.5 border-t border-white/5 py-2.5 text-xs font-semibold text-primary transition-colors hover:bg-white/[.03]"
+                className="flex w-full items-center justify-center gap-1.5 border-t border-foreground/5 py-2.5 text-xs font-semibold text-primary transition-colors hover:bg-foreground/[.03]"
               >
                 {showAllRows
                   ? `Show top ${REP_ROWS_COLLAPSED}`
@@ -251,7 +253,7 @@ function RepRow({
       className={cn(
         // Every row carries the transparent edge so marking one never shifts
         // its text.
-        "block w-full border-l-[3px] border-l-transparent px-3 py-2.5 text-left transition-colors hover:bg-white/[.04]",
+        "block w-full border-l-[3px] border-l-transparent px-3 py-2.5 text-left transition-colors hover:bg-foreground/[.04]",
         !first && "border-t border-t-white/5",
         row.isTopOneRm &&
           "border-l-[oklch(0.78_0.18_80)] bg-[oklch(0.78_0.18_80_/_0.05)]"
@@ -274,7 +276,7 @@ function RepRow({
           {recordDate(row.date)}
         </span>
       </div>
-      <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
+      <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-foreground/10">
         <div
           className={cn(
             "h-full rounded-full transition-[width] duration-300",
@@ -343,7 +345,7 @@ function PickerChip({
         aria-expanded={open}
         aria-label={title}
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-1.5 rounded-lg border border-white/10 bg-card px-3 py-2 text-left transition-colors hover:bg-white/[.04]"
+        className="flex w-full items-center gap-1.5 rounded-lg border border-foreground/10 bg-card px-3 py-2 text-left transition-colors hover:bg-foreground/[.04]"
       >
         <Icon className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate text-sm font-bold">{label}</span>
@@ -352,7 +354,7 @@ function PickerChip({
       {open && (
         <div
           role="menu"
-          className="absolute left-0 right-0 top-full z-50 mt-1 min-w-48 overflow-hidden rounded-xl border border-white/10 bg-popover py-1 text-popover-foreground shadow-xl"
+          className="absolute left-0 right-0 top-full z-50 mt-1 min-w-48 overflow-hidden rounded-xl border border-foreground/10 bg-popover py-1 text-popover-foreground shadow-xl"
         >
           <div className="px-3 pb-1 pt-1.5 text-xs font-medium text-muted-foreground">
             {title}
@@ -368,7 +370,7 @@ function PickerChip({
                   setOpen(false)
                   onSelect(o.id)
                 }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-white/5"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-foreground/5"
               >
                 <span className="min-w-0 flex-1">
                   <span className="block">{o.title}</span>
@@ -400,38 +402,17 @@ function RecordDayDialog({
   day: ExerciseHistoryDay | null
   onClose: () => void
 }) {
-  useEffect(() => {
-    if (!day) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose()
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [day, onClose])
-
   if (!day) return null
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-md"
-        // Clicks inside the card must not reach the backdrop's close handler.
-        onClick={(e) => e.stopPropagation()}
-      >
-        <DayBlock
-          day={day}
-          scrollSets
-          calendarHref={calendarHref(day.date)}
-          // Close as the link navigates: the popup must not sit over the
-          // calendar while it loads.
-          onCalendarClick={onClose}
-        />
-      </div>
-    </div>
+    <Modal open={true} onClose={onClose} title="Record day" className="max-w-md p-0">
+      <DayBlock
+        day={day}
+        scrollSets
+        calendarHref={calendarHref(day.date)}
+        // Close as the link navigates: the popup must not sit over the
+        // calendar while it loads.
+        onCalendarClick={onClose}
+      />
+    </Modal>
   )
 }

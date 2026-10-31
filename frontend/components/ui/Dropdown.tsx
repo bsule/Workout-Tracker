@@ -110,8 +110,8 @@ export function Dropdown<T extends string = string>({
         aria-expanded={open}
         aria-label={ariaLabel}
         className={cn(
-          "inline-flex w-full items-center justify-between gap-2 rounded-md border border-white/10 bg-white/[.03] px-3 text-left transition-colors",
-          "hover:border-white/20 hover:bg-white/[.06] focus:outline-none focus-visible:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary/30",
+          "inline-flex w-full items-center justify-between gap-2 rounded-md border border-foreground/10 bg-foreground/[.03] px-3 text-left transition-colors",
+          "hover:border-foreground/20 hover:bg-foreground/[.06] focus:outline-none focus-visible:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary/30",
           "disabled:cursor-not-allowed disabled:opacity-50",
           heightCls,
           open && "border-primary/40",
@@ -138,7 +138,7 @@ export function Dropdown<T extends string = string>({
           role="listbox"
           tabIndex={-1}
           className={cn(
-            "absolute z-40 mt-1 max-h-64 w-full min-w-[10rem] overflow-auto rounded-md border border-white/10 bg-popover py-1 shadow-2xl shadow-black/40",
+            "absolute z-40 mt-1 max-h-64 w-full min-w-[10rem] overflow-auto rounded-md border border-foreground/10 bg-popover py-1 shadow-2xl shadow-black/40",
             align === "end" ? "right-0" : "left-0"
           )}
         >
@@ -158,7 +158,7 @@ export function Dropdown<T extends string = string>({
                 }}
                 className={cn(
                   "flex cursor-pointer items-start gap-2 px-2.5 py-1.5 text-sm",
-                  isActive ? "bg-white/[.06] text-foreground" : "text-foreground/85",
+                  isActive ? "bg-foreground/[.06] text-foreground" : "text-foreground/85",
                 )}
               >
                 <Check

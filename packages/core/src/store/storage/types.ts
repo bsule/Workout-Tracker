@@ -10,6 +10,8 @@ export interface SnapshotStats {
 }
 
 export interface BlobStorage {
+  /** Optional host recovery copy, saved before a cloud/restore replacement. */
+  beforeReplace?(bytes: Uint8Array, stats: SnapshotStats): Promise<void>
   readSnapshot(): Promise<Uint8Array | null>
   /**
    * Optional, for adapters that keep older copies: one loader per copy,

@@ -78,7 +78,7 @@ export function RestTicker({
           align="center"
           ariaLabel="Rest timer"
           className="flex w-full"
-          triggerClassName="w-full justify-center border-t border-white/[.06] px-3 py-1.5 transition-colors hover:bg-white/[.03]"
+          triggerClassName="w-full justify-center border-t border-foreground/[.06] px-3 py-1.5 transition-colors hover:bg-foreground/[.03]"
           trigger={
             <span
               className={cn(

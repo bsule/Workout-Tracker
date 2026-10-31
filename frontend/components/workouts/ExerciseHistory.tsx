@@ -39,7 +39,7 @@ export function ExerciseHistory({ history, currentDate }: Props) {
 
   if (past.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-white/10 bg-white/[.01] p-6 text-center text-sm text-muted-foreground">
+      <div className="rounded-2xl border border-dashed border-foreground/10 bg-foreground/[.01] p-6 text-center text-sm text-muted-foreground">
         No past workouts for this exercise yet.
       </div>
     )
@@ -87,7 +87,7 @@ export function CalendarLink({
       href={href}
       onClick={onClick}
       aria-label="Open in calendar"
-      className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+      className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
     >
       <CalendarDays className="size-4" />
     </Link>
@@ -120,8 +120,8 @@ export function DayBlock({
   scrollSets?: boolean
 }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-white/10 bg-background">
-      <div className="flex items-center justify-between gap-2 border-b border-white/10 bg-white/[.04] px-3 py-3">
+    <div className="overflow-hidden rounded-2xl border border-foreground/10 bg-background">
+      <div className="flex items-center justify-between gap-2 border-b border-foreground/10 bg-foreground/[.04] px-3 py-3">
         <div className="min-w-0 flex-1 space-y-0.5">
           <div className="text-sm font-bold">{niceDate(day.date)}</div>
           {subtitle && (
@@ -134,7 +134,7 @@ export function DayBlock({
         )}
       </div>
       {notes && notes.length > 0 && (
-        <div className="space-y-1.5 border-b border-white/10 px-3 py-2.5">
+        <div className="space-y-1.5 border-b border-foreground/10 px-3 py-2.5">
           {notes.map((n) => (
             <CollapsibleNote key={n.label} label={n.label} text={n.text} />
           ))}
@@ -152,7 +152,7 @@ function SetRows({ sets }: { sets: ExerciseHistoryDay["sets"] }) {
   const unit = useWeightUnit()
   const showPositionPrs = useShowPositionPrs()
   return (
-    <ul className="divide-y divide-white/10">
+    <ul className="divide-y divide-foreground/10">
       {sets.map((s, i) => (
         <li key={s.id} className="px-3 py-2 text-sm">
           <div className="flex items-center gap-3">
@@ -243,7 +243,7 @@ function CollapsibleNote({ label, text }: { label: string; text: string }) {
       type="button"
       onClick={() => setOpen((v) => !v)}
       aria-expanded={open}
-      className="block w-full border-l-2 border-white/10 py-0.5 pl-2.5 text-left transition-colors hover:border-white/25"
+      className="block w-full border-l-2 border-foreground/10 py-0.5 pl-2.5 text-left transition-colors hover:border-foreground/25"
     >
       <div className="flex items-center gap-2">
         <span className="shrink-0 text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">

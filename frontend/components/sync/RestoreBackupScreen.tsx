@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 /**
  * Shown in place of the app when the signed-in account's store is empty, the
  * web copy of mobile's RestoreBackupScreen: pull the cloud copy down, or start
- * fresh. The web has no restore points, so cloud sync is the only source.
+ * fresh. Local recovery copies are also available in Backup & Restore.
  */
 export function RestoreBackupScreen({ onDismiss }: { onDismiss: () => void }) {
   const [busy, setBusy] = useState<null | "cloud-preview" | "cloud-apply">(null)
