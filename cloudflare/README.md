@@ -35,6 +35,8 @@ wrangler d1 create lift-auth        # database_id is in wrangler.toml
 wrangler r2 bucket create lift-snapshots
 ```
 
+If `wrangler deploy` later fails with "No access to the specified service", run `wrangler login` again: newer Wrangler versions ask for permissions an older login lacks.
+
 ## Local dev
 
 ```sh

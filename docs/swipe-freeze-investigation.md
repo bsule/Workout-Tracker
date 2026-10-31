@@ -1,5 +1,7 @@
 # Delete followed by a quick swipe
 
+> **Note (2026-10-30):** this was measured with gesture-handler 2's legacy `Swipeable`. Since Expo SDK 58 (gesture-handler 3) the app uses `ReanimatedSwipeable`, which runs the drag and the release spring on the UI thread, so the point below about the release spring waiting on JavaScript no longer applies.
+
 The local simulator's existing `/tmp/metro.log` captured repeated stalls after
 single-set deletion, before this change:
 

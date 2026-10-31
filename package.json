@@ -20,9 +20,15 @@
   "devDependencies": {
     "concurrently": "^9.1.0",
     "fake-indexeddb": "^6.2.5",
-    "vitest": "^3.0.5"
+    "vitest": "^5.0.5"
   },
   "overrides": {
     "react-native-worklets": "0.13.0"
+  },
+  "allowScripts": {
+    "esbuild": true,
+    "fsevents": true,
+    "unrs-resolver": true,
+    "workerd": true
   }
 }

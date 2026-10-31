@@ -4,7 +4,7 @@ How to run the Worker, the web app, and the phone app locally, run the checks, a
 
 ## Prerequisites
 
-- **Node.js 20 or later** and npm. CI builds on Node 20.
+- **Node.js 22.13 or later, or 24.3 or later** (Expo SDK 58 needs one of these), and npm. CI builds on Node 24.
 - **[`gh` CLI](https://cli.github.com/)**, signed in, if you want phone builds from GitHub Actions.
 - **A Cloudflare account** only to run your own sync server (see [Run your own sync server](#run-your-own-sync-server)). Local dev runs on Wrangler's simulator and needs no account.
 - **For the phone app:** a development build of the app on your phone (see [Phone app](#3-phone-app)), or Xcode / Android Studio to make one.
@@ -90,7 +90,7 @@ cd mobile && npm run typecheck
 cd cloudflare && npm run typecheck
 ```
 
-The tests cover the shared core only. The web UI, the phone UI, and the Worker have no automated tests, so check those by running the app, or by curling the Worker.
+The tests cover the shared core, plus the Worker's sync write rule (`cloudflare/src/sync/ownWrite.ts`, run against an in-memory bucket). The web UI, the phone UI, and the rest of the Worker have no automated tests, so check those by running the app, or by curling the Worker.
 
 ## Phone builds
 
@@ -98,7 +98,7 @@ The tests cover the shared core only. The web UI, the phone UI, and the Worker h
 
 `npm run ipa:gh` and `npm run apk:gh` (in `mobile/`) start a workflow in `.github/workflows/`, wait for it, and download the result into `mobile/builds/`. [install.md](install.md) has the steps for building and installing on a phone.
 
-- **iOS** (`build-ios-unsigned.yml`) runs on a macOS 26 runner, because the Expo 57 native dependencies need Xcode 26. It makes an unsigned Release `.ipa`.
+- **iOS** (`build-ios-unsigned.yml`) runs on a macOS 26 runner and picks the newest Xcode installed there, because the Expo native dependencies need Xcode 26 or later (Expo SDK 58 built with Xcode 26.6). It makes an unsigned Release `.ipa`.
 - **Android** (`build-android-apk.yml`) runs on Ubuntu. The Release `.apk` is signed with the template's debug key, so it installs without any signing setup.
 
 Both run `expo prebuild --clean` on the runner, so they don't depend on a local `ios/` or `android/` folder.
