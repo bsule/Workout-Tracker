@@ -29,7 +29,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Newest available rather than a pinned major: a pin is what broke this
       # build when a dependency started requiring a newer Swift toolchain.
@@ -44,7 +44,7 @@ jobs:
           swift --version
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -113,7 +113,7 @@ jobs:
           echo "IPA_PATH=$OUT" >> "$GITHUB_ENV"
 
       - name: Upload IPA artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lift-unsigned-ipa
           path: ${{ env.IPA_PATH }}
