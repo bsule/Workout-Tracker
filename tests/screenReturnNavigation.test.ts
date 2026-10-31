@@ -5,7 +5,7 @@ const navigation = vi.hoisted(() => ({ getState: vi.fn(), getRootState: vi.fn() 
 // Exercise the actual hook's navigation wiring without a native renderer.
 // The store/return registry remains real; only React hooks and navigation
 // context are supplied here. The lifecycle is covered in focusedStore.test.
-vi.mock("../mobile/node_modules/react/index.js", async (importOriginal) => ({
+vi.mock("react", async (importOriginal) => ({
   ...await importOriginal<typeof import("react")>(),
   useContext: () => ({ getRootState: navigation.getRootState }),
   useCallback: (callback: unknown) => callback,

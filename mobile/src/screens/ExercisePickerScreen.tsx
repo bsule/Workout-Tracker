@@ -8,6 +8,7 @@ import {
   Text,
   TextInput,
   View,
+  type TextInputInstance,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { SafeAreaView } from "react-native-safe-area-context"
@@ -131,7 +132,7 @@ function PickView({
 }) {
   const [search, setSearch] = useState("")
   const [category, setCategory] = useState<string | null>(null)
-  const searchRef = useRef<TextInput>(null)
+  const searchRef = useRef<TextInputInstance>(null)
   const snapshot = useScreenSnapshot()
   const exercises = useMemo(
     () =>

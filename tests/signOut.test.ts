@@ -7,9 +7,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const calls = vi.hoisted(() => [] as string[])
 
+// bootstrap.ts schedules auto-sync with this React Native global; never run it.
+vi.stubGlobal("requestIdleCallback", () => 0)
+
 vi.mock("react-native", () => ({
   AppState: { addEventListener: () => ({ remove() {} }) },
-  InteractionManager: { runAfterInteractions: () => {} },
 }))
 vi.mock("expo-file-system/legacy", () => ({ documentDirectory: "file:///docs/" }))
 vi.mock("../mobile/src/restTimer", () => ({

@@ -1,4 +1,4 @@
-import { AppState, InteractionManager } from "react-native"
+import { AppState } from "react-native"
 import {
   setStorageFactory,
   configureStore,
@@ -76,12 +76,12 @@ export async function bootstrapForUser(user: { id: number; username: string }) {
  * Runs on cold start and on every foreground, which is often — that is fine.
  * After the first call the clock is in memory, so a "not due" answer is one
  * comparison: no disk, no network, no render. serialize() (JSON.stringify +
- * gzipSync) only runs on the rare due call, and runAfterInteractions keeps it
+ * gzipSync) only runs on the rare due call, and requestIdleCallback keeps it
  * off the first frames. Signed out, offline, or unhydrated it does nothing —
  * see autoSync.maybeAutoSync().
  */
 function scheduleAutoSync() {
-  InteractionManager.runAfterInteractions(() => {
+  requestIdleCallback(() => {
     void autoSync.maybeAutoSync()
   })
 }

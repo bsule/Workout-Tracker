@@ -30,13 +30,14 @@ import {
   View,
   type StyleProp,
   type TextStyle,
+  type ScrollViewInstance,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import Svg, { Circle, G, Line as SvgLine, Path as SvgPath, Text as SvgText } from "react-native-svg"
-// Use the legacy (non-Reanimated) Swipeable to avoid pulling in
-// react-native-reanimated native init at app boot — which is currently
-// throwing "Exception in HostFunction" inside Expo Go on this device.
-import { Swipeable } from "react-native-gesture-handler"
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from "react-native-gesture-handler/ReanimatedSwipeable"
+import { SwipeActionTray } from "../components/SwipeActionTray"
 import { SwipeHold } from "../animation/SwipeHold"
 import {
   addExerciseToWorkout,
@@ -225,10 +226,9 @@ const FORM_PLACEHOLDER_STYLE = {
   borderColor: "transparent" as const,
 }
 
-// Per-row mount fade. Legacy `Animated` so we don't pull in Reanimated's
-// runtime (see import comment). The wrapper sits *outside* the Swipeable so
-// our opacity Animated.Value never shares a node with the Swipeable's
-// native-driven dragX/progress, sidestepping the JS/native collision that
+// Per-row mount fade, with React Native's `Animated`. The wrapper sits
+// *outside* the swipeable so this opacity never shares a node with the
+// swipe's own animated styles, sidestepping the collision that
 // LayoutAnimation.opacity hits.
 //
 // `leaving`: when true, fades the row to 0 (used for delete-then-mutate so
@@ -723,8 +723,8 @@ export function SetLoggerScreen({ route, navigation }: any) {
   const snapshot = useScreenSnapshot()
   // While `resolved` is null we render a stub workout/we synthesized from
   // the picker's `pendingCreate` payload — the real workoutId/weId land
-  // ~one frame after the push animation finishes (see the
-  // InteractionManager defer above), and showing the populated header +
+  // ~one frame after the push animation finishes, and showing the
+  // populated header +
   // form during the slide-in is what makes the transition feel instant.
   // For a fresh exercise add the stub is visually identical to what the
   // post-mutation render produces (no logged sets), so the swap is
@@ -2980,7 +2980,7 @@ function SvgLineChart({
   )
   const active = activeIdx != null ? points[activeIdx] : null
   const initialScrollX = Math.max(0, contentW - visibleW)
-  const scrollRef = useRef<ScrollView>(null)
+  const scrollRef = useRef<ScrollViewInstance>(null)
   const userDraggingRef = useRef(false)
   useEffect(() => {
     const t = requestAnimationFrame(() => {
@@ -3833,8 +3833,8 @@ function sameSet(a: WorkoutSet, b: WorkoutSet): boolean {
 // that is currently open so a sibling can close it. Plain mutable refs, no
 // state, so a swipe never re-renders the list.
 interface SwipeRegistry {
-  refs: Map<number, Swipeable | null>
-  open: Swipeable | null
+  refs: Map<number, SwipeableMethods | null>
+  open: SwipeableMethods | null
 }
 
 type SetRowProps = {
@@ -4115,32 +4115,21 @@ const SetRow = memo(function SetRow({
 
   return (
     <SetRowFade leaving={leaving} parentHandlesExit={emptying} onExited={onExited}>
-      <Swipeable
-        ref={(ref) => {
+      <ReanimatedSwipeable
+        ref={(ref: SwipeableMethods | null) => {
           registry.refs.set(s.id, ref)
         }}
         enabled={!selectionMode && !pending}
-        // Native-driven animations so the row tracks the finger on the
-        // UI thread. With JS driving, fast flicks outrun React's commit
-        // cycle and the row stutters / progress never settles at 1
-        // (so the action icons never fully fade in). Our renderRight-
-        // Actions only animates translateX + opacity — both are
-        // natively animatable, so there's no JS/native mixing on the
-        // same node.
-        useNativeAnimations={true}
-        // Require a horizontal gesture before taking it from the scroll
-        // view, then settle based on half the actual action-tray width.
+        // Reanimated runs the row and its tray on the UI thread, so fast
+        // flicks don't outrun React. Require 12px sideways before taking the
+        // gesture from the scroll view, then settle based on half the
+        // action-tray width. The default spring is clamped, no overshoot.
         friction={1.4}
         rightThreshold={SET_ACTIONS_WIDTH / 2}
-        activeOffsetX={[-12, 12]}
-        failOffsetY={[-12, 12]}
+        dragOffsetFromLeft={12}
+        dragOffsetFromRight={-12}
         overshootLeft={false}
         overshootRight={false}
-        animationOptions={{
-          overshootClamping: true,
-          bounciness: 0,
-          speed: 14,
-        }}
         containerStyle={styles.setSwipeContainer}
         childrenContainerStyle={styles.setSwipeChild}
         onSwipeableWillClose={() => {
@@ -4163,79 +4152,66 @@ const SetRow = memo(function SetRow({
           closeOtherOpenRow()
           registry.open = registry.refs.get(s.id) ?? null
         }}
-        renderRightActions={(progress, dragX) => {
-          // Keep the tray's movement tied to the row's translated
-          // position, including the release spring.
-          const translateX = dragX.interpolate({
-            inputRange: [-SET_ACTIONS_WIDTH, 0],
-            outputRange: [0, SET_ACTIONS_WIDTH],
-            extrapolate: "clamp",
-          })
-          // Reveal throughout the drag instead of flashing to full
-          // opacity in the first quarter of the swipe.
-          const groupOpacity = progress.interpolate({
-            inputRange: [0, 0.8, 1],
-            outputRange: [0, 1, 1],
-            extrapolate: "clamp" as const,
-          })
-          return (
-            <Animated.View
-              style={[
-                styles.setSwipeActions,
-                { transform: [{ translateX }], opacity: groupOpacity },
+        renderRightActions={(progress, translation) => (
+          // The tray follows the row, including the release spring, and
+          // reveals throughout the drag instead of flashing in early.
+          <SwipeActionTray
+            progress={progress}
+            translation={translation}
+            width={SET_ACTIONS_WIDTH}
+            fade={{ input: [0, 0.8, 1], output: [0, 1, 1] }}
+            style={styles.setSwipeActions}
+          >
+            <Pressable
+              onPress={() => closeThen(() => onEdit(s))}
+              style={({ pressed }) => [
+                styles.swipeAction,
+                styles.swipeActionEdit,
+                pressed && styles.swipeActionPressed,
               ]}
+              hitSlop={4}
             >
-              <Pressable
-                onPress={() => closeThen(() => onEdit(s))}
-                style={({ pressed }) => [
-                  styles.swipeAction,
-                  styles.swipeActionEdit,
-                  pressed && styles.swipeActionPressed,
-                ]}
-                hitSlop={4}
-              >
-                <Ionicons
-                  name="pencil"
-                  size={18}
-                  color={theme.colors.primary}
-                />
-              </Pressable>
-              <Pressable
-                onPress={() => closeThen(() => onAddNote(s))}
-                style={({ pressed }) => [
-                  styles.swipeAction,
-                  styles.swipeActionNote,
-                  pressed && styles.swipeActionPressed,
-                ]}
-                hitSlop={4}
-              >
-                <Ionicons
-                  name="document-text-outline"
-                  size={18}
-                  color={theme.colors.foreground}
-                />
-              </Pressable>
-              <Pressable
-                onPress={() => closeThen(() => onDelete(s))}
-                style={({ pressed }) => [
-                  styles.swipeAction,
-                  styles.swipeActionDelete,
-                  pressed && styles.swipeActionPressed,
-                ]}
-                hitSlop={4}
-              >
-                <Ionicons
-                  name="trash-outline"
-                  size={18}
-                  color={theme.colors.destructive}
-                />
-              </Pressable>
-            </Animated.View>
-          )
-        }}
+              <Ionicons
+                name="pencil"
+                size={18}
+                color={theme.colors.primary}
+              />
+            </Pressable>
+            <Pressable
+              onPress={() => closeThen(() => onAddNote(s))}
+              style={({ pressed }) => [
+                styles.swipeAction,
+                styles.swipeActionNote,
+                pressed && styles.swipeActionPressed,
+              ]}
+              hitSlop={4}
+            >
+              <Ionicons
+                name="document-text-outline"
+                size={18}
+                color={theme.colors.foreground}
+              />
+            </Pressable>
+            <Pressable
+              onPress={() => closeThen(() => onDelete(s))}
+              style={({ pressed }) => [
+                styles.swipeAction,
+                styles.swipeActionDelete,
+                pressed && styles.swipeActionPressed,
+              ]}
+              hitSlop={4}
+            >
+              <Ionicons
+                name="trash-outline"
+                size={18}
+                color={theme.colors.destructive}
+              />
+            </Pressable>
+          </SwipeActionTray>
+        )}
       >
         {body}
-      </Swipeable>
+      </ReanimatedSwipeable>
     </SetRowFade>
   )
 }, setRowPropsEqual)

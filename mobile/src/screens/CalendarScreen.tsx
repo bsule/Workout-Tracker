@@ -3,7 +3,6 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import {
   AccessibilityInfo,
   Animated,
-  InteractionManager,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,6 +12,7 @@ import {
   useWindowDimensions,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  type VirtualizedListInstance,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import {
@@ -107,10 +107,8 @@ export function CalendarScreen({ navigation, route }: any) {
   // tab resolves this immediately on app start, so it sees no change.
   const [detailReady, setDetailReady] = useState(false)
   useEffect(() => {
-    const task = InteractionManager.runAfterInteractions(() =>
-      setDetailReady(true)
-    )
-    return () => task.cancel()
+    const id = requestIdleCallback(() => setDetailReady(true))
+    return () => cancelIdleCallback(id)
   }, [])
 
   // Apply every incoming date, even if it's the same string as last time.
@@ -141,10 +139,10 @@ export function CalendarScreen({ navigation, route }: any) {
       // Clearing the param is still worth doing, so a later re-focus cannot
       // replay it. It just waits for the transition rather than re-rendering
       // in the middle of it.
-      const task = InteractionManager.runAfterInteractions(() =>
+      const id = requestIdleCallback(() =>
         navigation.setParams({ date: undefined })
       )
-      return () => task.cancel()
+      return () => cancelIdleCallback(id)
     }
 
     jumpToMonth(monthIndex(parseYear(incomingDate), parseMonth(incomingDate)), false)
@@ -194,7 +192,7 @@ export function CalendarScreen({ navigation, route }: any) {
 
   // Use the platform's pager for continuous, native-thread finger tracking
   // and deceleration. The old fade/swap animation jumped between two offsets.
-  const pager = useRef<VirtualizedList<number>>(null)
+  const pager = useRef<VirtualizedListInstance>(null)
   const paging = useRef(false)
   // Seeded from the window rather than starting at 0. The month pager only
   // renders once this is known, and the viewport's height is derived from it,
@@ -316,7 +314,7 @@ export function CalendarScreen({ navigation, route }: any) {
           onLayout={(event) => setPageWidth(event.nativeEvent.layout.width)}
         >
           {pageWidth > 0 && (
-            <VirtualizedList<number>
+            <VirtualizedList
               key={pageWidth}
               ref={pager}
               initialScrollIndex={visibleIndex}

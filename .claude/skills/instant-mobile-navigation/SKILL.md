@@ -27,18 +27,18 @@ navigation.navigate("CalendarDate", { date })
 
 `CalendarDate` is a stack-registered instance of `CalendarScreen` existing for exactly this reason. Use the stack push for any "open at a target" navigation from a screen that sits above `MainTabs` (ExerciseDetail, SetLogger).
 
-The pushed `CalendarDate` instance never writes the shared ActiveDate context; only the Calendar tab does (`if (!pushed) setActiveDate(...)` in `CalendarScreen.tsx`). A glance at a date from SetLogger must not move the Today tab underneath it. On mount it also clears its `date` param only after the transition (`InteractionManager.runAfterInteractions`), so the clear does not re-render mid-slide.
+The pushed `CalendarDate` instance never writes the shared ActiveDate context; only the Calendar tab does (`if (!pushed) setActiveDate(...)` in `CalendarScreen.tsx`). A glance at a date from SetLogger must not move the Today tab underneath it. On mount it also clears its `date` param in a `requestIdleCallback`, so the clear does not re-render during the first frames of the slide.
 
 **Exception — DayScreen's "Open calendar":** DayScreen is already a Main tab. Its date-header menu switches to the Calendar *tab* (`navigation.navigate("Calendar", { date })`), not a stacked `CalendarDate` page — the user wants the tab, not another stack screen. `CalendarScreen` always applies an incoming `date` param even if it matches the current string (the tab stays mounted; the user may have paged months), then clears the param so a later re-focus does not replay it.
 
 ### 2. Defer the destination's heavy work past the animation
-Render cheap chrome synchronously; fill heavy content after the transition with `InteractionManager.runAfterInteractions` (it waits until the navigation animation finishes). Gate **both the heavy render and the heavy query** on a `ready` flag — deferring the JSX but still running the materializing query on first render doesn't help.
+Render cheap chrome synchronously; fill heavy content in a `requestIdleCallback`, so it lands once the JS thread is free instead of blocking the first frame. (`InteractionManager` is gone in React Native 0.88; by 0.86 it was already a `setImmediate` stub that did not wait for animations.) Gate **both the heavy render and the heavy query** on a `ready` flag — deferring the JSX but still running the materializing query on first render doesn't help.
 
 ```tsx
 const [ready, setReady] = useState(false)
 useEffect(() => {
-  const task = InteractionManager.runAfterInteractions(() => setReady(true))
-  return () => task.cancel()
+  const id = requestIdleCallback(() => setReady(true))
+  return () => cancelIdleCallback(id)
 }, [])
 // ...
 const gym = useMemo(
@@ -48,7 +48,7 @@ const gym = useMemo(
 return <>{grid}{ready && <DayWorkoutContent date={date} />}</>
 ```
 
-A pre-mounted tab instance resolves `runAfterInteractions` at app start, so `ready` is already true there — no regression; only fresh stack pushes defer. See `CalendarScreen.tsx`.
+A pre-mounted tab instance runs the callback at app start, so `ready` is already true there — no regression; only fresh stack pushes defer. See `CalendarScreen.tsx`.
 
 ### 3. Make the query lazy
 Don't compute derived data the default view doesn't need. If a screen defaults to one tab but eagerly runs `getExerciseHistoryQ` for the other tabs, key the `useMemo` on the active tab and return an empty constant until that tab opens.
@@ -66,7 +66,7 @@ A short animation hides a small first-render hitch. The stack default is `animat
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| ~1s freeze before the slide starts | Heavy first render blocks the JS thread | Defer with `InteractionManager` (lever 2) |
+| ~1s freeze before the slide starts | Heavy first render blocks the JS thread | Defer with `requestIdleCallback` (lever 2) |
 | Opening a date/day screen freezes | Navigated into a frozen tab → fan-out unfreeze | Push the stack screen instead (lever 1) |
 | Deferred the JSX but still slow | The materializing query still ran on mount | Gate the query on `ready` too (lever 2) |
 | Tap feels laggy before anything happens | `Pressable` press-in delay in a ScrollView | `unstable_pressDelay={0}` (lever 4) |

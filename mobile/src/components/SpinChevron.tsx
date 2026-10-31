@@ -28,7 +28,9 @@ export function SpinChevron({
       style={{
         transform: [
           {
-            rotate: progress.interpolate({
+            // Value and AnimatedInterpolation share interpolate() at
+            // runtime, but RN 0.88's types make the union uncallable.
+            rotate: (progress as Animated.Value).interpolate({
               inputRange: [0, 1],
               outputRange: ["0deg", "180deg"],
             }),

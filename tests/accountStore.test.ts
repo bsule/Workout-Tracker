@@ -15,9 +15,11 @@ const disk = vi.hoisted(() => ({
   failMoves: false,
 }))
 
+// bootstrap.ts schedules auto-sync with this React Native global; never run it.
+vi.stubGlobal("requestIdleCallback", () => 0)
+
 vi.mock("react-native", () => ({
   AppState: { addEventListener: () => ({ remove() {} }) },
-  InteractionManager: { runAfterInteractions: () => {} },
 }))
 vi.mock("../mobile/src/restTimer", () => ({
   restTimer: { disable() {}, clearMark() {}, reconcile() {} },

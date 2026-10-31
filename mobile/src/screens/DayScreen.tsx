@@ -23,6 +23,7 @@ import {
   TextInput,
   useWindowDimensions,
   View,
+  type TextInputInstance,
 } from "react-native"
 import {
   localApi as api,
@@ -851,7 +852,7 @@ function GymPickerModal({
   const [adding, setAdding] = useState(false)
   const [newGym, setNewGym] = useState("")
   const { mounted, opacity } = usePresence(visible, { inMs: GYM_FADE_MS })
-  const newGymInputRef = useRef<TextInput | null>(null)
+  const newGymInputRef = useRef<TextInputInstance | null>(null)
 
   // Never resume mid-form: an open always lands on the list, not the add field.
   useEffect(() => {

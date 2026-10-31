@@ -38,16 +38,15 @@ config.resolver.assetExts = [
 // found"). Redirect any `node:*` builtin to an empty stub so the bundle builds.
 const NODE_BUILTIN_STUB = path.resolve(projectRoot, "node-builtin-stub.js")
 
-// Force every `react` (and `react/*`) import to resolve to mobile's single copy
-// — the version react-native's renderer is built against (19.2.3 for RN 0.86).
-// npm workspaces hoist packages to the repo root, where code would otherwise
-// load the root's react (pinned by the web app) while mobile app code loads
-// mobile/node_modules/react. Two React instances at runtime throw
-// "Incompatible React versions: ... the React and React Native renderer". By
-// anchoring resolution at mobile's react, react-native and app code share one
-// instance. mobile's react pin (Expo's SDK pin) differs from the web app's, so
-// this nested copy always exists.
-const reactAnchor = path.resolve(projectRoot, "node_modules/react/index.js")
+// Force every `react` (and `react/*`) import to resolve to mobile's copy — the
+// version react-native's renderer is built against (Expo's SDK pin). When the
+// web app pins a different react, npm nests mobile's under
+// mobile/node_modules while hoisted packages see the root's; two React
+// instances at runtime throw "Incompatible React versions: ... the React and
+// React Native renderer". Anchoring at whichever copy mobile resolves keeps
+// react-native and app code on one instance. When both apps pin the same
+// version there is a single root copy and this is a no-op.
+const reactAnchor = require.resolve("react", { paths: [projectRoot] })
 
 // `scheduler` is part of React's runtime and must match the react version
 // react-native's renderer uses. The web app's react pulls a different scheduler

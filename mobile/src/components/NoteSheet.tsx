@@ -6,6 +6,7 @@ import {
   Text,
   TextInput,
   View,
+  type TextInputInstance,
 } from "react-native"
 import { Button } from "./Button"
 import { OverlayCard, overlayCardStyles } from "./OverlayCard"
@@ -56,7 +57,7 @@ export function NoteSheet({
   onSave: () => void
 }) {
   const dirty = draft.trim() !== (original ?? "").trim()
-  const inputRef = useRef<TextInput | null>(null)
+  const inputRef = useRef<TextInputInstance | null>(null)
   const { mounted, opacity } = usePresence(visible, { inMs: NOTE_FADE_MS })
 
   // Focus after one frame so the keyboard rises against an already visible

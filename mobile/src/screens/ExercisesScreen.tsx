@@ -11,7 +11,10 @@ import {
   View,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
-import { Swipeable } from "react-native-gesture-handler"
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from "react-native-gesture-handler/ReanimatedSwipeable"
+import { SwipeActionTray } from "../components/SwipeActionTray"
 import { listExercisesQ, localApi as api } from "@lift/core"
 import type { Exercise } from "@lift/core"
 import { CategoryBadge } from "../components/CategoryBadge"
@@ -23,7 +26,7 @@ import { formatExerciseSubtitle } from "../format"
 
 export function ExercisesScreen({ navigation }: any) {
   const [search, setSearch] = useState("")
-  const openSwipeableRef = useRef<Swipeable | null>(null)
+  const openSwipeableRef = useRef<SwipeableMethods | null>(null)
   const snapshot = useScreenSnapshot(true)
   const exercises = useMemo(
     () => listExercisesQ({ q: search || undefined, sort: "last_performed" }),
@@ -112,17 +115,17 @@ function ExerciseRow({
   onDelete,
 }: {
   ex: Exercise
-  openSwipeableRef: MutableRefObject<Swipeable | null>
+  openSwipeableRef: MutableRefObject<SwipeableMethods | null>
   onPress: () => void
   onEdit: () => void
   onDelete: () => void
 }) {
   const subtitle = formatExerciseSubtitle(ex)
   const dotColor = useCategoryColor(ex.category)
-  const swipeableRef = useRef<Swipeable | null>(null)
+  const swipeableRef = useRef<SwipeableMethods | null>(null)
   // Per-touch tracking so swipes that don't reach the open threshold still
   // suppress the row's onPress (the underlying issue: Pressable doesn't get
-  // a touch-cancel from the legacy Swipeable's pan gesture for small drags,
+  // a touch-cancel from the swipeable's pan gesture for small drags,
   // so a short swipe-back ends up firing onPress and navigating).
   const touchStart = useRef<{ x: number; y: number } | null>(null)
   const moved = useRef(false)
@@ -154,21 +157,16 @@ function ExerciseRow({
   }
 
   return (
-    <Swipeable
+    <ReanimatedSwipeable
       ref={swipeableRef}
-      useNativeAnimations
       friction={1.4}
       rightThreshold={10}
-      dragOffsetFromRightEdge={5}
-      activeOffsetX={[-5, 5]}
-      failOffsetY={[-30, 30]}
+      // Start the swipe after 5px sideways, as before. Its default spring is
+      // already clamped with no overshoot.
+      dragOffsetFromLeft={5}
+      dragOffsetFromRight={-5}
       overshootLeft={false}
       overshootRight={false}
-      animationOptions={{
-        overshootClamping: true,
-        bounciness: 0,
-        speed: 14,
-      }}
       containerStyle={styles.swipeContainer}
       childrenContainerStyle={styles.swipeChild}
       onSwipeableWillOpen={() => {
@@ -184,51 +182,40 @@ function ExerciseRow({
           openSwipeableRef.current = null
         }
       }}
-      renderRightActions={(progress, dragX) => {
+      renderRightActions={(progress, translation) => (
         // Two 36-wide circular buttons + 8px gap + 8px padding = ~96px reveal.
         // Buttons sit on a transparent track so they read as row tools.
-        const translateX = dragX.interpolate({
-          inputRange: [-96, 0],
-          outputRange: [0, 96],
-          extrapolate: "clamp",
-        })
-        const groupOpacity = progress.interpolate({
-          inputRange: [0, 0.05, 0.25, 1],
-          outputRange: [0, 0, 1, 1],
-          extrapolate: "clamp" as const,
-        })
-        return (
-          <Animated.View
-            style={[
-              styles.swipeActions,
-              { transform: [{ translateX }], opacity: groupOpacity },
+        <SwipeActionTray
+          progress={progress}
+          translation={translation}
+          width={96}
+          fade={{ input: [0, 0.05, 0.25, 1], output: [0, 0, 1, 1] }}
+          style={styles.swipeActions}
+        >
+          <Pressable
+            onPress={() => closeThen(onEdit)}
+            style={({ pressed }) => [
+              styles.swipeAction,
+              styles.swipeActionEdit,
+              pressed && styles.swipeActionPressed,
             ]}
+            hitSlop={4}
           >
-            <Pressable
-              onPress={() => closeThen(onEdit)}
-              style={({ pressed }) => [
-                styles.swipeAction,
-                styles.swipeActionEdit,
-                pressed && styles.swipeActionPressed,
-              ]}
-              hitSlop={4}
-            >
-              <Ionicons name="pencil" size={18} color={theme.colors.primary} />
-            </Pressable>
-            <Pressable
-              onPress={() => closeThen(onDelete)}
-              style={({ pressed }) => [
-                styles.swipeAction,
-                styles.swipeActionDelete,
-                pressed && styles.swipeActionPressed,
-              ]}
-              hitSlop={4}
-            >
-              <Ionicons name="trash-outline" size={18} color={theme.colors.destructive} />
-            </Pressable>
-          </Animated.View>
-        )
-      }}
+            <Ionicons name="pencil" size={18} color={theme.colors.primary} />
+          </Pressable>
+          <Pressable
+            onPress={() => closeThen(onDelete)}
+            style={({ pressed }) => [
+              styles.swipeAction,
+              styles.swipeActionDelete,
+              pressed && styles.swipeActionPressed,
+            ]}
+            hitSlop={4}
+          >
+            <Ionicons name="trash-outline" size={18} color={theme.colors.destructive} />
+          </Pressable>
+        </SwipeActionTray>
+      )}
     >
       <Pressable
         onPressIn={(e) => {
@@ -257,7 +244,7 @@ function ExerciseRow({
         </View>
         <Ionicons name="chevron-forward" size={18} color={theme.colors.muted} />
       </Pressable>
-    </Swipeable>
+    </ReanimatedSwipeable>
   )
 }
 
