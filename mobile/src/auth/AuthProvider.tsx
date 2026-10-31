@@ -13,6 +13,7 @@ import {
   CloudflareTransport,
   clearSyncClock,
   configureSyncClock,
+  createDeviceIdSource,
   sync as syncModule,
 } from "@lift/core"
 import { rnSyncClockStore } from "../sync/clockStore"
@@ -31,6 +32,8 @@ const API_BASE: string =
   "http://localhost:8787/api"
 
 const ETAG_KEY = "lift.sync.etag"
+// Names this install, not the account, so sign-out leaves it in place.
+const DEVICE_ID_KEY = "lift.sync.deviceId"
 
 const syncTransport = new CloudflareTransport({
   apiBase: API_BASE,
@@ -42,6 +45,10 @@ const syncTransport = new CloudflareTransport({
       AsyncStorage.removeItem(ETAG_KEY).catch(() => {})
     }
   },
+  getDeviceId: createDeviceIdSource({
+    get: () => AsyncStorage.getItem(DEVICE_ID_KEY),
+    set: (id) => AsyncStorage.setItem(DEVICE_ID_KEY, id),
+  }),
 })
 
 interface AuthState {

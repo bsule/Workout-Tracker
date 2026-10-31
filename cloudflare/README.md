@@ -18,6 +18,7 @@ Sync:
 - `PUT /api/sync/snapshot` → 200 `{ etag, quota }`. Required header: `If-Match: "<etag>"` (overwrite) or `If-None-Match: *` (first write).
   - 428 if neither header is present.
   - 412 on a stale etag, with `{ detail, etag, quota }`. The `etag` is the cloud version the push lost to, so a client can prompt once per distinct version. A refused push does not spend quota.
+  - Optional `?device=<id>`: the client's per-install id. Each write stores `{ device, base }` in the object's custom metadata. A push that would get 412 is accepted instead when the stored labels show the cloud holds only this same device's writes since the version the push is based on: its earlier push landed but the reply was lost (`src/sync/ownWrite.ts`). The retry stays conditional on the version just read. Without the parameter (older apps) a push behaves exactly as before, and its write clears the labels.
   - 429 when the daily push budget is spent, with `{ detail, quota }`.
 - `GET /api/sync/quota` → `{ used, limit, remaining, resets_at }`. Free to call.
 

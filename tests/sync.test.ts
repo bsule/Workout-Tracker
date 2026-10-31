@@ -3,6 +3,7 @@ import {
   CloudflareTransport,
   StaleSnapshotError,
   SyncQuotaExceededError,
+  createDeviceIdSource,
 } from "@lift/core"
 
 interface FetchCall {
@@ -138,6 +139,120 @@ describe("pushSnapshot", () => {
     mockFetch(() => new Response(null, { status: 500 }))
     const { t } = transport()
     await expect(t.pushSnapshot(new Uint8Array([1]))).rejects.toThrow(/push failed: 500/)
+  })
+})
+
+describe("pushSnapshot device id", () => {
+  const ok = () =>
+    new Response(JSON.stringify({ etag: "v1", quota: QUOTA }), { status: 200 })
+
+  it("sends no device query without getDeviceId, the same URL as before", async () => {
+    mockFetch(ok)
+    const { t } = transport()
+    await t.pushSnapshot(new Uint8Array([1]))
+    expect(calls[0].url).toBe("http://localhost:8787/api/sync/snapshot")
+  })
+
+  it("sends the device id as a query parameter, not a header", async () => {
+    mockFetch(ok)
+    const t = new CloudflareTransport({
+      apiBase: "http://localhost:8787/api",
+      getToken: () => "secret-token",
+      getDeviceId: async () => "11111111-1111-4111-8111-111111111111",
+    })
+    await t.pushSnapshot(new Uint8Array([1]))
+    expect(calls[0].url).toBe(
+      "http://localhost:8787/api/sync/snapshot?device=11111111-1111-4111-8111-111111111111"
+    )
+    // Only the headers the deployed worker's CORS policy already allows.
+    const names = [...new Headers(calls[0].init.headers).keys()].sort()
+    expect(names).toEqual(["authorization", "content-type", "if-none-match"])
+  })
+
+  it("still pushes when getDeviceId throws", async () => {
+    mockFetch(ok)
+    const t = new CloudflareTransport({
+      apiBase: "http://localhost:8787/api",
+      getToken: () => "secret-token",
+      getDeviceId: () => {
+        throw new Error("storage gone")
+      },
+    })
+    await expect(t.pushSnapshot(new Uint8Array([1]))).resolves.toEqual({ etag: "v1" })
+    expect(calls[0].url).toBe("http://localhost:8787/api/sync/snapshot")
+  })
+
+  it("does not send the device id on pulls", async () => {
+    mockFetch(() => new Response(null, { status: 204 }))
+    const t = new CloudflareTransport({
+      apiBase: "http://localhost:8787/api",
+      getToken: () => "secret-token",
+      getDeviceId: () => "11111111-1111-4111-8111-111111111111",
+    })
+    await t.pullSnapshot()
+    expect(calls[0].url).toBe("http://localhost:8787/api/sync/snapshot")
+  })
+})
+
+describe("createDeviceIdSource", () => {
+  function memory(initial: string | null = null) {
+    let value = initial
+    const writes: string[] = []
+    let reads = 0
+    return {
+      store: {
+        get: async () => {
+          reads++
+          return value
+        },
+        set: async (v: string) => {
+          value = v
+          writes.push(v)
+        },
+      },
+      writes,
+      reads: () => reads,
+    }
+  }
+
+  it("makes an id once, stores it, and answers from memory after", async () => {
+    const m = memory()
+    const get = createDeviceIdSource(m.store)
+    const [a, b] = await Promise.all([get(), get()])
+    expect(a).toMatch(/^[A-Za-z0-9_-]{8,64}$/)
+    expect(b).toBe(a)
+    expect(await get()).toBe(a)
+    expect(m.writes).toEqual([a])
+    expect(m.reads()).toBe(1)
+  })
+
+  it("keeps the stored id across sessions", async () => {
+    const m = memory("11111111-1111-4111-8111-111111111111")
+    expect(await createDeviceIdSource(m.store)()).toBe(
+      "11111111-1111-4111-8111-111111111111"
+    )
+    expect(m.writes).toEqual([])
+  })
+
+  it("replaces a stored value the worker would reject", async () => {
+    const m = memory("bad id!")
+    const id = await createDeviceIdSource(m.store)()
+    expect(id).not.toBe("bad id!")
+    expect(m.writes).toEqual([id])
+  })
+
+  it("still yields an id when storage throws", async () => {
+    const get = createDeviceIdSource({
+      get: () => {
+        throw new Error("no storage")
+      },
+      set: () => {
+        throw new Error("no storage")
+      },
+    })
+    const id = await get()
+    expect(id).toMatch(/^[A-Za-z0-9_-]{8,64}$/)
+    expect(await get()).toBe(id)
   })
 })
 

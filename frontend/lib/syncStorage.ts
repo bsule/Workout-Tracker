@@ -1,16 +1,18 @@
 /**
- * Device-local storage for the two facts sync needs between sessions: the R2
- * etag and the "last synced" timestamp.
+ * Device-local storage for the facts sync needs between sessions: the R2
+ * etag, the "last synced" timestamp, and this browser's device id.
  *
- * Both are best-effort. Safari private mode throws on localStorage writes, so
+ * All are best-effort. Safari private mode throws on localStorage writes, so
  * every access is guarded — a failure degrades the feature, it never breaks a
- * sync. Both are cleared on login/signup/logout, exactly like the token.
+ * sync. The etag and clock are cleared on login/signup/logout, exactly like
+ * the token; the device id is not.
  */
 
-import type { SyncClockStore } from "@lift/core"
+import type { DeviceIdStore, SyncClockStore } from "@lift/core"
 
 const ETAG_KEY = "lift.sync.etag"
 const CLOCK_KEY = "lift.sync.lastSyncedAt"
+const DEVICE_ID_KEY = "lift.sync.deviceId"
 
 function read(key: string): string | null {
   if (typeof window === "undefined") return null
@@ -43,6 +45,16 @@ export function readStoredEtag(): string | null {
 
 export function writeStoredEtag(etag: string | null): void {
   write(ETAG_KEY, etag)
+}
+
+/**
+ * This browser's sync device id (see @lift/core createDeviceIdSource). Not
+ * cleared on logout: it names the browser, not the account. StoreOwner lets
+ * one tab at a time edit and sync, so tabs sharing it cannot race.
+ */
+export const webDeviceIdStore: DeviceIdStore = {
+  get: () => read(DEVICE_ID_KEY),
+  set: (id) => write(DEVICE_ID_KEY, id),
 }
 
 export const webSyncClockStore: SyncClockStore = {

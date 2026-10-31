@@ -27,6 +27,8 @@ export type {
   CloudflareTransportOptions,
   Quota,
 } from "./sync/cloudflareTransport"
+export { createDeviceIdSource } from "./sync/deviceId"
+export type { DeviceIdStore } from "./sync/deviceId"
 export {
   configureSyncClock,
   loadSyncClock,

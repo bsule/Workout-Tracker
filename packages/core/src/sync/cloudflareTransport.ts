@@ -3,7 +3,7 @@
  *
  * Wire format:
  *   GET  /api/sync/snapshot          → 200 raw bytes + ETag header, or 204
- *   PUT  /api/sync/snapshot          → 200 { etag, quota }, 412 stale { etag, quota }, 428 missing precondition, 429 over limit
+ *   PUT  /api/sync/snapshot?device=  → 200 { etag, quota }, 412 stale { etag, quota }, 428 missing precondition, 429 over limit
  *   GET  /api/sync/quota             → 200 { used, limit, remaining, resets_at }
  *
  * Auth: Authorization: Token <hex>.
@@ -54,12 +54,20 @@ export interface CloudflareTransportOptions {
    * time the user pushes — see autoSync.syncNow().
    */
   onEtagChange?: (etag: string | null) => void
+  /**
+   * This install's id, sent with every push. It lets the worker accept a
+   * retry that was refused only by this device's own earlier push whose reply
+   * never arrived (cloudflare/src/sync/ownWrite.ts). Optional: without it a
+   * push behaves exactly as before. See createDeviceIdSource().
+   */
+  getDeviceId?: () => string | null | Promise<string | null>
 }
 
 export class CloudflareTransport implements SyncTransport {
   private readonly apiBase: string
   private readonly getToken: CloudflareTransportOptions["getToken"]
   private readonly onEtagChange?: CloudflareTransportOptions["onEtagChange"]
+  private readonly getDeviceId?: CloudflareTransportOptions["getDeviceId"]
   private lastEtag: string | null = null
   private lastQuota: Quota | null = null
 
@@ -67,6 +75,7 @@ export class CloudflareTransport implements SyncTransport {
     this.apiBase = opts.apiBase.replace(/\/+$/, "")
     this.getToken = opts.getToken
     this.onEtagChange = opts.onEtagChange
+    this.getDeviceId = opts.getDeviceId
   }
 
   setEtag(etag: string | null): void {
@@ -121,7 +130,11 @@ export class CloudflareTransport implements SyncTransport {
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength
     ) as ArrayBuffer
-    const res = await fetch(`${this.apiBase}/sync/snapshot`, {
+    // A query parameter, not a header: a worker that does not know it ignores
+    // it, where an unknown header would fail the browser's CORS preflight.
+    const device = await this.deviceId()
+    const query = device ? `?device=${encodeURIComponent(device)}` : ""
+    const res = await fetch(`${this.apiBase}/sync/snapshot${query}`, {
       method: "PUT",
       headers,
       body,
@@ -148,6 +161,16 @@ export class CloudflareTransport implements SyncTransport {
     this.setEtag(data.etag)
     this.lastQuota = data.quota
     return { etag: data.etag }
+  }
+
+  private async deviceId(): Promise<string | null> {
+    if (!this.getDeviceId) return null
+    try {
+      return (await this.getDeviceId()) || null
+    } catch {
+      // No id costs only the lost-reply recovery, never the push.
+      return null
+    }
   }
 
   private async authHeaders(): Promise<Headers> {

@@ -20,10 +20,12 @@ import {
   CloudflareTransport,
   clearSyncClock,
   configureSyncClock,
+  createDeviceIdSource,
   sync as syncModule,
 } from "@lift/core"
 import {
   readStoredEtag,
+  webDeviceIdStore,
   webSyncClockStore,
   writeStoredEtag,
 } from "@/lib/syncStorage"
@@ -37,6 +39,7 @@ const syncTransport = new CloudflareTransport({
   apiBase: API_BASE,
   getToken,
   onEtagChange: writeStoredEtag,
+  getDeviceId: createDeviceIdSource(webDeviceIdStore),
 })
 
 /** Point the core's sync clock at localStorage. Idempotent. */

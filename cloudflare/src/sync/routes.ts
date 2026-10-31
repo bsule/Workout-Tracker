@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import type { Env, Variables } from "../env"
 import { requireAuth } from "../auth/middleware"
+import { parseDeviceId, putSnapshot } from "./ownWrite"
 
 export const sync = new Hono<{ Bindings: Env; Variables: Variables }>()
 
@@ -107,32 +108,25 @@ sync.put("/snapshot", async (c) => {
     )
   }
 
-  const conditional = new Headers()
-  if (ifMatch) conditional.set("if-match", ifMatch)
-  if (ifNoneMatch) conditional.set("if-none-match", ifNoneMatch)
-
   const body = await c.req.arrayBuffer()
-  const result = await c.env.SNAPSHOTS.put(
-    objectKey(userId),
-    body,
-    {
-      onlyIf: conditional,
-      httpMetadata: { contentType: "application/octet-stream" },
-    }
-  )
+  // The device id lets a retry recognise this device's own write whose reply
+  // never arrived (see ownWrite.ts). A query parameter, not a header: a header
+  // the deployed worker does not allow would fail the browser's CORS
+  // preflight. Older apps send nothing and get the plain conditional write.
+  const outcome = await putSnapshot(c.env.SNAPSHOTS, objectKey(userId), body, {
+    ifMatch,
+    ifNoneMatch,
+    device: parseDeviceId(c.req.query("device")),
+  })
 
-  if (!result) {
+  if (!outcome.ok) {
     // Report which version the client lost to. Clients key their "cloud is
     // newer" prompt on this etag so they ask once per distinct cloud version
-    // instead of on every refused push. head() is a metadata read, so it
-    // costs no bandwidth, and a failure here must not change the outcome.
-    const current = await c.env.SNAPSHOTS.head(objectKey(userId)).catch(
-      () => null
-    )
+    // instead of on every refused push.
     return c.json(
       {
         detail: "Snapshot has changed remotely; pull and retry.",
-        etag: current?.etag ?? null,
+        etag: outcome.remoteEtag,
         quota: before,
       },
       412
@@ -140,5 +134,5 @@ sync.put("/snapshot", async (c) => {
   }
 
   const quota = await incrementQuota(c.env.DB, userId)
-  return c.json({ etag: result.etag, quota })
+  return c.json({ etag: outcome.etag, quota })
 })
