@@ -17,7 +17,7 @@
 
 import { unzipSync, zipSync } from "fflate"
 import type { Snapshot } from "../store/schema"
-import { combinedNoteFor } from "./snapshot"
+import { combinedNoteFor, exerciseLookup as exercisesById } from "./snapshot"
 
 const APPLE_EPOCH_MS = Date.UTC(2001, 0, 1)
 const KG_TO_LB = 2.20462262
@@ -193,8 +193,9 @@ function populate(db: SqlJsDatabase, snap: Snapshot): void {
     return v
   }
 
-  const exById = new Map<number, Snapshot["exercises"][number]>()
-  for (const e of snap.exercises) exById.set(e.id, e)
+  // Built-ins are not in snap.exercises until edited; looking only there
+  // dropped every set logged on one.
+  const exById = exercisesById(snap)
   const wesByWorkout = new Map<number, Snapshot["workout_exercises"]>()
   for (const we of snap.workout_exercises) {
     const arr = wesByWorkout.get(we.workout_id) ?? []

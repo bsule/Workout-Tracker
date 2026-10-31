@@ -24,7 +24,9 @@ const CSV_HEADERS = [
   "workout_notes",
 ] as const
 
-function exerciseLookup(snap: Snapshot) {
+/** Every exercise a set can point at: saved rows first, then built-ins,
+ *  which live in SEED_EXERCISES unless the user has edited them. */
+export function exerciseLookup(snap: Snapshot) {
   const map = new Map<number, { name: string; category: string; kind: string }>()
   for (const e of snap.exercises) {
     map.set(e.id, { name: e.name, category: e.category, kind: e.kind })
