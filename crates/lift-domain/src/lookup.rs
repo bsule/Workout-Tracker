@@ -54,6 +54,9 @@ pub struct Lookup<'a> {
     sets: Mark,
     verified: Option<&'a Verified>,
     newly: RefCell<Verified>,
+    /// A top-level set deletion translates base positions instead of rebuilding
+    /// every index merely to read the affected exercise's PR candidates.
+    deleted_sets: RefCell<Option<(Mark, Vec<usize>)>>,
 }
 impl<'a> Lookup<'a> {
     /// `ix` must have been built for `snap`.
@@ -66,6 +69,7 @@ impl<'a> Lookup<'a> {
             sets: Mark::of(&snap.sets),
             verified: None,
             newly: RefCell::default(),
+            deleted_sets: RefCell::default(),
         }
     }
     /// As `new`, knowing which exercises' flags are verified in `snap`.
@@ -92,12 +96,36 @@ impl<'a> Lookup<'a> {
     pub fn base_sets_len(&self) -> usize {
         self.sets.len
     }
-    /// Whether every indexed position still holds the row it was indexed for.
+    pub(crate) fn can_record_set_deletions(&self, s: &Snapshot) -> bool {
+        self.sets.valid(&s.sets) && self.sets.len == s.sets.len()
+    }
+    pub(crate) fn record_set_deletions(&self, s: &Snapshot, positions: Vec<usize>) {
+        *self.deleted_sets.borrow_mut() = Some((Mark::of(&s.sets), positions));
+    }
+    fn deletion_positions(&self, s: &Snapshot) -> Option<std::cell::Ref<'_, Vec<usize>>> {
+        std::cell::Ref::filter_map(self.deleted_sets.borrow(), |value| {
+            value
+                .as_ref()
+                .filter(|(mark, _)| mark.valid(&s.sets) && mark.len == s.sets.len())
+                .map(|(_, positions)| positions)
+        })
+        .ok()
+    }
+    fn translated(position: usize, removed: &[usize]) -> Option<usize> {
+        let before = removed.partition_point(|p| *p < position);
+        if removed.get(before) == Some(&position) {
+            None
+        } else {
+            Some(position - before)
+        }
+    }
+    /// Whether lookups can resolve the current rows using base indexes or the
+    /// position translation recorded for a set deletion.
     pub fn current(&self, s: &Snapshot) -> bool {
         self.exercises.valid(&s.exercises)
             && self.workouts.valid(&s.workouts)
             && self.wes.valid(&s.workout_exercises)
-            && self.sets.valid(&s.sets)
+            && (self.sets.valid(&s.sets) || self.deletion_positions(s).is_some())
     }
     pub fn exercise_pos(&self, s: &Snapshot, id: u64) -> Option<usize> {
         let t = &s.exercises;
@@ -177,6 +205,13 @@ impl<'a> Lookup<'a> {
     }
     pub fn set_pos(&self, s: &Snapshot, id: u64) -> Option<usize> {
         let t = &s.sets;
+        if let Some(removed) = self.deletion_positions(s) {
+            return self
+                .ix
+                .set_by_id
+                .get(&id)
+                .and_then(|p| Self::translated(*p, &removed));
+        }
         if self.sets.valid(t) {
             if let Some(i) = self.ix.set_by_id.get(&id) {
                 return Some(*i);
@@ -188,7 +223,15 @@ impl<'a> Lookup<'a> {
     /// A workout_exercise's sets in position order.
     pub fn sets_of_we(&self, s: &Snapshot, we: u64) -> Vec<usize> {
         let t = &s.sets;
-        let mut out: Vec<usize> = if self.sets.valid(t) {
+        let mut out: Vec<usize> = if let Some(removed) = self.deletion_positions(s) {
+            self.ix
+                .sets
+                .get(&we)
+                .into_iter()
+                .flatten()
+                .filter_map(|p| Self::translated(*p, &removed))
+                .collect()
+        } else if self.sets.valid(t) {
             let mut v = self.ix.sets.get(&we).cloned().unwrap_or_default();
             v.extend((self.sets.len..t.len()).filter(|i| t[*i].workout_exercise_id == we));
             v

@@ -16,14 +16,14 @@ newly added row. This differs from the older baseline's backdated append.
 
 | Operation | TypeScript, in memory | Rust, in memory | Rust native, including commit/encoding |
 | :--- | ---: | ---: | ---: |
-| Add set | 22.955 ms | 0.594 ms | 1.094 ms |
-| Edit set | 19.455 ms | 3.145 ms | 3.430 ms |
-| Delete set | 19.572 ms | 23.409 ms | 24.492 ms |
-| Predict PR | 0.968 ms | 0.443 ms | 0.308 ms |
-| Predict PR with two queued efforts | 0.647 ms | 0.165 ms | 0.170 ms |
-| Recompute all PRs | 157.882 ms | 34.072 ms | 34.762 ms |
-| Load workout day | 0.012 ms | 0.046 ms | 0.048 ms |
-| Load calendar month | 0.025 ms | 0.313 ms | 0.280 ms |
+| Add set | 22.955 ms | 0.513 ms | 1.060 ms |
+| Edit set | 19.455 ms | 3.014 ms | 3.415 ms |
+| Delete set | 19.572 ms | 3.092 ms | 3.289 ms |
+| Predict PR | 0.968 ms | 0.435 ms | 0.294 ms |
+| Predict PR with two queued efforts | 0.647 ms | 0.166 ms | 0.178 ms |
+| Recompute all PRs | 157.882 ms | 33.685 ms | 34.792 ms |
+| Load workout day | 0.012 ms | 0.038 ms | 0.053 ms |
+| Load calendar month | 0.025 ms | 0.298 ms | 0.287 ms |
 
 The two in-memory columns exclude filesystem work. TypeScript mutations include
 its index rebuild; Rust mutations include prepare/publish and incremental index
@@ -37,12 +37,12 @@ saves a whole gzip snapshot. Its in-memory mutation time does **not** include th
 save. Rust saves changed rows immediately. Do not describe the difference between
 the first and last columns as an equivalent per-save durability speedup.
 
-Rust was faster for appends, edits and PR computation in this run, but deletion
-and small queries were slower. The table reports those regressions too.
+After optimizing deletion, Rust was faster for mutations and PR computation in
+this run. Small queries were slower; the table reports those regressions too.
 
 | Open persisted data, warm OS file cache | TypeScript snapshot | Rust SQLite |
 | :--- | ---: | ---: |
-| Ready for queries | 99.278 ms | 42.940 ms |
+| Ready for queries | 99.278 ms | 41.457 ms |
 
 TypeScript startup reads the local gzip file, decompresses/parses it and builds
 indexes. Rust opens the local database, loads binary rows and builds indexes.
@@ -64,28 +64,66 @@ migration are outside the timed regions. Reopening uses a warm OS file cache.
 
 | Operation | 1,000 sets | 10,000 sets | 100,000 sets | 250,000 sets |
 | :--- | ---: | ---: | ---: | ---: |
-| Add set (durable) | 0.253 | 0.308 | 1.094 | 2.397 |
-| Edit set (durable) | 0.209 | 0.430 | 3.430 | 10.614 |
-| Delete set (durable) | 0.428 | 1.934 | 24.492 | 67.842 |
-| Recompute all PRs (durable) | 0.476 | 2.783 | 34.762 | 102.255 |
-| Predict PR | 0.004 | 0.019 | 0.308 | 1.159 |
-| Predict PR with two queued efforts | 0.004 | 0.017 | 0.170 | 0.525 |
-| Load workout day | 0.051 | 0.043 | 0.048 | 0.052 |
-| Load calendar month | 0.012 | 0.043 | 0.280 | 0.667 |
-| Load exercise list | 0.170 | 0.234 | 2.179 | 7.508 |
-| Search exercise list | 0.039 | 0.050 | 0.318 | 1.307 |
-| Load one exercise | 0.002 | 0.002 | 0.003 | 0.004 |
-| Load 30 history days | 0.301 | 0.719 | 0.947 | 1.384 |
-| Load settings | 0.003 | 0.003 | 0.003 | 0.004 |
-| Load counts | 0.002 | 0.010 | 0.311 | 0.834 |
-| Load 1RM chart | 0.127 | 1.025 | 12.203 | 31.376 |
-| Load records | 0.126 | 0.900 | 10.831 | 28.109 |
-| Reopen local database | 1.756 | 5.384 | 42.940 | 116.820 |
+| Add set (durable) | 0.238 | 0.275 | 1.060 | 2.356 |
+| Edit set (durable) | 0.216 | 0.399 | 3.415 | 9.705 |
+| Delete set (durable) | 0.201 | 0.395 | 3.289 | 9.649 |
+| Recompute all PRs (durable) | 0.472 | 2.764 | 34.792 | 98.256 |
+| Predict PR | 0.004 | 0.018 | 0.294 | 1.188 |
+| Predict PR with two queued efforts | 0.004 | 0.016 | 0.178 | 0.537 |
+| Load workout day | 0.050 | 0.042 | 0.053 | 0.060 |
+| Load calendar month | 0.011 | 0.043 | 0.287 | 0.666 |
+| Load exercise list | 0.154 | 0.224 | 2.080 | 6.786 |
+| Search exercise list | 0.037 | 0.049 | 0.322 | 1.018 |
+| Load one exercise | 0.003 | 0.002 | 0.002 | 0.003 |
+| Load 30 history days | 0.287 | 0.703 | 0.919 | 1.326 |
+| Load settings | 0.003 | 0.003 | 0.004 | 0.004 |
+| Load counts | 0.002 | 0.008 | 0.320 | 0.852 |
+| Load 1RM chart | 0.125 | 0.977 | 11.393 | 30.046 |
+| Load records | 0.136 | 0.889 | 10.183 | 27.126 |
+| Reopen local database | 1.771 | 4.973 | 41.457 | 112.013 |
 
 `recomputeAllPrs` computes all current, historical and position flags, even when
 rows are already correct. Predictions include overall and position-PR results.
 The older in-memory engine benchmark additionally isolates one-exercise PR
 recomputation (`prExercise`), separately from native commit overhead.
+
+## Deletion optimization: before and after
+
+The same native add/edit/delete cycle, one warm-up and seven samples, measured
+before committing the deletion changes. Includes SQLite commit and receipt
+encoding. The row removed here is the most recently appended logged set.
+
+| Total sets | Previous Rust | Optimized Rust | Speedup |
+| :--- | ---: | ---: | ---: |
+| 1,000 | 0.428 ms | 0.201 ms | 2.1× |
+| 10,000 | 1.934 ms | 0.395 ms | 4.9× |
+| 100,000 | 24.492 ms | 3.289 ms | 7.4× |
+| 250,000 | 67.842 ms | 9.649 ms | 7.0× |
+
+The optimized path removes known positions by chunk and translates the old
+indexes for PR reads. It no longer builds a full temporary index just to
+recompute the affected exercise. Suffix deletion updates the surviving indexes
+in place at publish; middle deletion rebuilds the set indexes once. Deleting a
+planned row skips PR work only when the existing flags are already verified;
+unverified data still gets the full repair pass.
+
+Additional deletion cases below measure in-memory prepare/publish only. Fresh
+engine setup, initial PR verification and comparison against a full recomputation
+are outside the timer; seven samples after one warm-up. Tail-record deletion
+promotes prior records, and middle deletion changes the surviving positions.
+
+| Sets | Logged tail | Logged middle | Record tail | Planned tail |
+| :--- | ---: | ---: | ---: | ---: |
+| 10,000 | 0.291 ms | 0.831 ms | 0.294 ms | 0.015 ms |
+| 100,000 | 3.448 ms | 11.294 ms | 3.504 ms | 0.017 ms |
+| 250,000 | 9.858 ms | 31.750 ms | 10.130 ms | 0.018 ms |
+
+Reproduce with `cargo bench -p lift-engine --bench deletion_bench`. Raw samples
+are in `benchmarks/local/rust-deletion-cases.json`; the pre-optimization native
+samples are preserved locally as `rust-operations-before-deletion.json`.
+The regression tests compare tail, middle, record, batch, unknown/duplicate ID,
+planned and delete-all results to full PR recomputation and fresh indexes. SQLite
+reopen tests check record promotion, survivor ordering and appending after deletes.
 
 ## One-exercise PR calculation alone
 
@@ -101,6 +139,9 @@ for one exercise in a snapshot spread across ten exercises.
 | 100,000 | 16.467 ms | 7.161 ms |
 
 ## Concentrated histories and concurrent captures
+
+These capture/history measurements precede the deletion optimization; they do
+not time deletion and are retained as the earlier stress run.
 
 Append columns are medians of seven consecutive writes. First append, backdated
 edit, complete history and upload capture are single diagnostic runs. A first

@@ -95,8 +95,8 @@ impl Indexes {
             }
         }
         let d = &changes.sets;
-        let mut rebuild_sets = !d.positional;
-        if d.positional {
+        let mut rebuild_sets = !d.positional && !d.truncated;
+        if d.positional || d.truncated {
             for &p in &d.upserts {
                 if p < old.sets.len() {
                     let (a, b) = (&old.sets[p], &new.sets[p]);
@@ -107,6 +107,20 @@ impl Indexes {
                 }
             }
             if !rebuild_sets {
+                if d.truncated {
+                    let mut owners = HashSet::new();
+                    for key in &d.deletes {
+                        let id: u64 = key.parse().expect("set diff keys are IDs");
+                        if let Some(p) = self.set_by_id.remove(&id) {
+                            owners.insert(old.sets[p].workout_exercise_id);
+                        }
+                    }
+                    for owner in owners {
+                        if let Some(rows) = self.sets.get_mut(&owner) {
+                            rows.retain(|p| *p < new.sets.len());
+                        }
+                    }
+                }
                 for &p in &d.upserts {
                     if p >= old.sets.len() {
                         let set = &new.sets[p];

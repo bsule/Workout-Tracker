@@ -19,3 +19,7 @@ harness = false
 [[bench]]
 name = "operations_bench"
 harness = false
+
+[[bench]]
+name = "deletion_bench"
+harness = false

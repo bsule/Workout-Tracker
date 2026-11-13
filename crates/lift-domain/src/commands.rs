@@ -465,19 +465,28 @@ fn apply(
         }
         Command::DeleteSets { ids } => {
             let ids: HashSet<_> = ids.into_iter().collect();
-            let mut wes = HashSet::new();
+            let mut positions = vec![];
             for id in &ids {
                 if let Some(p) = look.set_pos(snap, *id) {
-                    wes.insert(snap.sets[p].workout_exercise_id);
+                    let row = &snap.sets[p];
+                    if let Some(wp) = look.we_pos(snap, row.workout_exercise_id) {
+                        let exercise = snap.workout_exercises[wp].exercise_id;
+                        // A planned row cannot affect candidates or positions.
+                        // Keep the full repair pass when loaded flags are untrusted.
+                        if !row.is_planned || !look.is_verified(exercise) {
+                            affected.insert(exercise);
+                        }
+                    }
+                    positions.push(p);
                 }
             }
-            for we in &wes {
-                if let Some(p) = look.we_pos(snap, *we) {
-                    affected.insert(snap.workout_exercises[p].exercise_id);
+            if !positions.is_empty() {
+                let indexed = look.can_record_set_deletions(snap);
+                positions.sort_unstable();
+                snap.sets.remove_positions(&positions);
+                if indexed {
+                    look.record_set_deletions(snap, positions);
                 }
-            }
-            if !wes.is_empty() {
-                snap.sets.retain(|s| !ids.contains(&s.id));
             }
             Value::Null
         }

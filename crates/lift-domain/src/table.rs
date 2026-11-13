@@ -233,6 +233,63 @@ impl<T: Clone> Table<T> {
         inner.len = 0;
         inner.removals += 1;
     }
+    /// Remove known positions without testing every row. Untouched chunks stay
+    /// shared, ordinals never change, and later appends never reuse an ordinal.
+    pub fn remove_positions(&mut self, positions: &[usize]) {
+        let mut positions: Vec<_> = positions
+            .iter()
+            .copied()
+            .filter(|p| *p < self.len())
+            .collect();
+        positions.sort_unstable();
+        positions.dedup();
+        if positions.is_empty() {
+            return;
+        }
+        let mut by_chunk: Vec<(usize, Vec<usize>)> = vec![];
+        for p in positions {
+            let (chunk, offset) = self.locate(p).expect("checked position");
+            if by_chunk.last().is_none_or(|(c, _)| *c != chunk) {
+                by_chunk.push((chunk, vec![]));
+            }
+            by_chunk.last_mut().unwrap().1.push(offset);
+        }
+        let inner = self.inner();
+        let old = std::mem::take(&mut inner.chunks);
+        let mut removals = by_chunk.into_iter().peekable();
+        let mut chunks = Vec::with_capacity(old.len());
+        for (c, chunk) in old.into_iter().enumerate() {
+            if removals.peek().is_some_and(|(index, _)| *index == c) {
+                let (_, offsets) = removals.next().unwrap();
+                let mut next = Chunk {
+                    rows: Vec::with_capacity(chunk.rows.len() - offsets.len()),
+                    ords: Vec::with_capacity(chunk.ords.len() - offsets.len()),
+                };
+                let mut offsets = offsets.into_iter().peekable();
+                for (i, (row, ordinal)) in chunk.rows.iter().zip(&chunk.ords).enumerate() {
+                    if offsets.peek() == Some(&i) {
+                        offsets.next();
+                    } else {
+                        next.rows.push(row.clone());
+                        next.ords.push(*ordinal);
+                    }
+                }
+                if !next.rows.is_empty() {
+                    chunks.push(Arc::new(next));
+                }
+            } else {
+                chunks.push(chunk);
+            }
+        }
+        inner.starts.clear();
+        inner.len = 0;
+        for chunk in &chunks {
+            inner.starts.push(inner.len);
+            inner.len += chunk.rows.len();
+        }
+        inner.chunks = chunks;
+        inner.removals += 1;
+    }
     /// Keeps the rows `keep` accepts. Chunks with nothing removed stay shared.
     pub fn retain(&mut self, mut keep: impl FnMut(&T) -> bool) {
         let mut plan = Vec::with_capacity(self.0.chunks.len());
@@ -372,6 +429,40 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Table<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn indexed_removal_matches_retain_without_changing_surviving_ordinals() {
+        for victims in [
+            vec![1999],
+            vec![0, 511, 512, 1023, 1500, 1999],
+            (512..1024).collect(),
+            (0..2000).collect(),
+            vec![100, 100, 9999, 3],
+        ] {
+            let mut indexed: Table<u32> = (0..2000).collect();
+            let original = indexed.clone();
+            let mut expected = original.clone();
+            expected.retain(|row| !victims.contains(&(*row as usize)));
+            indexed.remove_positions(&victims);
+            assert_eq!(indexed, expected);
+            for p in 0..indexed.len() {
+                assert_eq!(indexed.ordinal(p), expected.ordinal(p));
+            }
+            assert_eq!(original.len(), 2000);
+            indexed.push(9999);
+            assert_eq!(indexed.ordinal(indexed.len() - 1), Some(2000));
+        }
+    }
+
+    #[test]
+    fn removing_a_tail_row_keeps_all_earlier_chunks_shared() {
+        let mut table: Table<u32> = (0..2000).collect();
+        let original = table.clone();
+        table.remove_positions(&[1999]);
+        for c in 0..3 {
+            assert!(table.same_chunk(c, &original, c));
+        }
+        assert_eq!(original[1999], 1999);
+    }
     #[test]
     fn retain_keeps_ordinals_and_shares_untouched_chunks() {
         let mut t: Table<u32> = (0..2000).collect();

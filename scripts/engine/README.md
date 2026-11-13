@@ -165,6 +165,10 @@ cache-only synthetic database and never opens an account store.
 
 ## Additional benchmarks
 
+- `cargo bench -p lift-engine --bench deletion_bench`: isolates tail, middle,
+  record and planned deletions after initial PR verification. Checks each result
+  against a full recomputation outside the timed region; seven recorded samples.
+
 - `npm run engine:operations`: matched TypeScript and Rust in-memory add/edit/delete,
   overall/position PR prediction, full PR recomputation, workout-day and calendar
   queries on the exact same verified fixtures. Also measures TypeScript local

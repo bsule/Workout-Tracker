@@ -263,6 +263,104 @@ fn set_input(weight: f64, reps: f64) -> Value {
 }
 
 #[test]
+fn optimized_deletions_promote_records_and_survive_reopen_and_append() {
+    use lift_domain::model::*;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.sqlite");
+    let path = path.to_str().unwrap();
+    let mut store = Store::open(path, "device".into(), "now".into()).unwrap();
+    let mut snapshot = Snapshot::empty("device".into(), "now".into());
+    snapshot.workouts.push(WorkoutRow {
+        id: 1,
+        date: "2026-01-01".into(),
+        status: "done".into(),
+        ..Default::default()
+    });
+    snapshot.workout_exercises.push(WorkoutExerciseRow {
+        id: 2,
+        workout_id: 1,
+        exercise_id: 1,
+        ..Default::default()
+    });
+    for i in 0..1100 {
+        snapshot.sets.push(SetRow {
+            id: 1000 + i,
+            workout_exercise_id: 2,
+            weight: Some(i as f64),
+            reps: Some(5.0),
+            order: i as i64,
+            is_planned: i == 1099,
+            ..Default::default()
+        });
+    }
+    store.install_snapshot(snapshot, None, None).unwrap();
+    store
+        .execute(
+            "verify".into(),
+            1,
+            Command::RecomputePrs,
+            "now".into(),
+            "today".into(),
+        )
+        .unwrap();
+    for (step, ids) in [
+        vec![2099],
+        vec![2098],
+        vec![1511, 1512],
+        (1000..2098).collect(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        store
+            .execute(
+                format!("delete-{step}"),
+                1,
+                Command::DeleteSets { ids },
+                "now".into(),
+                "today".into(),
+            )
+            .unwrap();
+        let mut expected = store.engine.snapshot().clone();
+        lift_domain::prs::recompute(&mut expected, None);
+        assert_eq!(store.engine.snapshot(), &expected);
+        drop(store);
+        store = Store::open(path, "device".into(), "now".into()).unwrap();
+        assert_eq!(store.engine.snapshot(), &expected);
+        let actual = store
+            .engine
+            .try_query(lift_domain::queries::Query::Workout { id: 1 })
+            .unwrap();
+        let fresh = lift_domain::queries::Indexes::build(store.engine.snapshot());
+        assert_eq!(
+            actual["data"],
+            lift_domain::queries::query(
+                store.engine.snapshot(),
+                &fresh,
+                lift_domain::queries::Query::Workout { id: 1 }
+            )
+        );
+    }
+    let added = store
+        .execute(
+            "append".into(),
+            1,
+            Command::AddSet {
+                we_id: 2,
+                input: set_input(100.0, 5.0),
+            },
+            "now".into(),
+            "today".into(),
+        )
+        .unwrap();
+    assert!(added.result["id"].as_u64().unwrap() > 2099);
+    let expected = store.engine.snapshot().clone();
+    drop(store);
+    let store = Store::open(path, "device".into(), "now".into()).unwrap();
+    assert_eq!(store.engine.snapshot(), &expected);
+}
+
+#[test]
 fn reopen_after_mid_table_delete_keeps_order_without_rewriting() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("store.sqlite");

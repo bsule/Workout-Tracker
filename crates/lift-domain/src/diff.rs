@@ -16,6 +16,8 @@ pub struct TableDiff {
     pub deletes: Vec<String>,
     /// True when old positions still hold the same rows (no removals).
     pub positional: bool,
+    /// Only a suffix was removed, so surviving positions remain valid.
+    pub truncated: bool,
 }
 impl TableDiff {
     pub fn is_empty(&self) -> bool {
@@ -45,7 +47,11 @@ fn diff_table<T: PartialEq, K: Eq + Hash + ToString>(
     if old.shares_storage_with(new) {
         return Ok(out);
     }
-    if old.lineage() == new.lineage() && old.removals() == new.removals() && new.len() >= old.len()
+    let truncated = old.lineage() == new.lineage()
+        && new.len() < old.len()
+        && (new.is_empty() || new.ordinal(new.len() - 1) == old.ordinal(new.len() - 1));
+    if old.lineage() == new.lineage()
+        && ((old.removals() == new.removals() && new.len() >= old.len()) || truncated)
     {
         let mut aligned = true;
         'chunks: for c in 0..new.chunk_count() {
@@ -73,6 +79,13 @@ fn diff_table<T: PartialEq, K: Eq + Hash + ToString>(
             }
         }
         if aligned {
+            if truncated {
+                out.truncated = true;
+                out.positional = false;
+                out.deletes
+                    .extend((new.len()..old.len()).map(|p| key_of(&old[p]).to_string()));
+                out.deletes.sort();
+            }
             return Ok(out);
         }
         out = TableDiff::default();
