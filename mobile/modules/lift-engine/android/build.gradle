@@ -6,6 +6,9 @@ group = 'com.lift.engine'
 version = '0.1.0'
 android {
   namespace "com.lift.engine"
+  defaultConfig {
+    consumerProguardFiles 'consumer-rules.pro'
+  }
   sourceSets {
     main {
       java.srcDirs += 'generated/java'

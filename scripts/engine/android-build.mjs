@@ -9,8 +9,11 @@ const ndk=process.env.ANDROID_NDK_HOME??join(sdk,'ndk/27.1.12297006')
 const host=process.platform==='darwin'?'darwin-x86_64':'linux-x86_64'
 const bin=join(ndk,'toolchains/llvm/prebuilt',host,'bin')
 if(!existsSync(bin))throw Error(`Missing NDK 27.1.12297006: ${bin}`)
+const abis=(process.env.LIFT_ANDROID_ABIS??'arm64-v8a,x86_64').split(',')
+if(!abis.length||abis.some(abi=>!['arm64-v8a','x86_64'].includes(abi)))throw Error('Invalid LIFT_ANDROID_ABIS')
 function run(command,args,env={}){const r=spawnSync(command,args,{cwd:root,stdio:'inherit',env:{...process.env,...env}});if(r.error)throw r.error;if(r.status!==0)process.exit(r.status??1)}
 for(const [target,abi,clang]of [['aarch64-linux-android','arm64-v8a','aarch64-linux-android26-clang'],['x86_64-linux-android','x86_64','x86_64-linux-android26-clang']]){
+  if(!abis.includes(abi))continue
   const suffix=target.replaceAll('-','_')
   const env={['CARGO_TARGET_'+suffix.toUpperCase()+'_LINKER']:join(bin,clang),['CC_'+suffix]:join(bin,clang),['AR_'+suffix]:join(bin,'llvm-ar')}
   run((process.env.CARGO ?? 'cargo'),['build','-p','lift-native','--release','--locked','--target',target],env)

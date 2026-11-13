@@ -105,6 +105,50 @@ For desktop performance diagnostics, run `npm run engine:baseline`, `cargo bench
 
 Both run `expo prebuild --clean` on the runner, so they don't depend on a local `ios/` or `android/` folder.
 
+The workflows cache npm downloads, Rust compilation and finished app artifacts.
+Android also caches Gradle dependencies/task outputs and enables configuration
+caching. iOS caches CocoaPods downloads, Pods, Xcode build outputs and C/C++
+compilation through ccache; it uses incremental `build` rather than `clean build`.
+Expo/React Native already use precompiled iOS dependencies by default in this SDK.
+
+An exact app-input fingerprint allows a docs-only edit to reuse a previously
+successful binary without reinstalling dependencies or compiling. It includes
+tracked mobile/shared/Rust/build-script files, root configuration and workflow
+files, plus configuration, architectures and toolchain identity. Repository documentation and
+README/agent instructions are excluded; Markdown bundled under mobile/shared
+packages is still an app input. A cache miss always falls back to a normal build. Tests still run on
+push independently; cache reuse does not replace them. Artifacts retain their
+original binary contents/version, even when published by a newer docs-only run.
+
+Workflow inputs:
+
+- `force_rebuild`: bypass the finished-app cache to check real compilation; compiler
+  and dependency caches remain enabled. Use this to compare cold and warm runs.
+- Android `architectures`: defaults to `arm64-v8a,x86_64`, the two ABIs supplied by
+  the Rust engine. Select `arm64-v8a` for modern physical phones or `x86_64` for
+  compatible emulators. Both Rust and Gradle receive the same selection. The old
+  template also built 32-bit ABIs without a Rust library, so those builds could
+  not run the engine. They are no longer advertised in the APK.
+- `runner`: defaults to the existing hosted runner. You can supply an available
+  faster runner label. No paid runner is selected automatically. A custom runner
+  needs the same prerequisites and sufficient disk/memory; iOS expects versioned
+  Xcode installations under `/Applications`.
+
+IPA CI prepares only the iOS device Rust library. Local native preparation still
+builds device and simulator variants by default. Override with
+`LIFT_IOS_TARGETS=aarch64-apple-ios-sim` for simulator-only work. Android preparation
+accepts `LIFT_ANDROID_ABIS=arm64-v8a` (or `x86_64`); keep the Gradle
+`-PreactNativeArchitectures` value in sync. Binding generation emits only the
+platform's language when preparing mobile builds.
+
+Concurrent builds with the same branch/configuration/architectures cancel the
+older run. Already-compressed IPA/APK artifacts upload without an extra compression
+pass. Android's release shrinker consumes the LiftEngine module's JNA keep rules,
+including its documented desktop-AWT warning suppression; shrinking stays enabled.
+
+See [build timing results](build-performance.md) for measurements and limitations.
+
+
 ### EAS
 
 You can also build with Expo's EAS service. It needs an Expo account, and for iOS an Apple Developer account.

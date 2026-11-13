@@ -16,13 +16,35 @@ on:
           - Release
           - Debug
 
+      force_rebuild:
+        description: "Compile even when an identical app artifact is cached"
+        type: boolean
+        default: false
+      runner:
+        description: "Runner label (optionally use your faster/self-hosted runner)"
+        type: string
+        default: macos-26
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.configuration }}-device
+  cancel-in-progress: true
+
 jobs:
   build:
     # macos-15 tops out at Xcode 16.4, which ships Swift 6.1. Since the Expo
     # 57 upgrade a native dependency needs Swift tools 6.2, so the build fails
     # there at package resolution. macos-26 carries Xcode 26.x, which has it.
-    runs-on: macos-26
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
+    env:
+      CI: "1"
+      LIFT_IOS_TARGETS: aarch64-apple-ios
+      USE_CCACHE: "1"
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 1G
     defaults:
       run:
         working-directory: mobile
@@ -35,6 +57,7 @@ jobs:
       # build when a dependency started requiring a newer Swift toolchain.
       # The list is printed so a future toolchain failure names its own cause.
       - name: Select newest Xcode
+        id: xcode
         run: |
           ls /Applications | grep -E '^Xcode' || true
           XCODE=$(ls /Applications | grep -E '^Xcode_[0-9]' | sort -V | tail -n 1)
@@ -42,35 +65,87 @@ jobs:
           sudo xcode-select -s "/Applications/$XCODE/Contents/Developer"
           xcodebuild -version
           swift --version
+          echo "version=$(xcodebuild -version | tr ' \n' '-')" >> "$GITHUB_OUTPUT"
+
+      - name: Fingerprint app inputs
+        id: inputs
+        working-directory: .
+        env:
+          BUILD_PLATFORM: ios
+          BUILD_CONFIGURATION: ${{ inputs.configuration }}
+          BUILD_ARCHITECTURES: aarch64-apple-ios
+          BUILD_TOOLCHAIN: ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}
+        run: node scripts/ci/mobile-fingerprint.mjs
+
+      - name: Reuse identical app artifact
+        id: app-cache
+        if: ${{ !inputs.force_rebuild }}
+        uses: actions/cache@v6
+        with:
+          path: target/mobile-artifacts/ios
+          key: mobile-app-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.inputs.outputs.fingerprint }}
 
       - name: Setup Node
+        if: steps.app-cache.outputs.cache-hit != 'true'
         uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
 
       - name: Install monorepo deps
+        if: steps.app-cache.outputs.cache-hit != 'true'
         run: npm ci
         working-directory: .
 
       - name: Install Rust toolchain and targets
+        if: steps.app-cache.outputs.cache-hit != 'true'
         working-directory: .
         run: |
           rustup show
-          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+          rustup target add aarch64-apple-ios
+
+      - name: Cache Rust compilation
+        if: steps.app-cache.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ios-device
+          cache-workspace-crates: true
+          cache-on-failure: true
 
       - name: Prepare Rust native module
+        if: steps.app-cache.outputs.cache-hit != 'true'
         working-directory: .
         run: node scripts/engine/prepare-native.mjs ios
 
       - name: Expo prebuild (generate ios/)
+        if: steps.app-cache.outputs.cache-hit != 'true'
         run: npx expo prebuild --platform ios --clean --no-install
 
+      - name: Install compiler cache
+        if: steps.app-cache.outputs.cache-hit != 'true'
+        run: command -v ccache || brew install ccache
+
+      - name: Cache CocoaPods and Xcode compilation
+        if: steps.app-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/Library/Caches/CocoaPods
+            mobile/ios/Pods
+            mobile/build/Build
+            mobile/build/ModuleCache.noindex
+            .ccache
+          key: ios-native-v1-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-${{ inputs.configuration }}-${{ hashFiles('package-lock.json', 'mobile/**/*.podspec') }}-${{ github.sha }}
+          restore-keys: |
+            ios-native-v1-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-${{ inputs.configuration }}-${{ hashFiles('package-lock.json', 'mobile/**/*.podspec') }}-
+
       - name: Install CocoaPods
+        if: steps.app-cache.outputs.cache-hit != 'true'
         run: pod install
         working-directory: mobile/ios
 
       - name: Resolve Xcode scheme from app.json
+        if: steps.app-cache.outputs.cache-hit != 'true'
         id: scheme
         run: |
           SCHEME=$(node -e "console.log(require('./app.json').expo.name)")
@@ -79,6 +154,7 @@ jobs:
           xcodebuild -workspace ios/*.xcworkspace -list 2>&1 | sed -n '/Schemes:/,/^$/p' || true
 
       - name: Build .app (unsigned)
+        if: steps.app-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           xcodebuild \
@@ -94,9 +170,11 @@ jobs:
             CODE_SIGN_ENTITLEMENTS="" \
             PROVISIONING_PROFILE="" \
             EXPANDED_CODE_SIGN_IDENTITY="" \
-            clean build
+            -showBuildTimingSummary \
+            build
 
       - name: Package unsigned .ipa
+        if: steps.app-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           BUILD_ROOT="$GITHUB_WORKSPACE/mobile/build"
@@ -106,7 +184,7 @@ jobs:
             ls -la "$GITHUB_WORKSPACE/mobile" || true
             exit 1
           fi
-          APP_PATH=$(find "$BUILD_ROOT" -type d -name "*.app" -path "*Release-iphoneos*" | head -n 1)
+          APP_PATH=$(find "$BUILD_ROOT" -type d -name "*.app" -path "*${{ inputs.configuration }}-iphoneos*" | head -n 1)
           if [ -z "$APP_PATH" ]; then
             echo "No .app produced. Tree under build/:"
             find "$BUILD_ROOT" -maxdepth 5 -type d | head -50
@@ -117,15 +195,31 @@ jobs:
           mkdir -p "$STAGE/Payload"
           cp -R "$APP_PATH" "$STAGE/Payload/"
           VERSION=$(node -e "console.log(require('$GITHUB_WORKSPACE/mobile/app.json').expo.version)")
-          OUT="$GITHUB_WORKSPACE/mobile/build/lift-${VERSION}-unsigned.ipa"
+          mkdir -p "$GITHUB_WORKSPACE/target/mobile-artifacts/ios"
+          OUT="$GITHUB_WORKSPACE/target/mobile-artifacts/ios/lift-${VERSION}-unsigned.ipa"
           (cd "$STAGE" && zip -qr "$OUT" Payload)
           ls -lh "$OUT"
           echo "IPA_PATH=$OUT" >> "$GITHUB_ENV"
+
+      - name: Verify app artifact
+        working-directory: .
+        env:
+          BUILD_PLATFORM: ios
+        run: python3 scripts/ci/verify-mobile-artifact.py
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v7
         with:
           name: lift-unsigned-ipa
-          path: ${{ env.IPA_PATH }}
+          path: target/mobile-artifacts/ios/*.ipa
           if-no-files-found: error
           retention-days: 14
+          compression-level: 0
+
+      - name: Build summary
+        env:
+          CACHE_HIT: ${{ steps.app-cache.outputs.cache-hit }}
+          FINGERPRINT: ${{ steps.inputs.outputs.fingerprint }}
+        run: |
+          echo "App fingerprint: $FINGERPRINT" >> "$GITHUB_STEP_SUMMARY"
+          echo "Reused identical app: ${CACHE_HIT:-false}" >> "$GITHUB_STEP_SUMMARY"

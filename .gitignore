@@ -47,6 +47,7 @@ test_dbs/
 # Rust build outputs and local performance reports
 /target/
 /benchmarks/local/
+/.ccache/
 /mobile/modules/lift-engine/ios/Generated/
 /mobile/modules/lift-engine/android/generated/
 

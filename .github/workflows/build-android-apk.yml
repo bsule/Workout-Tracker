@@ -16,10 +16,37 @@ on:
           - Release
           - Debug
 
+      force_rebuild:
+        description: "Compile even when an identical app artifact is cached"
+        type: boolean
+        default: false
+      runner:
+        description: "Runner label (optionally use your faster/self-hosted runner)"
+        type: string
+        default: ubuntu-latest
+      architectures:
+        description: "Android CPU architectures (Rust and Gradle use the same set)"
+        type: choice
+        default: arm64-v8a,x86_64
+        options:
+          - arm64-v8a,x86_64
+          - arm64-v8a
+          - x86_64
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.variant }}-${{ inputs.architectures }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
+    env:
+      CI: "1"
+      LIFT_ANDROID_ABIS: ${{ inputs.architectures }}
     defaults:
       run:
         working-directory: mobile
@@ -28,49 +55,96 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Fingerprint app inputs
+        id: inputs
+        working-directory: .
+        env:
+          BUILD_PLATFORM: android
+          BUILD_CONFIGURATION: ${{ inputs.variant }}
+          BUILD_ARCHITECTURES: ${{ inputs.architectures }}
+          BUILD_TOOLCHAIN: ${{ runner.os }}-${{ runner.arch }}-jdk17-ndk27.1.12297006
+        run: node scripts/ci/mobile-fingerprint.mjs
+
+      - name: Reuse identical app artifact
+        id: app-cache
+        if: ${{ !inputs.force_rebuild }}
+        uses: actions/cache@v6
+        with:
+          path: target/mobile-artifacts/android
+          key: mobile-app-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.inputs.outputs.fingerprint }}
+
       - name: Setup Node
+        if: steps.app-cache.outputs.cache-hit != 'true'
         uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
 
       - name: Setup Java
+        if: steps.app-cache.outputs.cache-hit != 'true'
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
 
+      - name: Cache Gradle dependencies and task outputs
+        if: steps.app-cache.outputs.cache-hit != 'true'
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+          cache-read-only: false
+
       - name: Setup Android SDK
+        if: steps.app-cache.outputs.cache-hit != 'true'
         uses: android-actions/setup-android@v4
 
       - name: Install monorepo deps
+        if: steps.app-cache.outputs.cache-hit != 'true'
         run: npm ci
         working-directory: .
 
       - name: Install Rust toolchain and targets
+        if: steps.app-cache.outputs.cache-hit != 'true'
         working-directory: .
         run: |
           rustup show
-          rustup target add aarch64-linux-android x86_64-linux-android
+          if [[ ",$LIFT_ANDROID_ABIS," == *",arm64-v8a,"* ]]; then rustup target add aarch64-linux-android; fi
+          if [[ ",$LIFT_ANDROID_ABIS," == *",x86_64,"* ]]; then rustup target add x86_64-linux-android; fi
 
       - name: Install pinned Android NDK
+        if: steps.app-cache.outputs.cache-hit != 'true'
         run: sdkmanager "ndk;27.1.12297006"
 
+      - name: Cache Rust compilation
+        if: steps.app-cache.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: android-${{ inputs.architectures }}
+          cache-workspace-crates: true
+          cache-on-failure: true
+
       - name: Prepare Rust native module
+        if: steps.app-cache.outputs.cache-hit != 'true'
         working-directory: .
         run: node scripts/engine/prepare-native.mjs android
 
       - name: Expo prebuild (generate android/)
+        if: steps.app-cache.outputs.cache-hit != 'true'
         run: npx expo prebuild --platform android --clean --no-install
 
       - name: Build APK
+        if: steps.app-cache.outputs.cache-hit != 'true'
         working-directory: mobile/android
         run: |
           set -euo pipefail
           chmod +x ./gradlew
-          ./gradlew "assemble${{ inputs.variant }}" --no-daemon
+          ./gradlew ":app:assemble${{ inputs.variant }}" \
+            -PreactNativeArchitectures="$LIFT_ANDROID_ABIS" \
+            '-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8' \
+            --build-cache --configuration-cache --parallel --max-workers=2 --console=plain
 
       - name: Package APK
+        if: steps.app-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           VARIANT_LC=$(echo "${{ inputs.variant }}" | tr '[:upper:]' '[:lower:]')
@@ -84,15 +158,31 @@ jobs:
           fi
           echo "APK at: $APK_PATH"
           VERSION=$(node -e "console.log(require('./app.json').expo.version)")
-          OUT="$GITHUB_WORKSPACE/mobile/lift-${VERSION}-${VARIANT_LC}.apk"
+          mkdir -p "$GITHUB_WORKSPACE/target/mobile-artifacts/android"
+          OUT="$GITHUB_WORKSPACE/target/mobile-artifacts/android/lift-${VERSION}-${VARIANT_LC}.apk"
           cp "$APK_PATH" "$OUT"
           ls -lh "$OUT"
           echo "APK_PATH=$OUT" >> "$GITHUB_ENV"
+
+      - name: Verify app artifact
+        working-directory: .
+        env:
+          BUILD_PLATFORM: android
+        run: python3 scripts/ci/verify-mobile-artifact.py
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
         with:
           name: lift-apk
-          path: ${{ env.APK_PATH }}
+          path: target/mobile-artifacts/android/*.apk
           if-no-files-found: error
           retention-days: 14
+          compression-level: 0
+
+      - name: Build summary
+        env:
+          CACHE_HIT: ${{ steps.app-cache.outputs.cache-hit }}
+          FINGERPRINT: ${{ steps.inputs.outputs.fingerprint }}
+        run: |
+          echo "App fingerprint: $FINGERPRINT" >> "$GITHUB_STEP_SUMMARY"
+          echo "Reused identical app: ${CACHE_HIT:-false}" >> "$GITHUB_STEP_SUMMARY"
