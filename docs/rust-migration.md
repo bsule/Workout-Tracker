@@ -5,7 +5,7 @@ Status: implementation started on `feat/rust-workout-engine`. Foundation slice a
 ### Implementation progress
 
 - Stage 0: existing 44 suites / 577 tests pass; mobile, web and Worker typechecks pass. Synthetic desktop timings captured with raw local samples. Device release benchmarks, concentrated-history cases and full call-site inventory remain pending.
-- Stage 1: Rust 1.85.1 pinned, native desktop tests and Wasm compilation verified. CI gates added. iOS/Android compilation and Expo binding proof remain pending.
+- Stage 1: Rust 1.85.1 pinned, native desktop tests and Wasm compilation verified. CI gates added. Native library now cross-compiles for iOS arm64 device and simulator. Pinned UniFFI generates Swift/Kotlin bindings, and a compiled Swift executable calls Rust successfully. Expo wrapper is staged outside autolinking; installable Expo integration, background execution proof and Android NDK compilation remain pending.
 - Early Stage 2: weight conversion, quantization and display rounding ported; 268 deterministic TypeScript cases plus non-finite/negative-rounding checks. JSON fixture decoding uses float round-trip support to preserve exact comparisons.
 - Developer commands and measurement limits: `scripts/engine/README.md`.
 

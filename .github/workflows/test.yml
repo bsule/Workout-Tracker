@@ -13,6 +13,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  swift-bindings:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - name: Test generated Swift bindings against Rust
+        run: node scripts/engine/swift-smoke.mjs
+
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -27,7 +40,7 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Check browser portability
-        run: cargo check --workspace --locked --target wasm32-unknown-unknown
+        run: cargo check -p lift-domain --locked --target wasm32-unknown-unknown
 
   test:
     runs-on: ubuntu-latest

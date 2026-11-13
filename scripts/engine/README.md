@@ -12,7 +12,7 @@ The production app still uses TypeScript. This directory starts stages 0/1 of
   the current TypeScript implementation. Review fixture changes before accepting.
 - `cargo test --workspace`: Rust compatibility tests, including those fixtures.
 - `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings`.
-- `cargo check --workspace --target wasm32-unknown-unknown`: portability gate.
+- `cargo check -p lift-domain --target wasm32-unknown-unknown`: portability gate.
 
 Install Rust with rustup, then ensure `~/.cargo/bin` is on PATH. The workspace
 pins its toolchain in `rust-toolchain.toml`. No native module or mobile binary
@@ -27,3 +27,24 @@ exercises; concentrated histories and real release-device measurements remain.
 Current Rust scope: weight conversion, comparison quantization and display
 rounding. Formatting strings stays outside this initial port. Negative-half
 rounding explicitly matches JavaScript rather than Rust's default rounding.
+
+## Native binding proof
+
+`node scripts/engine/bindings.mjs` builds the pinned UniFFI library and generates
+Swift/Kotlin under ignored `target/bindings/`. On macOS,
+`node scripts/engine/swift-smoke.mjs` compiles and runs real Swift-to-Rust calls.
+
+`lift-native` is intentionally excluded from Wasm portability checks; only the
+portable domain must compile there. Native library and binding-generator versions
+are locked together. The lockfile pins textwrap 0.16.2 because newer 0.16.4
+requires Rust 1.88, above the workspace's pinned 1.85.1 toolchain.
+
+The TypeScript facade and queued Swift wrapper in `expo-spike/` are staging code,
+outside Expo autolinking until native packaging and both platforms are proven.
+They do not replace any production store. The Android wrapper, NDK compilation,
+Expo runtime and event/cancellation proof remain pending.
+
+Verified native Rust cross-compilation targets: `aarch64-apple-ios` and
+`aarch64-apple-ios-sim`. Install with `rustup target add` then run
+`cargo build -p lift-native --locked --target <target>`. Target compilation alone
+does not establish an installable Expo app or runtime background-thread behavior.

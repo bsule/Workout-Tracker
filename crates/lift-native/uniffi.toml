@@ -1,0 +1,7 @@
+[bindings.kotlin]
+package_name = "com.lift.engine.generated"
+cdylib_name = "lift_native"
+
+[bindings.swift]
+module_name = "LiftEngineRust"
+ffi_module_name = "LiftEngineFFI"

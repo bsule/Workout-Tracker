@@ -1,0 +1,21 @@
+[package]
+name = "lift-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+lift-domain = { path = "../lift-domain" }
+uniffi = "=0.29.5"
+
+[[bin]]
+name = "lift-bindgen"
+path = "src/bin/bindgen.rs"
+required-features = ["bindgen"]
