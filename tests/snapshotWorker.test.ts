@@ -23,6 +23,7 @@ it("encodes a real snapshot in the worker and round trips the portable format", 
   setSnapshotEncoder(createSnapshotEncoder(() => adapter as unknown as Worker))
   try {
     const snapshot = blankSnapshot()
+    snapshot.exported_at = "2000-01-01T00:00:00.000Z"
     snapshot.workouts = [workout(1, "2026-11-12")]
     const restored = (await parse(await serialize(snapshot))).snapshot
     expect(restored.workouts).toEqual(snapshot.workouts)

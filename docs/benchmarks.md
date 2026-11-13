@@ -5,6 +5,54 @@ builds and local SQLite. These are desktop diagnostics, not phone latency or
 Expo bridge measurements. The updated iPhone 17 Pro simulator Release build was
 installed and launched separately; the tables below were not measured there.
 
+## Matched TypeScript vs. Rust at 100,000 sets
+
+These compare the retained legacy TypeScript implementation with the current
+Rust engine on this Mac. Both start from the **exact same verified snapshot**
+exported by the Rust fixture generator: ten exercises, ten sets per workout,
+one workout per day. One warm-up and seven samples, reported as medians.
+Recent set additions are chronological appends; edits and deletes act on the
+newly added row. This differs from the older baseline's backdated append.
+
+| Operation | TypeScript, in memory | Rust, in memory | Rust native, including commit/encoding |
+| :--- | ---: | ---: | ---: |
+| Add set | 22.955 ms | 0.594 ms | 1.094 ms |
+| Edit set | 19.455 ms | 3.145 ms | 3.430 ms |
+| Delete set | 19.572 ms | 23.409 ms | 24.492 ms |
+| Predict PR | 0.968 ms | 0.443 ms | 0.308 ms |
+| Predict PR with two queued efforts | 0.647 ms | 0.165 ms | 0.170 ms |
+| Recompute all PRs | 157.882 ms | 34.072 ms | 34.762 ms |
+| Load workout day | 0.012 ms | 0.046 ms | 0.048 ms |
+| Load calendar month | 0.025 ms | 0.313 ms | 0.280 ms |
+
+The two in-memory columns exclude filesystem work. TypeScript mutations include
+its index rebuild; Rust mutations include prepare/publish and incremental index
+maintenance. The native column adds SQLite commit and receipt JSON encoding for
+mutations. Its query rows include DTO/JSON encoding, not a database write. Rust's
+in-memory queries also construct JSON values, while TypeScript returns objects
+from its store, so very small query timings are not a pure language comparison.
+
+TypeScript's old persistence model appends crash-log operations and periodically
+saves a whole gzip snapshot. Its in-memory mutation time does **not** include that
+save. Rust saves changed rows immediately. Do not describe the difference between
+the first and last columns as an equivalent per-save durability speedup.
+
+Rust was faster for appends, edits and PR computation in this run, but deletion
+and small queries were slower. The table reports those regressions too.
+
+| Open persisted data, warm OS file cache | TypeScript snapshot | Rust SQLite |
+| :--- | ---: | ---: |
+| Ready for queries | 99.278 ms | 42.940 ms |
+
+TypeScript startup reads the local gzip file, decompresses/parses it and builds
+indexes. Rust opens the local database, loads binary rows and builds indexes.
+Both are ready for queries; neither includes React rendering or Expo bridge costs.
+
+Reproduce the matched in-memory workloads and TypeScript startup with
+`npm run engine:operations`. This emits the Rust fixture JSON and both raw result
+files under ignored `benchmarks/local/`. Native durable measurements are produced
+separately with `cargo bench -p lift-native --bench operations_bench`.
+
 ## Everyday native operations
 
 One warm-up and seven recorded samples per operation, reported as medians in

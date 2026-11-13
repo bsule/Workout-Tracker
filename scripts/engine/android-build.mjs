@@ -13,7 +13,7 @@ function run(command,args,env={}){const r=spawnSync(command,args,{cwd:root,stdio
 for(const [target,abi,clang]of [['aarch64-linux-android','arm64-v8a','aarch64-linux-android26-clang'],['x86_64-linux-android','x86_64','x86_64-linux-android26-clang']]){
   const suffix=target.replaceAll('-','_')
   const env={['CARGO_TARGET_'+suffix.toUpperCase()+'_LINKER']:join(bin,clang),['CC_'+suffix]:join(bin,clang),['AR_'+suffix]:join(bin,'llvm-ar')}
-  run(join(homedir(),'.cargo/bin/cargo'),['build','-p','lift-native','--release','--locked','--target',target],env)
+  run((process.env.CARGO ?? 'cargo'),['build','-p','lift-native','--release','--locked','--target',target],env)
   const output=join(root,'target/android-jni',abi);mkdirSync(output,{recursive:true})
   copyFileSync(join(root,`target/${target}/release/liblift_native.so`),join(output,'liblift_native.so'))
 }

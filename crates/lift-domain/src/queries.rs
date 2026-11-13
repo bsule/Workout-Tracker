@@ -438,8 +438,8 @@ pub enum Query {
         sort: Option<String>,
         q: Option<String>,
         category: Option<String>,
-        /// Ignored: every matching exercise is returned, as listExercisesQ
-        /// did. Kept so existing callers still parse.
+        // Ignored: every matching exercise is returned, as listExercisesQ
+        // did. Kept so existing callers still parse.
         #[serde(default)]
         #[cfg_attr(feature = "typescript", ts(optional))]
         limit: Option<usize>,

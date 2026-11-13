@@ -1,12 +1,11 @@
 import {spawnSync} from 'node:child_process'
 import {mkdirSync,copyFileSync,existsSync,writeFileSync} from 'node:fs'
 import {fileURLToPath} from 'node:url'
-import {homedir} from 'node:os'
 import {join} from 'node:path'
 const root=fileURLToPath(new URL('../../',import.meta.url))
 function run(command,args,env={}){const r=spawnSync(command,args,{cwd:root,stdio:'inherit',env:{...process.env,...env}});if(r.error)throw r.error;if(r.status!==0)process.exit(r.status??1)}
 run(process.execPath,['scripts/engine/bindings.mjs'])
-const cargo=join(homedir(),'.cargo/bin/cargo')
+const cargo=(process.env.CARGO ?? 'cargo')
 for(const target of ['aarch64-apple-ios','aarch64-apple-ios-sim'])run(cargo,['build','-p','lift-native','--release','--locked','--target',target],{IPHONEOS_DEPLOYMENT_TARGET:'15.1'})
 const headers=join(root,'target/ios-headers')
 mkdirSync(headers,{recursive:true})

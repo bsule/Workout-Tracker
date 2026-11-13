@@ -15,7 +15,9 @@ performance diagnostics for [the migration plan](../../docs/rust-migration.md).
 - `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings`.
 - `cargo check -p lift-domain --target wasm32-unknown-unknown`: portability gate.
 
-Install Rust with rustup, then ensure `~/.cargo/bin` is on PATH. The workspace
+Install Rust with rustup and ensure its executables are on PATH. Build scripts
+resolve `cargo`, `rustup` and `wasm-bindgen` through PATH (or the `CARGO`, `RUSTUP`
+and `WASM_BINDGEN` executable overrides); they do not assume a home directory. The workspace
 pins its toolchain in `rust-toolchain.toml`. Unit and desktop benchmarks do not
 measure Expo bridge costs or phone performance. Use the simulator smoke checks
 and release-device measurements for those boundaries.
@@ -162,6 +164,13 @@ upload payloads, push acknowledgement and generation replacement. It uses a
 cache-only synthetic database and never opens an account store.
 
 ## Additional benchmarks
+
+- `npm run engine:operations`: matched TypeScript and Rust in-memory add/edit/delete,
+  overall/position PR prediction, full PR recomputation, workout-day and calendar
+  queries on the exact same verified fixtures. Also measures TypeScript local
+  snapshot startup. Emits `rust-memory-operations-results.json`,
+  `typescript-operations-results.json` and shared JSON fixtures into ignored
+  `benchmarks/local/`. Durable native operations remain a separate measurement.
 
 See [the 2026-11-12 results](../../docs/benchmarks.md) for everyday-operation, PR,
 concentrated-history, concurrent-capture and worker-encoding measurements.

@@ -18,6 +18,7 @@
     "test:ui": "vitest --ui",
     "engine:baseline": "vitest run --config scripts/engine/vitest.config.mts",
     "engine:encoding-bench": "node scripts/engine/web-encoding-bench.mjs",
+    "engine:operations": "cargo bench -p lift-engine --bench operations_bench && vitest run --config scripts/engine/operations.config.mts",
     "engine:oracle": "node scripts/engine/units-oracle.ts",
     "engine:fixtures": "vitest run --config scripts/engine/parity.config.mts",
     "engine:wasm": "node scripts/engine/wasm-build.mjs",

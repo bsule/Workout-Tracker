@@ -1,10 +1,9 @@
 import { spawnSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 const root = fileURLToPath(new URL('../../', import.meta.url))
-const cargo = process.env.CARGO ?? join(homedir(), '.cargo/bin/cargo')
+const cargo = process.env.CARGO ?? 'cargo'
 function run(args) {
   const result = spawnSync(cargo, args, {cwd:root, stdio:'inherit'})
   if (result.error) throw result.error
