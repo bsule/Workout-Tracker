@@ -1,0 +1,436 @@
+[
+  {
+    "id": 1,
+    "name": "Bench Press",
+    "category": "chest",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 2,
+    "name": "Incline Bench Press",
+    "category": "chest",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 3,
+    "name": "Decline Bench Press",
+    "category": "chest",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 4,
+    "name": "Dumbbell Bench Press",
+    "category": "chest",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 5,
+    "name": "Incline Dumbbell Press",
+    "category": "chest",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 6,
+    "name": "Dumbbell Fly",
+    "category": "chest",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 7,
+    "name": "Cable Fly",
+    "category": "chest",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 8,
+    "name": "Push-Up",
+    "category": "chest",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 9,
+    "name": "Dip",
+    "category": "chest",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 10,
+    "name": "Deadlift",
+    "category": "back",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 11,
+    "name": "Pull-Up",
+    "category": "back",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 12,
+    "name": "Chin-Up",
+    "category": "back",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 13,
+    "name": "Lat Pulldown",
+    "category": "back",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 14,
+    "name": "Barbell Row",
+    "category": "back",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 15,
+    "name": "Dumbbell Row",
+    "category": "back",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 16,
+    "name": "Seated Cable Row",
+    "category": "back",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 17,
+    "name": "T-Bar Row",
+    "category": "back",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 18,
+    "name": "Face Pull",
+    "category": "back",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 19,
+    "name": "Shrug",
+    "category": "back",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 20,
+    "name": "Back Squat",
+    "category": "legs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 21,
+    "name": "Front Squat",
+    "category": "legs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 22,
+    "name": "Romanian Deadlift",
+    "category": "legs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 23,
+    "name": "Leg Press",
+    "category": "legs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 24,
+    "name": "Leg Extension",
+    "category": "legs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 25,
+    "name": "Leg Curl",
+    "category": "legs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 26,
+    "name": "Lunge",
+    "category": "legs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 27,
+    "name": "Bulgarian Split Squat",
+    "category": "legs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 28,
+    "name": "Hip Thrust",
+    "category": "legs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 29,
+    "name": "Calf Raise",
+    "category": "legs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 30,
+    "name": "Goblet Squat",
+    "category": "legs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 31,
+    "name": "Overhead Press",
+    "category": "shoulders",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 32,
+    "name": "Dumbbell Shoulder Press",
+    "category": "shoulders",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 33,
+    "name": "Lateral Raise",
+    "category": "shoulders",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 34,
+    "name": "Front Raise",
+    "category": "shoulders",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 35,
+    "name": "Rear Delt Fly",
+    "category": "shoulders",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 36,
+    "name": "Arnold Press",
+    "category": "shoulders",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 37,
+    "name": "Upright Row",
+    "category": "shoulders",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 38,
+    "name": "Barbell Curl",
+    "category": "biceps",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 39,
+    "name": "Dumbbell Curl",
+    "category": "biceps",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 40,
+    "name": "Hammer Curl",
+    "category": "biceps",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 41,
+    "name": "Preacher Curl",
+    "category": "biceps",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 42,
+    "name": "Cable Curl",
+    "category": "biceps",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 43,
+    "name": "Concentration Curl",
+    "category": "biceps",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 44,
+    "name": "Tricep Pushdown",
+    "category": "triceps",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 45,
+    "name": "Overhead Tricep Extension",
+    "category": "triceps",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 46,
+    "name": "Skull Crusher",
+    "category": "triceps",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 47,
+    "name": "Close-Grip Bench Press",
+    "category": "triceps",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 48,
+    "name": "Tricep Kickback",
+    "category": "triceps",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 49,
+    "name": "Bench Dip",
+    "category": "triceps",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 50,
+    "name": "Plank",
+    "category": "abs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 51,
+    "name": "Crunch",
+    "category": "abs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 52,
+    "name": "Sit-Up",
+    "category": "abs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 53,
+    "name": "Hanging Leg Raise",
+    "category": "abs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 54,
+    "name": "Russian Twist",
+    "category": "abs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 55,
+    "name": "Cable Crunch",
+    "category": "abs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 56,
+    "name": "Ab Rollout",
+    "category": "abs",
+    "kind": "weight_reps",
+    "is_custom": false
+  },
+  {
+    "id": 57,
+    "name": "Treadmill",
+    "category": "cardio",
+    "kind": "distance_time",
+    "is_custom": false
+  },
+  {
+    "id": 58,
+    "name": "Stationary Bike",
+    "category": "cardio",
+    "kind": "distance_time",
+    "is_custom": false
+  },
+  {
+    "id": 59,
+    "name": "Rowing Machine",
+    "category": "cardio",
+    "kind": "distance_time",
+    "is_custom": false
+  },
+  {
+    "id": 60,
+    "name": "Elliptical",
+    "category": "cardio",
+    "kind": "distance_time",
+    "is_custom": false
+  },
+  {
+    "id": 61,
+    "name": "StairMaster",
+    "category": "cardio",
+    "kind": "distance_time",
+    "is_custom": false
+  },
+  {
+    "id": 62,
+    "name": "Jump Rope",
+    "category": "cardio",
+    "kind": "distance_time",
+    "is_custom": false
+  }
+]

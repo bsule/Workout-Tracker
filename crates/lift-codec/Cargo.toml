@@ -1,0 +1,13 @@
+[package]
+name = "lift-codec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+lift-domain = { path = "../lift-domain" }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+csv = "1"
+unicode-normalization = "0.1"

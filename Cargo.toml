@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/lift-domain", "crates/lift-native"]
+members = ["crates/lift-domain", "crates/lift-native", "crates/lift-codec", "crates/lift-engine", "crates/lift-wasm"]
 resolver = "2"
 
 [workspace.package]

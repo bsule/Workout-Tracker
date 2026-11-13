@@ -1,6 +1,6 @@
 # Engine migration tools
 
-The production app still uses TypeScript. This directory starts stages 0/1 of
+The production app still uses TypeScript. This directory supports implementation of
 [the migration plan](../../docs/rust-migration.md).
 
 - `npm test`: existing behavior baseline.
@@ -24,9 +24,9 @@ median desktop timings were 378 ms serialize, 82 ms parse, 30 ms addSet and
 17 ms affected-exercise PR calculation. Dataset distributes sets over ten
 exercises; concentrated histories and real release-device measurements remain.
 
-Current Rust scope: weight conversion, comparison quantization and display
-rounding. Formatting strings stays outside this initial port. Negative-half
-rounding explicitly matches JavaScript rather than Rust's default rounding.
+Current Rust scope includes models, commands, PRs, queries, chart/summary data,
+legacy gzip migrations/replay, JSON export, FitNotes CSV import, SQLite storage
+and Wasm prepare/persist/publish. Negative-half rounding matches JavaScript.
 
 ## Native binding proof
 
@@ -39,12 +39,29 @@ portable domain must compile there. Native library and binding-generator version
 are locked together. The lockfile pins textwrap 0.16.2 because newer 0.16.4
 requires Rust 1.88, above the workspace's pinned 1.85.1 toolchain.
 
-The TypeScript facade and queued Swift wrapper in `expo-spike/` are staging code,
-outside Expo autolinking until native packaging and both platforms are proven.
-They do not replace any production store. The Android wrapper, NDK compilation,
-Expo runtime and event/cancellation proof remain pending.
+The Expo module is in `mobile/modules/lift-engine/`. Run
+`node scripts/engine/prepare-native.mjs ios` (or `android`) before native builds.
+This generates ignored bindings and target libraries; CocoaPods autolinking is
+verified. Production screens still use the old store pending full cutover.
+Android arm64/x86_64 Rust libraries compile with NDK 27.1.12297006.
+Full app runtime and background execution checks remain pending.
 
 Verified native Rust cross-compilation targets: `aarch64-apple-ios` and
 `aarch64-apple-ios-sim`. Install with `rustup target add` then run
 `cargo build -p lift-native --locked --target <target>`. Target compilation alone
 does not establish an installable Expo app or runtime background-thread behavior.
+
+## Expanded compatibility checks
+
+`npm run engine:fixtures` regenerates the command/query, legacy-schema, PR and
+CSV-import oracles. `npm run engine:wasm` needs wasm-bindgen-cli 0.2.100 and builds
+both web and Node bindings. `node scripts/engine/wasm-smoke.mjs` executes the
+fixture trace through actual Wasm. `npm run engine:integration` then connects
+actual Wasm to the worker coordinator and fake-indexeddb transactional adapter.
+The last check is not a real-browser test.
+
+The initial Rust engine still clones snapshots and rebuilds indexes when
+preparing/publishing. It is a correctness foundation, not the final optimized
+storage model. History currently uses bounded offset pages; revision-bound
+cursors, generated TypeScript DTOs and selective invalidation remain pending.
+Native errors are currently string-based; structured codes remain pending.

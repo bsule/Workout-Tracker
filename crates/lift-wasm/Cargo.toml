@@ -1,0 +1,16 @@
+[package]
+name = "lift-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+lift-domain = { path = "../lift-domain" }
+lift-engine = { path = "../lift-engine" }
+lift-codec = { path = "../lift-codec" }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+wasm-bindgen = "=0.2.100"

@@ -14,8 +14,16 @@ bindgen = ["uniffi/cli"]
 [dependencies]
 lift-domain = { path = "../lift-domain" }
 uniffi = "=0.29.5"
+lift-engine = { path = "../lift-engine" }
+lift-codec = { path = "../lift-codec" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+thiserror = "2"
+tempfile = "3"
 
 [[bin]]
 name = "lift-bindgen"
 path = "src/bin/bindgen.rs"
 required-features = ["bindgen"]
+[dev-dependencies]
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
