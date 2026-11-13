@@ -8,6 +8,7 @@ import { defineConfig } from "vitest/config"
 // esbuild, so there's nothing to compile first. Node-environment only: none
 // of the core logic touches the DOM.
 export default defineConfig({
+  resolve: { alias: { "@": new URL("./frontend", import.meta.url).pathname } },
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],

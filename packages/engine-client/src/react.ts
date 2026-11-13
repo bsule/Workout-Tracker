@@ -37,6 +37,8 @@ export function useEngineDataApi(): EngineDataApi | undefined {
 }
 
 export interface QueryOptions {
+  /** False until the result is needed: no read, prefetch or return listener. */
+  enabled?: boolean
   /** False while the screen is covered: keep showing the last result and do
    * not refetch on every commit. Defaults to true. */
   active?: boolean
@@ -47,8 +49,10 @@ export interface QueryOptions {
 /** Pass a stable queryKey covering all arguments and an immutable query object. */
 export function useEngineQuery<T>(client: EngineClient, queryKey: string, query: unknown, options?: QueryOptions): QueryState<T> {
   const active = options?.active ?? true
+  const enabled = options?.enabled ?? true
   const onReturn = options?.onReturn
   const subscribe = useCallback((listener: () => void) => {
+    if (!enabled) return () => {}
     if (active) return client.subscribe(queryKey, query, listener)
     let live = true
     const notify = () => { if (live) listener() }
@@ -61,7 +65,7 @@ export function useEngineQuery<T>(client: EngineClient, queryKey: string, query:
       void client.prefetch(queryKey, query).then(notify, notify)
     })
     return () => { live = false; stop?.() }
-  }, [client, queryKey, query, active, onReturn])
+  }, [client, queryKey, query, active, enabled, onReturn])
   const getSnapshot = useCallback(() => client.snapshot<T>(queryKey, query), [client, queryKey, query])
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }

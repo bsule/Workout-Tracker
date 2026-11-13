@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react"
 import {
@@ -35,12 +36,20 @@ import { clearMark } from "@/lib/restTimerMark"
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8787/api"
 
-const syncTransport = new CloudflareTransport({
-  apiBase: API_BASE,
-  getToken,
-  onEtagChange: writeStoredEtag,
-  getDeviceId: createDeviceIdSource(webDeviceIdStore),
-})
+let syncTransport: CloudflareTransport | null = null
+
+/** Each transport owns one credential and cannot adopt late replies after logout. */
+function configureWebSync() {
+  const token = getToken()
+  syncTransport = token ? new CloudflareTransport({
+    apiBase: API_BASE,
+    getToken: () => token,
+    onEtagChange: writeStoredEtag,
+    getDeviceId: createDeviceIdSource(webDeviceIdStore),
+  }) : null
+  syncTransport?.setEtag(readStoredEtag())
+  syncModule.configureSync(syncTransport)
+}
 
 /** Point the core's sync clock at localStorage. Idempotent. */
 function installSyncClock() {
@@ -50,8 +59,7 @@ function installSyncClock() {
 /** Re-read sync metadata only after this tab becomes the sole store editor. */
 export function refreshWebSync() {
   installSyncClock()
-  syncTransport.setEtag(readStoredEtag())
-  syncModule.configureSync(syncTransport)
+  configureWebSync()
 }
 
 interface AuthState {
@@ -83,68 +91,82 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       getCachedUser() === null
   )
 
+  const authRequest = useRef(0)
+
   useEffect(() => {
-    if (!getToken()) return
+    const request = ++authRequest.current
+    const token = getToken()
+    if (!token) return
+    let cancelled = false
+    const current = () => !cancelled && request === authRequest.current && getToken() === token
     installSyncClock()
-    // Restore the etag from the last session so the first push after a reload
-    // doesn't look like a conflict.
-    const savedEtag = readStoredEtag()
-    if (savedEtag) syncTransport.setEtag(savedEtag)
-    syncModule.configureSync(syncTransport)
+    configureWebSync()
     api
       .me()
       .then((u) => {
+        if (!current()) return
         setUser(u)
         setCachedUser(u)
       })
       .catch((e) => {
+        if (!current()) return
         // Tokens never expire server-side, so only a 401 means truly revoked.
         // Clearing on a 5xx or offline fetch logged users out for our own bug.
         if (e instanceof ApiError && e.status === 401) {
           setToken(null)
           setCachedUser(null)
           setUser(null)
+          setLoading(false)
           syncModule.configureSync(null)
         }
       })
-      .finally(() => setLoading(false))
+      .finally(() => { if (current()) setLoading(false) })
+    // This ref is a request counter, not a DOM node. Invalidate every pending
+    // auth handler on unmount, including ones started after this effect.
+    return () => {
+      cancelled = true
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      authRequest.current++
+    }
   }, [])
 
   const signup = useCallback(
     async (input: { username: string; email: string; password: string }) => {
+      const request = ++authRequest.current
       const res = await api.signup(input)
+      if (request !== authRequest.current) return
       setToken(res.token)
       setUser(res.user)
       setCachedUser(res.user)
-      syncTransport.setEtag(null)
-      // setEtag only notifies on a change, so clear storage directly in case
-      // the transport already held null while a stale etag sat on disk.
+      setLoading(false)
       writeStoredEtag(null)
       installSyncClock()
       clearSyncClock()
-      syncModule.configureSync(syncTransport)
+      configureWebSync()
     },
     []
   )
 
   const login = useCallback(
     async (input: { username: string; password: string }) => {
+      const request = ++authRequest.current
       const res = await api.login(input)
+      if (request !== authRequest.current) return
       setToken(res.token)
       setUser(res.user)
       setCachedUser(res.user)
-      syncTransport.setEtag(null)
-      // setEtag only notifies on a change, so clear storage directly in case
-      // the transport already held null while a stale etag sat on disk.
+      setLoading(false)
       writeStoredEtag(null)
       installSyncClock()
       clearSyncClock()
-      syncModule.configureSync(syncTransport)
+      configureWebSync()
     },
     []
   )
 
   const logout = useCallback(async () => {
+    const request = ++authRequest.current
+    syncModule.configureSync(null)
     // A reset or stop of the signed-out user's rest ticker must not carry
     // over to the next account (mobile's unloadForSignOut does the same).
     clearMark()
@@ -153,15 +175,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (e) {
       console.error("Failed to unload store on logout:", e)
     }
+    if (request !== authRequest.current) return
     try {
       await api.logout()
     } catch {
       // ignore — clear local state regardless
     }
+    if (request !== authRequest.current) return
     setToken(null)
     setUser(null)
+    setLoading(false)
     setCachedUser(null)
-    syncTransport.setEtag(null)
     writeStoredEtag(null)
     clearSyncClock()
     configureSyncClock(null)
@@ -169,8 +193,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const refreshUser = useCallback(async () => {
-    if (!getToken()) return
+    const token = getToken()
+    if (!token) return
+    const request = ++authRequest.current
     const u = await api.me()
+    if (request !== authRequest.current || getToken() !== token) return
     setUser(u)
     setCachedUser(u)
   }, [])

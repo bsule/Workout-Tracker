@@ -23,6 +23,11 @@ npm run start
 There is no `typecheck` script. Run `npx tsc --noEmit` directly. `npm run lint`
 runs eslint.
 
+Dev and build scripts automatically bundle `lib/store/snapshot.worker.ts` into
+`public/workers/snapshot.js` (gitignored). The worker handles JSON encoding and
+gzip for disk saves, uploads and recovery copies. If running Next directly,
+first run `node scripts/build-snapshot-worker.mjs` from the repository root.
+
 ## Notable paths
 
 - `app/`: App Router pages and layouts. `/ai-plan` and `/settings/ai` currently redirect away.

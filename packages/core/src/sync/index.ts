@@ -17,12 +17,25 @@ import type { Snapshot } from "../store/schema"
 export interface SyncTransport {
   pushSnapshot(bytes: Uint8Array): Promise<{ etag: string }>
   pullSnapshot(): Promise<{ bytes: Uint8Array; etag: string } | null>
+  close?(): void
 }
 
 let transport: SyncTransport | null = null
+let session = 0
 
 export function configureSync(t: SyncTransport | null) {
+  if (transport !== t) transport?.close?.()
+  session++
   transport = t
+}
+
+export function captureSyncSession() {
+  if (!transport) throw new Error("sync transport not configured")
+  const captured = session
+  const current = transport
+  return { transport: current, check() {
+    if (captured !== session) throw new Error("The sync account changed during the operation.")
+  } }
 }
 
 export function isSyncConfigured(): boolean {
@@ -30,16 +43,21 @@ export function isSyncConfigured(): boolean {
 }
 
 export async function pushNow(snapshot: Snapshot): Promise<{ etag: string }> {
-  if (!transport) throw new Error("sync transport not configured")
+  const operation = captureSyncSession()
   const bytes = await serialize(snapshot)
-  return transport.pushSnapshot(bytes)
+  operation.check()
+  const result = await operation.transport.pushSnapshot(bytes)
+  operation.check()
+  return result
 }
 
 export async function pullNow(): Promise<{ snapshot: Snapshot; etag: string } | null> {
-  if (!transport) throw new Error("sync transport not configured")
-  const result = await transport.pullSnapshot()
+  const operation = captureSyncSession()
+  const result = await operation.transport.pullSnapshot()
+  operation.check()
   if (!result) return null
   const { snapshot } = await parse(result.bytes)
+  operation.check()
   return { snapshot, etag: result.etag }
 }
 
@@ -49,8 +67,10 @@ export async function pullNow(): Promise<{ snapshot: Snapshot; etag: string } | 
  * replaceSnapshotFromBytes (which parses once) instead of double-parsing.
  */
 export async function _internalPullBytes(): Promise<{ bytes: Uint8Array; etag: string } | null> {
-  if (!transport) throw new Error("sync transport not configured")
-  return transport.pullSnapshot()
+  const operation = captureSyncSession()
+  const result = await operation.transport.pullSnapshot()
+  operation.check()
+  return result
 }
 
 /** Returns the currently configured transport, or null. */

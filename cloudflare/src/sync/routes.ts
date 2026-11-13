@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import type { Env, Variables } from "../env"
 import { requireAuth } from "../auth/middleware"
 import { parseDeviceId, putSnapshot } from "./ownWrite"
+import { readSnapshotBody, SnapshotTooLargeError } from "./body"
 
 export const sync = new Hono<{ Bindings: Env; Variables: Variables }>()
 
@@ -108,7 +109,13 @@ sync.put("/snapshot", async (c) => {
     )
   }
 
-  const body = await c.req.arrayBuffer()
+  let body: ArrayBuffer
+  try {
+    body = await readSnapshotBody(c.req.raw)
+  } catch (error) {
+    if (error instanceof SnapshotTooLargeError) return c.json({ detail: error.message }, 413)
+    throw error
+  }
   // The device id lets a retry recognise this device's own write whose reply
   // never arrived (see ownWrite.ts). A query parameter, not a header: a header
   // the deployed worker does not allow would fail the browser's CORS

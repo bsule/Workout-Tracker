@@ -17,12 +17,14 @@
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "engine:baseline": "vitest run --config scripts/engine/vitest.config.mts",
+    "engine:encoding-bench": "node scripts/engine/web-encoding-bench.mjs",
     "engine:oracle": "node scripts/engine/units-oracle.ts",
     "engine:fixtures": "vitest run --config scripts/engine/parity.config.mts",
     "engine:wasm": "node scripts/engine/wasm-build.mjs",
     "engine:integration": "vitest run --config scripts/engine/integration.config.mts"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "concurrently": "^9.1.0",
     "fake-indexeddb": "^6.2.5",
     "vitest": "^5.0.5"

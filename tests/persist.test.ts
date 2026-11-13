@@ -612,7 +612,44 @@ function deferred() {
 }
 
 describe("persistence interruption regressions", () => {
-  it("keeps edits made during a slow save in the crash log", async () => {
+  it("a completed bulk import is on disk even when it joins an older save", async () => {
+    const { importSnapshotJson } = await import("@lift/core/import")
+    const base = memoryStorage()
+    const entered = deferred()
+    const release = deferred()
+    setStorageFactory(() => ({ ...base, async writeSnapshot(bytes, stats) {
+      entered.resolve()
+      await release.promise
+      await base.writeSnapshot(bytes, stats)
+    } }))
+    configure(freshKey())
+    loadSnapshot(blankSnapshot())
+    const saving = flushNow()
+    await entered.promise
+    const importing = importSnapshotJson(JSON.stringify({ version: 2, workouts: [], day_notes: [{ date: "2026-11-12", text: "Imported" }] }))
+    await vi.waitFor(() => expect(currentSnapshot().day_notes).toHaveLength(1))
+    release.resolve()
+    await Promise.all([saving, importing])
+    expect(base.pending).toEqual([])
+    expect((await parse(base.lastWritten!)).snapshot.day_notes).toEqual([{ date: "2026-11-12", text: "Imported" }])
+  })
+
+  it("reports failed saves to import callers and keeps them dirty for retry", async () => {
+    const { importSnapshotJson } = await import("@lift/core/import")
+    const base = memoryStorage()
+    const write = vi.fn(base.writeSnapshot).mockRejectedValueOnce(new Error("Disk full"))
+    setStorageFactory(() => ({ ...base, writeSnapshot: write }))
+    configure(freshKey())
+    loadSnapshot(blankSnapshot())
+    const log = vi.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      await expect(importSnapshotJson(JSON.stringify({ workouts: [], day_notes: [{ date: "2026-11-12", text: "Keep" }] }))).rejects.toThrow("Disk full")
+      expect(getState().local_dirty_since).not.toBeNull()
+      await flushNow()
+      expect((await parse(base.lastWritten!)).snapshot.day_notes[0].text).toBe("Keep")
+    } finally { log.mockRestore() }
+  })
+  it("drains edits made during a slow save before resolving", async () => {
     const base = memoryStorage()
     const entered = deferred()
     const release = deferred()
@@ -632,9 +669,7 @@ describe("persistence interruption regressions", () => {
     M.createExercise({ name: "During save", category: "back" })
     release.resolve()
     await saving
-    expect(base.pending.some((line) => line.includes("During save"))).toBe(true)
-    expect(getState().local_dirty_since).not.toBeNull()
-    await flushNow()
+    expect(getState().local_dirty_since).toBeNull()
     expect(base.pending).toEqual([])
     expect((await parse(base.lastWritten!)).snapshot.exercises.map((e) => e.name))
       .toEqual(["Before save", "During save"])

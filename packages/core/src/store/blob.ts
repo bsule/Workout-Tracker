@@ -1,6 +1,14 @@
 import { gzipSync, gunzipSync } from "fflate"
 import { SCHEMA_VERSION, type Snapshot } from "./schema"
 
+type SnapshotEncoder = (snapshot: Snapshot) => Promise<Uint8Array>
+let snapshotEncoder: SnapshotEncoder | null = null
+/** Browsers install a worker encoder. Native legacy tooling keeps its portable
+ * synchronous fallback; the mobile app's live store is owned by Rust. */
+export function setSnapshotEncoder(encoder: SnapshotEncoder | null) {
+  snapshotEncoder = encoder
+}
+
 // Use fflate's *synchronous* API on purpose — the async variants spin up a
 // Web Worker, which doesn't exist in React Native, and the platform
 // CompressionStream / `new Blob([Uint8Array])` path also fails on RN.
@@ -20,6 +28,7 @@ export async function serialize(snap: Snapshot): Promise<Uint8Array> {
     schema_version: SCHEMA_VERSION,
     exported_at: new Date().toISOString(),
   }
+  if (snapshotEncoder) return snapshotEncoder(stamped)
   const json = JSON.stringify(stamped)
   const bytes = new TextEncoder().encode(json)
   return gzip(bytes)

@@ -70,6 +70,11 @@ export class CloudflareTransport implements SyncTransport {
   private readonly getDeviceId?: CloudflareTransportOptions["getDeviceId"]
   private lastEtag: string | null = null
   private lastQuota: Quota | null = null
+  private readonly abort = new AbortController()
+  close(): void { this.abort.abort() }
+  private check(): void {
+    if (this.abort.signal.aborted) throw new Error("Sync session closed.")
+  }
 
   constructor(opts: CloudflareTransportOptions) {
     this.apiBase = opts.apiBase.replace(/\/+$/, "")
@@ -79,6 +84,7 @@ export class CloudflareTransport implements SyncTransport {
   }
 
   setEtag(etag: string | null): void {
+    this.check()
     if (this.lastEtag === etag) return
     this.lastEtag = etag
     this.onEtagChange?.(etag)
@@ -95,25 +101,32 @@ export class CloudflareTransport implements SyncTransport {
 
   async getQuota(): Promise<Quota> {
     const headers = await this.authHeaders()
-    const res = await fetch(`${this.apiBase}/sync/quota`, { headers })
+    const res = await fetch(`${this.apiBase}/sync/quota`, { headers, signal: this.abort.signal })
     if (!res.ok) throw new Error(`getQuota failed: ${res.status}`)
     const quota = (await res.json()) as Quota
+    this.check()
     this.lastQuota = quota
     return quota
   }
 
   async pullSnapshot(): Promise<{ bytes: Uint8Array; etag: string } | null> {
+    const result = await this.previewSnapshot()
+    this.setEtag(result?.etag ?? null)
+    return result
+  }
+
+  async previewSnapshot(): Promise<{ bytes: Uint8Array; etag: string } | null> {
     const headers = await this.authHeaders()
-    const res = await fetch(`${this.apiBase}/sync/snapshot`, { headers })
+    const res = await fetch(`${this.apiBase}/sync/snapshot`, { headers, signal: this.abort.signal })
+    this.check()
     if (res.status === 204) {
-      this.setEtag(null)
       return null
     }
     if (!res.ok) throw new Error(`pull failed: ${res.status}`)
     const etag = stripQuotes(res.headers.get("etag") ?? "")
     const buffer = await res.arrayBuffer()
+    this.check()
     const bytes = new Uint8Array(buffer)
-    this.setEtag(etag)
     return { bytes, etag }
   }
 
@@ -133,12 +146,15 @@ export class CloudflareTransport implements SyncTransport {
     // A query parameter, not a header: a worker that does not know it ignores
     // it, where an unknown header would fail the browser's CORS preflight.
     const device = await this.deviceId()
+    this.check()
     const query = device ? `?device=${encodeURIComponent(device)}` : ""
     const res = await fetch(`${this.apiBase}/sync/snapshot${query}`, {
       method: "PUT",
       headers,
       body,
+      signal: this.abort.signal,
     })
+    this.check()
 
     if (res.status === 412) {
       const data = (await res.json().catch(() => null)) as {
@@ -158,6 +174,7 @@ export class CloudflareTransport implements SyncTransport {
     }
     if (!res.ok) throw new Error(`push failed: ${res.status}`)
     const data = (await res.json()) as { etag: string; quota: Quota }
+    this.check()
     this.setEtag(data.etag)
     this.lastQuota = data.quota
     return { etag: data.etag }
@@ -175,6 +192,7 @@ export class CloudflareTransport implements SyncTransport {
 
   private async authHeaders(): Promise<Headers> {
     const token = await this.getToken()
+    this.check()
     const headers = new Headers()
     if (token) headers.set("Authorization", `Token ${token}`)
     return headers

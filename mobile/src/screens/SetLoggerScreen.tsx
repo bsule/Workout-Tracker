@@ -800,7 +800,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
     (tab === "workout" && firstPaintDone && showLastTime)
   const historyQuery = useFullExerciseHistory(exerciseId ?? -1, {
     ...queryOptions,
-    active: queryOptions.active !== false && needsHistory && exerciseId != null,
+    enabled: needsHistory && exerciseId != null,
   })
   const rawHistory: ExerciseHistoryDay[] =
     exerciseId != null && needsHistory

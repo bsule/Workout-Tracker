@@ -204,6 +204,14 @@ describe("importFitnotesCsv: error rows", () => {
 })
 
 describe("importFitnotesCsv: modes", () => {
+  it("refuses an unusable replacement without changing existing data", async () => {
+    await importFitnotesCsv(csv(["2026-01-01,Bench Press,Chest,100,,5,,,,,wr"]))
+    const before = currentSnapshot()
+    const invalid = csv(["not-a-date,Bench Press,Chest,100,,5,,,,,wr"])
+    expect(previewFitnotesCsv(invalid).format).toBe("fitnotes")
+    await expect(importFitnotesCsv(invalid, { mode: "replace" })).rejects.toThrow("No usable rows")
+    expect(currentSnapshot()).toBe(before)
+  })
   it("merge mode keeps existing data", async () => {
     await importFitnotesCsv(csv(["2026-01-01,Bench Press,Chest,100,,5,,,,,wr"]), {
       mode: "merge",

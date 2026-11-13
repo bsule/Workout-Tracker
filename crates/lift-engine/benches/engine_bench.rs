@@ -165,15 +165,25 @@ fn main() {
                     "prExercise" => lift_domain::prs::recompute(&mut pr_input, Some(&one)),
                     // Whole history for one exercise (baseline: getExerciseHistoryQ).
                     "history" => {
-                        std::hint::black_box(
-                            engine
+                        let mut offset = 0;
+                        loop {
+                            let reply = engine
                                 .try_query(Query::History {
                                     exercise_id: 1,
-                                    offset: 0,
-                                    limit: usize::MAX,
+                                    offset,
+                                    limit: 100,
                                 })
-                                .unwrap(),
-                        );
+                                .unwrap();
+                            let data = &reply["data"];
+                            let returned = data["items"].as_array().unwrap().len();
+                            offset += returned;
+                            let total = data["total"].as_u64().unwrap() as usize;
+                            std::hint::black_box(reply);
+                            if offset >= total || returned == 0 {
+                                assert_eq!(offset, total, "benchmark must read the whole history");
+                                break;
+                            }
+                        }
                     }
                     // Everything an in-memory set save does: command, PRs, diff, publish.
                     "addSet" => {

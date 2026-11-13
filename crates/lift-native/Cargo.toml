@@ -34,3 +34,11 @@ flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 [[bench]]
 name = "native_bench"
 harness = false
+
+[[bench]]
+name = "stress_bench"
+harness = false
+
+[[bench]]
+name = "operations_bench"
+harness = false

@@ -48,7 +48,7 @@ Local state lives in `cloudflare/.wrangler/` (gitignored). Delete it to start ov
 npm run dev:web          # or: cd frontend && npm run dev
 ```
 
-Open <http://localhost:3215>. The web app uses the local Worker by default. To point it somewhere else, create `frontend/.env.local`:
+Open <http://localhost:3215>. The web app uses the local Worker by default. `npm run dev` and `npm run build` in `frontend/` automatically bundle the snapshot compression worker into `public/workers/snapshot.js` (gitignored). If you start Next directly, first run `node scripts/build-snapshot-worker.mjs` from the repo root. To point it somewhere else, create `frontend/.env.local`:
 
 ```bash
 NEXT_PUBLIC_API_BASE_URL=https://your-worker.example.com/api
@@ -62,7 +62,7 @@ The Worker only accepts requests from the origins in `ALLOWED_ORIGINS` in `cloud
 npm run dev:mobile       # or: cd mobile && npm run start
 ```
 
-This starts Metro. The app uses its own native code (the rest timer module and the Live Activity widget), so load it in a **development build**, not Expo Go. In Expo Go the app runs, but the rest timer does nothing outside the app. To get a development build on your phone:
+This starts Metro. The app uses its own native code (the rest timer module and the Live Activity widget), so load it in a **development build**, not Expo Go. Expo Go cannot open the Rust engine that owns workout data, so it cannot run the full app. To get a development build on your phone:
 
 - `cd mobile && npx expo run:ios --device` (needs Xcode) or `npx expo run:android --device` (needs Android Studio), or
 - `cd mobile && npx eas build --profile development --platform ios` (or `android`), then install the result.
@@ -78,7 +78,7 @@ npm test                 # Vitest suite for @lift/core and some mobile/src logic
 npm run test:watch       # re-run on change
 ```
 
-No CI runs the tests yet, so run them before you merge. [tests/README.md](../tests/README.md) lists every suite.
+GitHub Actions runs the TypeScript, Rust, Wasm and Swift checks on pushes and pull requests. Run the relevant checks locally before merging. [tests/README.md](../tests/README.md) lists every suite.
 
 Type and lint checks, per package:
 
@@ -90,7 +90,9 @@ cd mobile && npm run typecheck
 cd cloudflare && npm run typecheck
 ```
 
-The tests cover the shared core, plus the Worker's sync write rule (`cloudflare/src/sync/ownWrite.ts`, run against an in-memory bucket). The web UI, the phone UI, and the rest of the Worker have no automated tests, so check those by running the app, or by curling the Worker.
+Tests cover core logic, engine clients, account switching, auth response ordering, snapshot worker encoding, local storage and the Worker's conditional write and bounded upload reader. Auth tests control React hooks and HTTP replies; they are not full rendered UI tests. Check web/phone interaction and the deployed Worker by running them.
+
+For desktop performance diagnostics, run `npm run engine:baseline`, `cargo bench -p lift-engine --bench engine_bench`, `cargo bench -p lift-native --bench native_bench`, `cargo bench -p lift-native --bench operations_bench`, `cargo bench -p lift-native --bench stress_bench`, and `npm run engine:encoding-bench`. Raw samples go into ignored `benchmarks/local/`; methodology and measurements are in [scripts/engine/README.md](../scripts/engine/README.md).
 
 ## Phone builds
 

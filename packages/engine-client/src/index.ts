@@ -90,7 +90,9 @@ export function isQueryAffected(query: unknown, command?: unknown, replaced?: bo
     case 'set_exercise_note':
       return kind === 'workout' || kind === 'workout_by_date' || kind === 'history' || kind === 'history_all' || kind === 'history_page'
     default:
-      if (kind === 'settings' || kind === 'gyms') return false
+      // Patching a workout may create a previously unknown gym implicitly.
+      if (kind === 'gyms') return op === 'patch_workout' && !!cmd.patch && typeof cmd.patch === 'object' && 'gym' in cmd.patch
+      if (kind === 'settings') return false
       if (kind === 'day_note') return op === 'delete_workout'
       return true
   }

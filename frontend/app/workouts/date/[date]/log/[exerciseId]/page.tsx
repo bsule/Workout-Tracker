@@ -43,6 +43,8 @@ export default function PendingLoggerPage({
   const exercise = useMemo<Exercise | null>(() => {
     if (!hydrated) return null
     return listExercisesQ().find((e) => e.id === exerciseId) ?? null
+    // The query reads singleton indexes; a new snapshot invalidates the result.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, snapshot, exerciseId])
 
   const existingWorkout = useMemo(

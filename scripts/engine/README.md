@@ -1,7 +1,8 @@
 # Engine migration tools
 
-The production app still uses TypeScript. This directory supports implementation of
-[the migration plan](../../docs/rust-migration.md).
+Mobile uses the Rust engine through its Expo module; web still uses the shared
+TypeScript store. This directory holds parity fixtures, native/Wasm builds and
+performance diagnostics for [the migration plan](../../docs/rust-migration.md).
 
 - `npm test`: existing behavior baseline.
 - `npm run engine:baseline`: synthetic desktop timings; writes raw samples to
@@ -15,14 +16,15 @@ The production app still uses TypeScript. This directory supports implementation
 - `cargo check -p lift-domain --target wasm32-unknown-unknown`: portability gate.
 
 Install Rust with rustup, then ensure `~/.cargo/bin` is on PATH. The workspace
-pins its toolchain in `rust-toolchain.toml`. No native module or mobile binary
-has been wired yet; these checks do not test a phone or bridge.
+pins its toolchain in `rust-toolchain.toml`. Unit and desktop benchmarks do not
+measure Expo bridge costs or phone performance. Use the simulator smoke checks
+and release-device measurements for those boundaries.
 
 Baseline measured on the development machine: all 44 suites / 577 tests passed;
 mobile, web and Cloudflare typechecks passed. At 100k synthetic sets, approximate
 median desktop timings were 378 ms serialize, 82 ms parse, 30 ms addSet and
-17 ms affected-exercise PR calculation. Dataset distributes sets over ten
-exercises; concentrated histories and real release-device measurements remain.
+17 ms affected-exercise PR calculation. That dataset distributes sets over ten exercises. `stress_bench` also measures
+concentrated histories; real release-device measurements remain separate.
 
 ### Benchmark results (TypeScript baseline vs. Rust engine)
 
@@ -38,10 +40,10 @@ Desktop diagnostics from one Apple Silicon Mac, release build, means of five tim
 |  | 10,000 | 1.57 ms | 0.62 ms | 2.5x faster |
 |  | 50,000 | 6.79 ms | 3.16 ms | 2.1x faster |
 |  | 100,000 | 15.06 ms | 6.55 ms | 2.3x faster |
-| `history` (one exercise, whole history) | 1,000 | 0.03 ms | 0.36 ms | 12.1x slower |
-|  | 10,000 | 0.13 ms | 2.18 ms | 17.3x slower |
-|  | 50,000 | 2.85 ms | 2.27 ms | 1.3x faster |
-|  | 100,000 | 1.15 ms | 2.57 ms | 2.2x slower |
+| `history` (one exercise, all 100-day pages) | 1,000 | 0.03 ms | 0.24 ms | 7.3x slower |
+|  | 10,000 | 0.12 ms | 2.24 ms | 18.5x slower |
+|  | 50,000 | 0.51 ms | 11.96 ms | 23.3x slower |
+|  | 100,000 | 1.25 ms | 25.69 ms | 20.6x slower |
 | `addSet` (in memory: command, PRs, diff, publish) | 1,000 | 0.25 ms | 0.21 ms | 1.2x faster |
 |  | 10,000 | 1.59 ms | 0.34 ms | 4.6x faster |
 |  | 50,000 | 9.89 ms | 1.69 ms | 5.8x faster |
@@ -55,7 +57,11 @@ Desktop diagnostics from one Apple Silicon Mac, release build, means of five tim
 |  | 50,000 | 38.69 ms | 29.73 ms | 1.3x faster |
 |  | 100,000 | 81.44 ms | 59.67 ms | 1.4x faster |
 
-`history` returns a JSON value ready for the bridge, while the TypeScript query returns cached objects, so that row is not like for like.
+History was remeasured on 2026-11-12. The benchmark now reads every page and asserts
+that the returned count equals the total. Earlier results silently measured only
+the first 100 days on Rust, while TypeScript read the whole history. Rust still
+builds JSON values ready for the bridge; TypeScript returns cached objects. These
+numbers exclude native bridge overhead. Other rows retain the earlier baseline.
 
 Native durable path (medians):
 
@@ -86,7 +92,8 @@ requires Rust 1.88, above the workspace's pinned 1.85.1 toolchain.
 The Expo module is in `mobile/modules/lift-engine/`. Run
 `node scripts/engine/prepare-native.mjs ios` (or `android`) before native builds.
 This generates ignored bindings and target libraries; CocoaPods autolinking is
-verified. Production screens still use the old store pending full cutover.
+verified. Production mobile screens use account-scoped engine sessions; web
+continues to use its TypeScript store.
 Android arm64/x86_64 Rust libraries compile with NDK 27.1.12297006.
 Full app runtime and background execution checks remain pending.
 
@@ -104,12 +111,14 @@ fixture trace through actual Wasm. `npm run engine:integration` then connects
 actual Wasm to the worker coordinator and fake-indexeddb transactional adapter.
 The last check is not a real-browser test.
 
-Snapshot tables use copy-on-write sharing; unchanged tables skip validation,
-row diffing and index rebuilding. Set edits still clone/rebuild their table.
+Snapshot tables use chunked copy-on-write sharing; unchanged chunks skip
+validation, row diffing and index rebuilding. Ordinary set edits copy the
+affected chunks and update indexes row by row.
 History supports bounded pages and revision-bound cursors. Model/input types
 are generated with `cargo run -p lift-domain --features typescript --bin
-lift-typescript -- packages/engine-client/src/generated`. Typed output DTOs,
-structured errors, selective invalidation and row-level updates remain pending.
+lift-typescript -- packages/engine-client/src/generated`. Output queries are typed on the client, native errors have stable bridge codes,
+and query invalidation and durable writes are selective. History pagination is
+bound to a committed revision.
 
 ## Expo simulator verification
 
@@ -118,7 +127,7 @@ with `EXPO_PUBLIC_ENGINE_SMOKE=1`, install the development build and launch it.
 The development-only check in `mobile/src/engine/smoke.ts` uses a temporary cache
 database, verifies retry/reopen behavior, removes its data and logs
 `[lift-engine-smoke] PASS`. It never accesses an account store. This check passed
-on the iPhone 17 Pro simulator. Production screens still use TypeScript.
+on the iPhone 17 Pro simulator. Mobile screens now use Rust; web remains on TypeScript.
 
 Android module `:lift-engine:compileDebugKotlin` passes. Device runtime still needs verification.
 
@@ -129,29 +138,60 @@ Malformed JSON is rejected atomically even in replace mode, intentionally fixing
 the old path that could clear data for invalid input. Imports use a SHA-256
 content identity for receipts rather than retaining entire files in retry rows.
 
-Native local schema is now v2. Snapshot replacement atomically writes undo,
+Native local schema is now v4 (binary rows); restore points live in a separate
+backup database. Snapshot replacement atomically writes undo,
 records, revision, generation and sync metadata. Local restore retains ETags and
 marks data dirty; remote replacement adopts its ETag only after commit. Native
 restore-point capture preserves previous/daily slots. Late upload acknowledgement
-keeps newer edits dirty. These APIs are exposed through UniFFI; Expo backup/sync
-screens are not switched yet. Failure-injection tests exercise receipt and undo
+keeps newer edits dirty. These APIs are exposed through UniFFI and used by the mobile backup/sync screens. Failure-injection tests exercise receipt and undo
 write rollback, and the Swift smoke checks binary snapshot/restore calls.
 
 The expanded iOS Expo smoke also passes JSON import, Uint8Array snapshot transfer,
 restore-point creation/listing and sync dirty-state checks in a cache database.
 
 
-## Current mobile export integration
+## Mobile export integration
 
-JSON and FitNotes exports in `ImportExportScreen` now call native Rust when the
-module is present. The transitional read-only export functions accept the
-legacy snapshot and run SQLite/ZIP/JSON conversion on the native queue; they do
-not open another account database or introduce a second writer. Expo Go keeps
-the previous exporter. Full session cutover will remove this bulk legacy
-snapshot boundary and call `EngineDataApi` directly.
+`ImportExportScreen` uses `EngineDataApi` for native JSON and FitNotes exports.
+The engine captures a snapshot under its lock and encodes outside it on the
+capture queue, so later set saves need not wait behind compression. The
+transitional legacy exporters remain for compatibility tooling and smoke tests.
 
-The expanded installed iOS smoke passes native exports, AI response parsing,
-Uint8Array upload payloads, push acknowledgement and generation replacement.
-Rust PR prediction also compares against TypeScript for queued saves. The
-async client serializes imports/restores with ordinary commands and advances
-its generation after replacement.
+The installed iOS smoke checks native exports, AI response parsing, binary
+upload payloads, push acknowledgement and generation replacement. It uses a
+cache-only synthetic database and never opens an account store.
+
+## Additional benchmarks
+
+See [the 2026-11-12 results](../../docs/benchmarks.md) for everyday-operation, PR,
+concentrated-history, concurrent-capture and worker-encoding measurements.
+
+- `cargo bench -p lift-native --bench operations_bench`: everyday operations at
+  1k, 10k, 100k and 250k sets across ten exercises. Measures adding, editing and
+  removing one set; recomputing all PRs; predicting PRs with and without queued
+  efforts; loading a workout day, calendar month, exercise list, search,
+  single exercise, 30 history days, settings, counts, chart and records; and
+  reopening the local database. One warm-up and seven samples per operation.
+  Adds/edits/deletes form a cycle so size stays fixed. Setup and request JSON
+  encoding are excluded; native command timings include SQLite commit and
+  receipt encoding, query timings include DTO/JSON encoding. Reopen timings
+  use a warm OS file cache, not a physical-device cold boot. Samples are in
+  `benchmarks/local/rust-operations-results.json`.
+- `cargo bench -p lift-native --bench stress_bench`: 10k, 100k and 250k sets,
+  spread across ten exercises or concentrated in one. Separates the first
+  append (verification of loaded PR flags) from verified incremental appends,
+  backdated edits, the first history page, all history pages, and saves during
+  a concurrent upload capture. Captures and queries run on real Rust/SQLite,
+  without Expo overhead; all databases are disposable. The concurrent capture
+  uses a barrier and a 2 ms head start, so its overlap is diagnostic rather
+  than a strict scheduler guarantee.
+- `npm run engine:encoding-bench`: runs the exact browser snapshot-worker source
+  on a Node worker thread against synchronous JSON/gzip at the same sizes. Five
+  recorded samples per size after warm-up, byte-for-byte decompressed validation,
+  wall time and a 2 ms event-loop ticker. Node's structured-clone and scheduling
+  costs differ from browser costs; the lag is not a measured phone frame rate.
+
+Raw samples are saved in ignored `benchmarks/local/rust-stress-results.json`
+and `benchmarks/local/web-encoding-results.json`. Run benchmarks without a
+concurrent Xcode build or other heavy workload. Results are desktop diagnostics,
+not service latency guarantees or statistically robust tail percentiles.

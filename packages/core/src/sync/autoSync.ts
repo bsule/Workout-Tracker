@@ -22,7 +22,7 @@
  */
 
 import { parse } from "../store/blob"
-import { replaceSnapshotFromBytes } from "../store/persist"
+import { captureStoreSession, replaceSnapshotFromBytes } from "../store/persist"
 import { getState } from "../store/store"
 import {
   getSyncClock,
@@ -33,6 +33,7 @@ import {
 } from "./syncClock"
 import {
   _internalPullBytes,
+  captureSyncSession,
   getTransport,
   isSyncConfigured,
   pushNow,
@@ -43,6 +44,12 @@ import {
   SyncQuotaExceededError,
   type Quota,
 } from "./cloudflareTransport"
+
+function operation() {
+  const sync = captureSyncSession()
+  const account = captureStoreSession()
+  return { transport: sync.transport, check() { sync.check(); account() } }
+}
 
 export type SyncOutcome =
   | { kind: "pushed"; quota: Quota | null }
@@ -67,11 +74,15 @@ export async function syncNow(): Promise<SyncOutcome> {
   if (!isSyncConfigured()) {
     throw new Error("sync transport not configured (not signed in?)")
   }
+  const session = operation()
   try {
+    session.check()
     await pushNow(getState().snapshot)
+    session.check()
     markSynced()
     return { kind: "pushed", quota: null }
   } catch (e) {
+    session.check()
     if (e instanceof StaleSnapshotError) {
       // Nothing was overwritten: the server refused the push on its If-Match
       // precondition. Record which cloud version won so the host can tell the
@@ -94,20 +105,26 @@ export async function forcePush(): Promise<void> {
   if (!isSyncConfigured()) {
     throw new Error("sync transport not configured (not signed in?)")
   }
+  const session = operation()
   await _internalPullBytes()
+  session.check()
   await pushNow(getState().snapshot)
+  session.check()
   markSynced()
 }
 
 /**
- * Pull and replace local snapshot. Bypasses the 3/day push budget.
+ * Pull and replace local snapshot. Downloads do not consume the push budget.
  * Returns true if a remote snapshot existed and was applied.
  */
 export async function pullAndReplace(): Promise<boolean> {
   if (!isSyncConfigured()) return false
+  const session = operation()
   const result = await _internalPullBytes()
+  session.check()
   if (!result) return false
   await replaceSnapshotFromBytes(result.bytes)
+  session.check()
   markSynced()
   return true
 }
@@ -121,22 +138,15 @@ export async function previewRemote(): Promise<RemotePreview | null> {
   if (!isSyncConfigured()) {
     throw new Error("sync transport not configured (not signed in?)")
   }
-  // A pull adopts the cloud's etag, and the next push sends it as If-Match.
-  // Only looking must not count as syncing with the cloud copy: that let the
-  // next "Sync now" after a conflict overwrite it without a prompt. Put the
-  // device's etag back; applyRemoteBytes adopts the cloud's when the user
-  // takes the copy.
-  const t = getTransport()
-  const ownEtag = t instanceof CloudflareTransport ? t.getEtag() : undefined
-  let result: Awaited<ReturnType<typeof _internalPullBytes>>
-  try {
-    result = await _internalPullBytes()
-  } finally {
-    if (t instanceof CloudflareTransport && ownEtag !== undefined) t.setEtag(ownEtag)
-  }
+  const session = operation()
+  const t = session.transport
+  // Preview does not mutate the transport, even while a push is in flight.
+  const result = await (t instanceof CloudflareTransport ? t.previewSnapshot() : t.pullSnapshot())
+  session.check()
   if (!result) return null
-  previewEtags.set(result.bytes, result.etag)
   const { snapshot } = await parse(result.bytes)
+  session.check()
+  previews.set(result.bytes, { etag: result.etag, session })
   return {
     exportedAt: snapshot.exported_at ?? null,
     workoutCount: snapshot.workouts.length,
@@ -149,15 +159,18 @@ export async function previewRemote(): Promise<RemotePreview | null> {
 
 /** The etag each previewRemote() result came with, so taking that copy
  *  adopts its version. Weak: a preview nobody applies costs nothing. */
-const previewEtags = new WeakMap<Uint8Array, string>()
+const previews = new WeakMap<Uint8Array, { etag: string; session: ReturnType<typeof operation> }>()
 
 /** Replace local snapshot with bytes already pulled (typically from previewRemote). */
 export async function applyRemoteBytes(bytes: Uint8Array): Promise<void> {
+  const preview = previews.get(bytes)
+  if (!preview) throw new Error("Preview the cloud snapshot again before restoring it.")
+  preview.session.check()
   await replaceSnapshotFromBytes(bytes)
+  preview.session.check()
   // Local now is that cloud version, so the next push may go on top of it.
-  const etag = previewEtags.get(bytes)
-  const t = getTransport()
-  if (etag !== undefined && t instanceof CloudflareTransport) t.setEtag(etag)
+  const t = preview.session.transport
+  if (t instanceof CloudflareTransport) t.setEtag(preview.etag)
   markSynced()
 }
 
@@ -226,7 +239,9 @@ export async function maybeAutoSync(
   // cloud copy.
   if (state.snapshot.workouts.length === 0) return skipped("empty")
 
+  const session = operation()
   await loadSyncClock()
+  try { session.check() } catch { return skipped("not-configured") }
   const clock = getSyncClock()
   // A refused push stays refused until the user chooses pull or overwrite.
   // Retrying can only fail again, so stay off the network entirely.

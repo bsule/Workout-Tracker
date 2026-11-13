@@ -326,6 +326,10 @@ export async function importFitnotesCsv(
     }
   }
 
+  if (mode === "replace" && imported === 0) {
+    throw new Error("No usable rows were found in this CSV. Existing data was left unchanged.")
+  }
+
   // Apply everything in one mutation, with the per-op crash log paused so
   // appendPending isn't called 9000 times.
   await runBatched(async () => {

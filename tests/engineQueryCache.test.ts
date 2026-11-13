@@ -28,6 +28,11 @@ const flush = async () => {
   for (let i = 0; i < 5; i++) await Promise.resolve()
 }
 
+it("invalidates gyms when patching a workout can create a gym", () => {
+  expect(isQueryAffected({ kind: "gyms" }, { op: "patch_workout", id: 1, patch: { gym: "New gym" } })).toBe(true)
+  expect(isQueryAffected({ kind: "gyms" }, { op: "patch_workout", id: 1, patch: { notes: "Keep going" } })).toBe(false)
+})
+
 function fakeTransport(data: (q: any) => unknown = (q) => q.kind) {
   let revision = 1
   const reads: any[] = []

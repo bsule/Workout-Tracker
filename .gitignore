@@ -29,6 +29,7 @@ mobile/builds/
 frontend/.next/
 # Browser engine build output (scripts/engine/wasm-build.mjs, web-worker-build.mjs)
 frontend/public/wasm/
+frontend/public/workers/snapshot.js
 frontend/out/
 frontend/build/
 

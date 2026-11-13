@@ -14,6 +14,7 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Generated browser engine build output (gitignored).
     "public/wasm/**",
+    "public/workers/snapshot.js",
   ]),
   {
     rules: {

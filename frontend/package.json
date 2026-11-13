@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node ../scripts/build-snapshot-worker.mjs",
+    "predev:webpack": "node ../scripts/build-snapshot-worker.mjs",
+    "prebuild": "node ../scripts/build-snapshot-worker.mjs",
     "dev": "cross-env NEXT_IGNORE_INCORRECT_LOCKFILE=1 next dev --port 3215",
     "dev:webpack": "cross-env NEXT_IGNORE_INCORRECT_LOCKFILE=1 next dev --webpack --port 3215",
     "build": "next build",

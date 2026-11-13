@@ -16,6 +16,17 @@ export function setStorageFactory(f: StorageFactory) {
 
 let storage: BlobStorage | null = null
 let storageKey: string | null = null
+let storageSession = 0
+/** Capture before asynchronous work, including network requests. A reopened
+ * account gets a new session even when its path or adapter is reused. */
+export function captureStoreSession(): () => void {
+  const session = storageSession
+  return () => {
+    if (session !== storageSession || !getState().hydrated) {
+      throw new Error("The account changed during the operation.")
+    }
+  }
+}
 let hydratePromise: Promise<void> | null = null
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 let pendingRecordingPaused = 0 // refcount; >0 disables crash log appends.
@@ -38,12 +49,11 @@ export function removeFlushListener(fn: () => void) {
   flushListeners.delete(fn)
 }
 // 30s: per-mutation appends already crash-log every write immediately, and
-// `flushOnHide` flushes synchronously on app suspend, so the only thing the
+// `flushOnHide` requests a save on app suspend, so the only thing the
 // debounced flush adds is consolidating the crash log into a fresh snapshot
 // for faster next-boot hydrate. Doing that frequently (5s) caused the heavy
-// JSON.stringify + gzipSync to land mid-workout — visible as a ~5s freeze in
-// the SetLogger's "time since last set" ticker. 30s pushes the consolidation
-// past any normal rest interval the user is actively watching.
+// main-thread JSON.stringify + gzipSync to land mid-workout. Web now encodes
+// in a worker; the debounce still avoids needless disk/recovery-copy rotation.
 const FLUSH_DEBOUNCE_MS = 30000
 // Exponential backoff for retrying failed flushes — 1s, 2s, 4s, 8s, 16s,
 // then capped. Each successful flush resets the counter.
@@ -64,6 +74,7 @@ export function configure(subPath: string) {
     flushTimer = null
   }
   const switching = storageKey !== null
+  storageSession++
   storage = storageFactory(subPath)
   storageKey = subPath
   hydratePromise = null
@@ -76,6 +87,7 @@ export function configure(subPath: string) {
  * next configure() and hydrate() load from disk, even for the same user.
  */
 export async function unload(): Promise<void> {
+  storageSession++
   if (flushTimer) {
     clearTimeout(flushTimer)
     flushTimer = null
@@ -205,7 +217,7 @@ export function recordPending(op: unknown) {
 /**
  * Run a function with the per-op crash log disabled. The in-memory snapshot
  * is still updated normally — caller MUST call flushNow() afterwards (or
- * accept that the 5s debounced flush will eventually fire). Useful for bulk
+ * accept that the 30s debounced flush will eventually fire). Useful for bulk
  * imports where appending 10k lines individually is O(n²).
  */
 export async function runBatched<T>(fn: () => Promise<T> | T): Promise<T> {
@@ -221,7 +233,7 @@ function scheduleFlush(delay = FLUSH_DEBOUNCE_MS) {
   if (flushTimer) clearTimeout(flushTimer)
   flushTimer = setTimeout(() => {
     flushTimer = null
-    void flushNow()
+    void flushNow().catch(() => {}) // performFlush schedules the retry
   }, delay)
 }
 
@@ -247,31 +259,9 @@ async function performFlush(): Promise<void> {
   if (!hydrated) return
   const generation = replaceGeneration
   try {
-    const bytes = await serialize(snapshot)
-    // Checked right before the write is queued: the storage adapters queue
-    // writes in call order, so a replace that started after this point is
-    // queued behind this write and wins.
-    if (generation !== replaceGeneration) return
-    await s.writeSnapshot(bytes, snapshotStats(snapshot))
-    // Edits made while the disk write awaited are absent from these bytes.
-    // Keep their log (and dirty state) until a later save includes them.
-    // A restore or account switch likewise owns the new state and its log.
-    if (s !== storage || generation !== replaceGeneration) return
-    if (getState().snapshot !== snapshot) {
-      scheduleFlush()
-      return
-    }
-    await s.clearPending()
-    if (s !== storage || generation !== replaceGeneration) return
-    if (getState().snapshot === snapshot) clearDirty()
-    consecutiveFlushFailures = 0
-    for (const fn of flushListeners) {
-      try {
-        fn()
-      } catch (e) {
-        console.error("flush listener threw", e)
-      }
-    }
+    // Keep draining while edits arrive during I/O. Awaiters (especially bulk
+    // imports, which have no crash log) must not resolve at an older save.
+    await writeUntilCurrent(s, snapshot, generation)
   } catch (e) {
     consecutiveFlushFailures += 1
     const delay = Math.min(
@@ -283,6 +273,42 @@ async function performFlush(): Promise<void> {
       e
     )
     scheduleFlush(delay)
+    throw e
+  }
+}
+
+async function writeUntilCurrent(s: BlobStorage, snapshot: Snapshot, generation: number): Promise<void> {
+  while (s === storage && generation === replaceGeneration) {
+    const bytes = await serialize(snapshot)
+    // Checked right before the write is queued: the storage adapters queue
+    // writes in call order, so a replace that started after this point is
+    // queued behind this write and wins.
+    if (s !== storage || generation !== replaceGeneration) return
+    await s.writeSnapshot(bytes, snapshotStats(snapshot))
+    // Edits made while the disk write awaited are absent from these bytes.
+    // Keep their log (and dirty state) until a later save includes them.
+    // A restore or account switch likewise owns the new state and its log.
+    if (s !== storage || generation !== replaceGeneration) return
+    if (getState().snapshot !== snapshot) {
+      snapshot = getState().snapshot
+      continue
+    }
+    await s.clearPending()
+    if (s !== storage || generation !== replaceGeneration) return
+    if (getState().snapshot !== snapshot) {
+      snapshot = getState().snapshot
+      continue
+    }
+    clearDirty()
+    consecutiveFlushFailures = 0
+    for (const fn of flushListeners) {
+      try {
+        fn()
+      } catch (e) {
+        console.error("flush listener threw", e)
+      }
+    }
+    return
   }
 }
 
@@ -340,16 +366,16 @@ export async function replaceSnapshotFromBytes(bytes: Uint8Array): Promise<void>
 }
 
 /**
- * Host apps (web/mobile) call this from their lifecycle hooks (visibilitychange,
- * pagehide, AppState) to force a synchronous flush before the process is
- * suspended. Cancels any pending debounced flush.
+ * Web lifecycle hooks request a save on visibilitychange/pagehide. This is
+ * best effort while the page is suspended; ordinary edits also have the crash
+ * log. Bulk imports await flushNow explicitly before reporting success.
  */
 export function flushOnHide() {
   if (flushTimer) {
     clearTimeout(flushTimer)
     flushTimer = null
   }
-  void flushNow()
+  void flushNow().catch(() => {})
 }
 
 // ---- pending op replay -------------------------------------------

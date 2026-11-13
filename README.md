@@ -23,6 +23,9 @@ To run the app locally, test it, or deploy it, see **[docs/development.md](docs/
 
 On mobile, workout data lives in a Rust engine (SQLite on the device, called through an Expo module). It owns storage, queries, PRs, imports, exports, restore points and sync. The web app still runs on the TypeScript store; a WebAssembly build of the same engine exists but is switched off until browser migration is done.
 
+More detailed everyday-operation and PR timings, concentrated-history stress
+cases and worker-encoding results are in [docs/benchmarks.md](docs/benchmarks.md).
+
 ### TypeScript vs. Rust engine
 
 Desktop measurements on one Apple Silicon Mac with synthetic data (10 exercises, 10 sets per workout, one workout per day). Phones are slower in absolute terms. Details and every size are in [`scripts/engine/README.md`](scripts/engine/README.md).

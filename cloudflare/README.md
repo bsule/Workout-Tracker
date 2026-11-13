@@ -128,3 +128,9 @@ cloudflare/
 - `password_hash` format is `pbkdf2_sha256$<iters>$<salt-b64>$<key-b64>`.
 - R2's `etag` is the upload identifier (MD5 for small objects). It's opaque to the client; treat it as a version cookie.
 - The push budget caps R2 write cost. Raise `DAILY_PUSH_LIMIT` in `src/sync/routes.ts` if 5 a day is too tight.
+
+## Snapshot upload limit
+
+`PUT /api/sync/snapshot` accepts at most **8 MiB of compressed snapshot data**.
+Larger bodies return HTTP 413 before storage or quota changes. The Worker checks
+both Content-Length and the bytes actually read, including chunked uploads.
