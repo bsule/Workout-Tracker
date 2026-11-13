@@ -19,8 +19,11 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 
 /// Native database format. 3: restore points moved to `<db>.backups`;
-/// ordinals no longer equal positions.
-pub const DB_VERSION: i64 = 3;
+/// ordinals no longer equal positions. 4: rows are stored in the binary
+/// encoding of `rows.rs` instead of JSON text.
+pub const DB_VERSION: i64 = 4;
+/// The last version whose rows are JSON text.
+const LAST_JSON_VERSION: i64 = 3;
 const RECEIPTS_KEPT: i64 = 2000;
 const PRUNE_EVERY: u64 = 64;
 
@@ -54,17 +57,69 @@ pub fn write_backup(db: &Connection, slot: &str, bytes: &[u8], metadata: &Value)
 fn corrupt(e: impl std::fmt::Display) -> Fail {
     Fail::corrupt(format!("Damaged local database: {e}"))
 }
-fn load_table<T: serde::de::DeserializeOwned>(db: &Connection, kind: &str) -> Result<Table<T>> {
+fn load_table<T: crate::rows::Row>(db: &Connection, kind: &str) -> Result<Table<T>> {
     let mut stmt =
         db.prepare("SELECT value, ordinal FROM records WHERE kind=? ORDER BY ordinal")?;
     let mut rows = stmt.query([kind])?;
     let mut out = vec![];
     while let Some(row) = rows.next()? {
-        let text = row.get_ref(0)?.as_str().map_err(corrupt)?;
+        let bytes = row.get_ref(0)?.as_blob().map_err(corrupt)?;
         let ordinal: i64 = row.get(1)?;
-        out.push((ordinal, serde_json::from_str::<T>(text).map_err(corrupt)?));
+        out.push((ordinal, crate::rows::decode::<T>(bytes).map_err(corrupt)?));
     }
     Ok(Table::from_ordered(out))
+}
+fn binary_row(kind: &str, json: &str) -> Result<Vec<u8>> {
+    use crate::rows::encode;
+    fn parse<T: serde::de::DeserializeOwned>(json: &str) -> Result<T> {
+        serde_json::from_str(json).map_err(corrupt)
+    }
+    Ok(match kind {
+        "exercises" => encode(&parse::<ExerciseRow>(json)?),
+        "workouts" => encode(&parse::<WorkoutRow>(json)?),
+        "workout_exercises" => encode(&parse::<WorkoutExerciseRow>(json)?),
+        "sets" => encode(&parse::<SetRow>(json)?),
+        "gyms" => encode(&parse::<GymRow>(json)?),
+        "day_notes" => encode(&parse::<DayNoteRow>(json)?),
+        other => return Err(corrupt(format!("unknown table {other}"))),
+    })
+}
+/// Rewrites every JSON row of a version 1-3 database in the binary
+/// encoding, in one IMMEDIATE transaction: a failure rolls back and leaves
+/// the old database exactly as it was, still openable by the app that made it.
+fn upgrade_rows(db: &Connection) -> Result<()> {
+    db.execute_batch("BEGIN IMMEDIATE;")?;
+    let run = || -> Result<()> {
+        db.execute_batch("CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, key TEXT NOT NULL, value BLOB NOT NULL, ordinal INTEGER NOT NULL, PRIMARY KEY(kind,key));")?;
+        let rows: Vec<(i64, String, String)> = {
+            let mut stmt = db.prepare("SELECT rowid, kind, value FROM records")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let mut update = db.prepare("UPDATE records SET value=? WHERE rowid=?")?;
+        for (rowid, kind, json) in rows {
+            update.execute(rusqlite::params![binary_row(&kind, &json)?, rowid])?;
+        }
+        db.execute_batch(&format!(
+            "CREATE INDEX IF NOT EXISTS records_order ON records(kind, ordinal); PRAGMA user_version={DB_VERSION}; COMMIT;"
+        ))?;
+        Ok(())
+    };
+    run().inspect_err(|_| {
+        let _ = db.execute_batch("ROLLBACK;");
+    })
+}
+fn encode_row(row: lift_engine::RowRef) -> Vec<u8> {
+    use crate::rows::encode;
+    use lift_engine::RowRef::*;
+    match row {
+        Exercise(r) => encode(r),
+        Workout(r) => encode(r),
+        WorkoutExercise(r) => encode(r),
+        Set(r) => encode(r),
+        Gym(r) => encode(r),
+        DayNote(r) => encode(r),
+    }
 }
 
 /// Everything a restore-point or upload encoder needs, captured under the
@@ -137,7 +192,10 @@ impl Store {
         if version > DB_VERSION {
             return Err(Fail::too_new("Local database is from a newer app"));
         }
-        db.execute_batch(&format!("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, ordinal INTEGER NOT NULL, PRIMARY KEY(kind,key)); CREATE TABLE IF NOT EXISTS meta (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS receipts (generation INTEGER NOT NULL, command_id TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(generation,command_id)); CREATE INDEX IF NOT EXISTS receipts_command ON receipts(command_id); CREATE INDEX IF NOT EXISTS records_order ON records(kind, ordinal); PRAGMA user_version={DB_VERSION}; COMMIT;"))?;
+        if (1..=LAST_JSON_VERSION).contains(&version) {
+            upgrade_rows(&db)?;
+        }
+        db.execute_batch(&format!("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, key TEXT NOT NULL, value BLOB NOT NULL, ordinal INTEGER NOT NULL, PRIMARY KEY(kind,key)); CREATE TABLE IF NOT EXISTS meta (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS receipts (generation INTEGER NOT NULL, command_id TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(generation,command_id)); CREATE INDEX IF NOT EXISTS receipts_command ON receipts(command_id); CREATE INDEX IF NOT EXISTS records_order ON records(kind, ordinal); PRAGMA user_version={DB_VERSION}; COMMIT;"))?;
         let backups = open_backups(backups)?;
         Self::move_backups_out(&db, &backups)?;
         let meta: Option<String> = db
@@ -180,8 +238,19 @@ impl Store {
             let next_id = meta["next_id"]
                 .as_u64()
                 .ok_or_else(|| corrupt("invalid allocator"))?;
-            let engine = Engine::new(snapshot, revision, generation, next_id).map_err(corrupt)?;
+            let mut engine =
+                Engine::new(snapshot, revision, generation, next_id).map_err(corrupt)?;
+            // PR flags this engine derived and verified in earlier sessions.
+            if meta["verified"]["rules"].as_u64()
+                == Some(lift_domain::lookup::Verified::RULES.into())
+            {
+                if let Ok(v) = serde_json::from_value(meta["verified"]["state"].clone()) {
+                    engine.restore_verified(v);
+                }
+            }
             if changed {
+                // Repair can renumber rows, which moves PR tie-breaks.
+                engine.restore_verified(Default::default());
                 repaired = Some(engine.prepare_repair(fixed)?);
             }
             engine
@@ -256,11 +325,10 @@ impl Store {
         for change in row_changes(pending) {
             match change.value {
                 Some(row) => {
-                    let text = row.to_text().map_err(|e| e.to_string())?;
                     upsert.execute(rusqlite::params![
                         change.table,
                         change.key,
-                        text,
+                        encode_row(row),
                         change.ordinal
                     ])?;
                 }
@@ -348,7 +416,8 @@ impl Store {
             ));
         }
         Self::write_rows(&tx, &pending)?;
-        let meta = json!({"header":lift_engine::header(&pending.snapshot),"revision":pending.receipt.revision,"generation":pending.receipt.generation,"next_id":pending.next_id,"sync":sync});
+        let verified = self.engine.verified_after(&pending);
+        let meta = json!({"header":lift_engine::header(&pending.snapshot),"revision":pending.receipt.revision,"generation":pending.receipt.generation,"next_id":pending.next_id,"sync":sync,"verified":{"rules":lift_domain::lookup::Verified::RULES,"state":verified}});
         tx.execute("INSERT INTO meta(id,value) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value",[meta.to_string()])?;
         tx.execute(
             "INSERT OR REPLACE INTO receipts(generation,command_id,value) VALUES(?,?,?)",

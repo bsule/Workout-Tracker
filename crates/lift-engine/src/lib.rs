@@ -3,8 +3,8 @@
 use lift_domain::{
     commands::{apply_command_indexed, next_available_id, Command, Context},
     diff::{diff, validate_changes, Changes},
-    lookup::Lookup,
-    model::Snapshot,
+    lookup::{Lookup, Verified},
+    model::{DayNoteRow, ExerciseRow, GymRow, SetRow, Snapshot, WorkoutExerciseRow, WorkoutRow},
     queries::{Indexes, Query},
 };
 use serde::{Deserialize, Serialize};
@@ -27,6 +27,9 @@ pub struct Prepared {
     /// Rows that differ from the committed snapshot the change was prepared
     /// against. Computed by `Engine::finish`.
     pub changes: Changes,
+    /// Exercises whose PR flags this change verified; None when the change
+    /// replaced data, so nothing stays verified.
+    pub verified: Option<Verified>,
 }
 pub struct Engine {
     snapshot: Snapshot,
@@ -34,10 +37,30 @@ pub struct Engine {
     pub generation: u64,
     pub next_id: u64,
     indexes: Indexes,
+    verified: Verified,
 }
 impl Engine {
     pub fn snapshot(&self) -> &Snapshot {
         &self.snapshot
+    }
+    /// Exercises whose stored PR flags are derived, for hosts that persist it.
+    pub fn verified(&self) -> &Verified {
+        &self.verified
+    }
+    /// Restores verification a host persisted with the committed data.
+    pub fn restore_verified(&mut self, verified: Verified) {
+        self.verified = verified;
+    }
+    /// The verification state after `prepared` publishes.
+    pub fn verified_after(&self, prepared: &Prepared) -> Verified {
+        match &prepared.verified {
+            Some(v) => {
+                let mut next = self.verified.clone();
+                next.absorb(v);
+                next
+            }
+            None => Verified::default(),
+        }
     }
     pub fn new(
         snapshot: Snapshot,
@@ -54,6 +77,7 @@ impl Engine {
             generation,
             next_id,
             indexes,
+            verified: Verified::default(),
         })
     }
     /// Diffs a prepared snapshot against the committed one. `validated`
@@ -76,6 +100,7 @@ impl Engine {
             next_id,
             receipt,
             changes,
+            verified: None,
         })
     }
     pub fn prepare(
@@ -95,7 +120,7 @@ impl Engine {
             today,
             next_id: self.next_id,
         };
-        let look = Lookup::new(&self.indexes, &self.snapshot);
+        let look = Lookup::with_verified(&self.indexes, &self.snapshot, &self.verified);
         let result = apply_command_indexed(&mut snapshot, command, &mut ctx, &look)?;
         let receipt = Receipt {
             command_id,
@@ -104,7 +129,9 @@ impl Engine {
             revision: self.revision + 1,
             result,
         };
-        self.finish(snapshot, ctx.next_id, receipt, false)
+        let mut prepared = self.finish(snapshot, ctx.next_id, receipt, false)?;
+        prepared.verified = Some(look.take_verified());
+        Ok(prepared)
     }
     pub fn prepare_import(
         &self,
@@ -206,6 +233,7 @@ impl Engine {
         }
         self.indexes
             .apply(&self.snapshot, &prepared.snapshot, &prepared.changes);
+        self.verified = self.verified_after(&prepared);
         self.generation = prepared.receipt.generation;
         self.snapshot = prepared.snapshot;
         self.revision = prepared.receipt.revision;
@@ -323,39 +351,48 @@ pub struct WriteSet {
 pub struct RowChange<'a> {
     pub table: &'static str,
     pub key: String,
-    pub value: Option<Box<dyn erased::Row + 'a>>,
+    pub value: Option<RowRef<'a>>,
     pub ordinal: i64,
 }
-pub mod erased {
-    /// A row that serializes either to a JSON value or straight to text.
-    pub trait Row {
-        fn to_value(&self) -> serde_json::Result<serde_json::Value>;
-        fn to_text(&self) -> serde_json::Result<String>;
-    }
-    impl<T: serde::Serialize> Row for &T {
-        fn to_value(&self) -> serde_json::Result<serde_json::Value> {
-            serde_json::to_value(self)
-        }
-        fn to_text(&self) -> serde_json::Result<String> {
-            serde_json::to_string(self)
+/// A typed reference to a changed row, so each host can store it in its own
+/// format.
+#[derive(Clone, Copy)]
+pub enum RowRef<'a> {
+    Exercise(&'a ExerciseRow),
+    Workout(&'a WorkoutRow),
+    WorkoutExercise(&'a WorkoutExerciseRow),
+    Set(&'a SetRow),
+    Gym(&'a GymRow),
+    DayNote(&'a DayNoteRow),
+}
+impl RowRef<'_> {
+    pub fn to_value(&self) -> serde_json::Result<Value> {
+        match self {
+            Self::Exercise(r) => serde_json::to_value(r),
+            Self::Workout(r) => serde_json::to_value(r),
+            Self::WorkoutExercise(r) => serde_json::to_value(r),
+            Self::Set(r) => serde_json::to_value(r),
+            Self::Gym(r) => serde_json::to_value(r),
+            Self::DayNote(r) => serde_json::to_value(r),
         }
     }
 }
 /// Every durable row change in a prepared commit.
 pub fn row_changes(pending: &Prepared) -> Vec<RowChange<'_>> {
-    fn table<'a, T: Serialize + 'a>(
+    fn table<'a, T>(
         out: &mut Vec<RowChange<'a>>,
         name: &'static str,
         rows: &'a lift_domain::table::Table<T>,
         d: &lift_domain::diff::TableDiff,
         key_of: impl Fn(&T) -> String,
+        wrap: fn(&'a T) -> RowRef<'a>,
     ) {
         for &p in &d.upserts {
             let row = &rows[p];
             out.push(RowChange {
                 table: name,
                 key: key_of(row),
-                value: Some(Box::new(row)),
+                value: Some(wrap(row)),
                 ordinal: rows.ordinal(p).unwrap_or(0),
             });
         }
@@ -371,24 +408,54 @@ pub fn row_changes(pending: &Prepared) -> Vec<RowChange<'_>> {
     let s = &pending.snapshot;
     let c = &pending.changes;
     let mut out = vec![];
-    table(&mut out, "exercises", &s.exercises, &c.exercises, |r| {
-        r.id.to_string()
-    });
-    table(&mut out, "workouts", &s.workouts, &c.workouts, |r| {
-        r.id.to_string()
-    });
+    table(
+        &mut out,
+        "exercises",
+        &s.exercises,
+        &c.exercises,
+        |r| r.id.to_string(),
+        RowRef::Exercise,
+    );
+    table(
+        &mut out,
+        "workouts",
+        &s.workouts,
+        &c.workouts,
+        |r| r.id.to_string(),
+        RowRef::Workout,
+    );
     table(
         &mut out,
         "workout_exercises",
         &s.workout_exercises,
         &c.workout_exercises,
         |r| r.id.to_string(),
+        RowRef::WorkoutExercise,
     );
-    table(&mut out, "sets", &s.sets, &c.sets, |r| r.id.to_string());
-    table(&mut out, "gyms", &s.gyms, &c.gyms, |r| r.id.to_string());
-    table(&mut out, "day_notes", &s.day_notes, &c.day_notes, |r| {
-        r.date.clone()
-    });
+    table(
+        &mut out,
+        "sets",
+        &s.sets,
+        &c.sets,
+        |r| r.id.to_string(),
+        RowRef::Set,
+    );
+    table(
+        &mut out,
+        "gyms",
+        &s.gyms,
+        &c.gyms,
+        |r| r.id.to_string(),
+        RowRef::Gym,
+    );
+    table(
+        &mut out,
+        "day_notes",
+        &s.day_notes,
+        &c.day_notes,
+        |r| r.date.clone(),
+        RowRef::DayNote,
+    );
     out
 }
 pub fn header(s: &Snapshot) -> Value {

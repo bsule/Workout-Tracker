@@ -76,6 +76,7 @@ pub fn export_legacy_json(
 mod error;
 mod fitnotes_export;
 mod migration;
+mod rows;
 mod storage;
 use error::{Fail, Kind};
 

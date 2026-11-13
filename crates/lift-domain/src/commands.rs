@@ -443,13 +443,18 @@ fn apply(
             ];
             drop_nulls(&mut input, &keys);
             merge(&mut row, input, &keys)?;
-            if !row.is_planned {
-                if let Some(p) = look.we_pos(snap, we_id) {
-                    affected.insert(snap.workout_exercises[p].exercise_id);
-                }
-            }
+            let planned = row.is_planned;
             let out = json(&row);
             snap.sets.push(row);
+            if !planned {
+                if let Some(p) = look.we_pos(snap, we_id) {
+                    let exercise = snap.workout_exercises[p].exercise_id;
+                    let pos = snap.sets.len() - 1;
+                    if !prs::append_fast(snap, exercise, pos, look) {
+                        affected.insert(exercise);
+                    }
+                }
+            }
             out
         }
         Command::UpdateSet { set_id, patch } => {
@@ -575,6 +580,7 @@ fn apply(
         }
         Command::RecomputePrs => {
             prs::recompute(snap, None);
+            look.mark_all_verified();
             return Ok(
                 serde_json::json!({"recomputed":snap.workout_exercises.iter().map(|w|w.exercise_id).collect::<HashSet<_>>().len()}),
             );

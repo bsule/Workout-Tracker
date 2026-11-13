@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
@@ -21,20 +19,8 @@ import {
   ApiError,
 } from "./api"
 
-interface AuthState {
-  user: User | null
-  loading: boolean
-  login(username: string, password: string): Promise<void>
-  signup(payload: {
-    username: string
-    email: string
-    password: string
-  }): Promise<void>
-  logout(): Promise<void>
-  updateProfile(patch: Partial<Pick<User, "username" | "email">>): Promise<void>
-}
-
-const AuthContext = createContext<AuthState | null>(null)
+import { AuthContext, type AuthState } from "./AuthContext"
+export { useAuth } from "./AuthContext"
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
@@ -139,10 +125,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-}
-
-export function useAuth(): AuthState {
-  const v = useContext(AuthContext)
-  if (!v) throw new Error("useAuth must be inside AuthProvider")
-  return v
 }

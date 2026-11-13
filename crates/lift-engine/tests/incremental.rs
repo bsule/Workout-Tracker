@@ -235,3 +235,91 @@ fn a_set_save_writes_only_the_rows_it_changes() {
     assert!(p.snapshot.workouts.shares_storage_with(&before.workouts));
     assert!(p.snapshot.sets.same_chunk(0, &before.sets, 0));
 }
+
+/// Mostly "log a set today": sets appended at the latest date, with weights
+/// and reps that often tie or beat earlier sets, and occasional edits,
+/// deletes and past-dated sets that must take the full pass.
+#[test]
+fn append_fast_path_matches_full_recompute_on_append_heavy_sequences() {
+    use std::sync::atomic::Ordering;
+    let before = prs::APPEND_FAST_PATH.load(Ordering::Relaxed);
+    for seed in 1..=30u64 {
+        let mut rng = Rng(seed.wrapping_mul(0xD1B5_4A32_D192_ED03) | 1);
+        let mut engine = Engine::new(Snapshot::empty("d".into(), "now".into()), 0, 1, 1).unwrap();
+        let mut day = 1u64;
+        let mut last_we: Vec<u64> = vec![];
+        for step in 0..300 {
+            let s = engine.snapshot();
+            let weight = [40.0, 50.0, 50.004, 49.996, 60.0, 0.0][rng.below(6) as usize];
+            let reps = (1 + rng.below(5)) as f64;
+            let created = format!("2026-03-01T10:00:0{}Z", rng.below(2));
+            let input = json!({"weight":weight,"reps":reps,"created_at":created});
+            let roll = rng.below(20);
+            if roll == 0 {
+                day += 1;
+            }
+            let command = match roll {
+                0..=9 => Command::LogSet {
+                    date: format!("2026-02-{:02}", day.min(28)),
+                    exercise_id: 1 + rng.below(3),
+                    input,
+                },
+                10..=14 => match rng.pick(&last_we) {
+                    Some(we_id) => Command::AddSet { we_id, input },
+                    None => continue,
+                },
+                15 => Command::LogSet {
+                    date: format!("2026-01-{:02}", 1 + rng.below(28)),
+                    exercise_id: 1 + rng.below(3),
+                    input,
+                },
+                16 => match rng.pick(&s.sets.iter().map(|x| x.id).collect::<Vec<_>>()) {
+                    Some(set_id) => Command::UpdateSet {
+                        set_id,
+                        patch: json!({"weight":weight,"reps":reps}),
+                    },
+                    None => continue,
+                },
+                17 => match rng.pick(&s.sets.iter().map(|x| x.id).collect::<Vec<_>>()) {
+                    Some(id) => Command::DeleteSets { ids: vec![id] },
+                    None => continue,
+                },
+                18 => Command::AddSet {
+                    we_id: match rng.pick(&last_we) {
+                        Some(w) => w,
+                        None => continue,
+                    },
+                    input: json!({"weight":weight,"reps":reps,"is_planned":true}),
+                },
+                _ => Command::AddSet {
+                    we_id: match rng.pick(&last_we) {
+                        Some(w) => w,
+                        None => continue,
+                    },
+                    input: json!({"reps":reps}),
+                },
+            };
+            let label = format!("seed {seed} step {step}: {command:?}");
+            let Ok(pending) = engine.prepare(
+                format!("c{step}"),
+                command,
+                "2026-03-01T00:00:00Z".into(),
+                "2026-03-01".into(),
+            ) else {
+                continue;
+            };
+            if let Some(we) = pending.receipt.result["we_id"].as_u64() {
+                if !last_we.contains(&we) {
+                    last_we.push(we);
+                }
+            }
+            engine.publish(pending).unwrap();
+            let s = engine.snapshot();
+            last_we.retain(|we| s.workout_exercises.iter().any(|w| w.id == *we));
+            let mut full = s.clone();
+            prs::recompute(&mut full, None);
+            assert_eq!(flags(s), flags(&full), "{label}");
+        }
+    }
+    assert!(prs::APPEND_FAST_PATH.load(Ordering::Relaxed) - before > 2000);
+}

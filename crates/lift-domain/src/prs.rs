@@ -319,9 +319,161 @@ pub fn recompute_indexed(snapshot: &mut Snapshot, exercises: &HashSet<u64>, look
     if !look.current(snapshot) {
         // Rows were removed in this change, so the base positions moved.
         let fresh = Indexes::build(snapshot);
-        let look = Lookup::new(&fresh, snapshot);
-        return recompute_indexed(snapshot, exercises, &look);
+        let inner = Lookup::new(&fresh, snapshot);
+        full_indexed(snapshot, exercises, &inner);
+    } else {
+        full_indexed(snapshot, exercises, look);
     }
+    look.mark_verified(exercises.iter().copied());
+}
+/// Number of set saves the append path handled (a diagnostic for tests and
+/// benchmarks).
+pub static APPEND_FAST_PATH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The PR update for one set appended at `pos` to an exercise whose flags
+/// are verified, when the set is chronologically last for the exercise and
+/// last in its workout_exercise. Then, by the rules `compute` applies:
+/// - the set is a current PR exactly when no other set is at least as heavy
+///   (by weightKey) with at least as many reps (an earlier exact tie wins),
+///   and, being latest, its historical flag equals its current one;
+/// - an existing set can only lose its current PR, and loses it exactly when
+///   the new set beats it strictly; historical flags of earlier sets depend
+///   only on earlier sets and do not change;
+/// - the same holds within its position bucket, which no other set changes.
+///
+/// Returns false, changing nothing, whenever any of that cannot be shown;
+/// the caller then runs the full pass.
+pub fn append_fast(snapshot: &mut Snapshot, exercise: u64, pos: usize, look: &Lookup) -> bool {
+    if !look.current(snapshot) || !look.is_verified(exercise) || pos < look.base_sets_len() {
+        return false;
+    }
+    let negative_zero = |v: f64| v == 0.0 && v.is_sign_negative();
+    let changes = {
+        let snap = &*snapshot;
+        if look
+            .exercise_pos(snap, exercise)
+            .is_some_and(|i| snap.exercises[i].kind != "weight_reps")
+        {
+            // Not a PR exercise: the full pass would leave every flag alone.
+            return true;
+        }
+        let new = &snap.sets[pos];
+        if new.is_pr || new.was_pr || new.is_position_pr || new.was_position_pr {
+            return false;
+        }
+        let (Some(nw), Some(nr), false) = (new.weight, new.reps, new.is_planned) else {
+            // Not a candidate: nothing in the pool changes, and its own
+            // flags are already clear.
+            return true;
+        };
+        let nw = weight_key(Some(nw));
+        if negative_zero(nw) || negative_zero(nr) {
+            return false;
+        }
+        let Some(we_pos) = look.we_pos(snap, new.workout_exercise_id) else {
+            return false;
+        };
+        let we = &snap.workout_exercises[we_pos];
+        if we.exercise_id != exercise {
+            return false;
+        }
+        let Some(date) = look
+            .workout_pos(snap, we.workout_id)
+            .map(|i| snap.workouts[i].date.as_str())
+        else {
+            return false;
+        };
+        let new_time = timestamp(&new.created_at);
+        let new_key = (date, we.order, new.order);
+        // Candidates of every workout_exercise, in (order, id) order.
+        let mut beats_new = false;
+        let mut lose_current = vec![];
+        let mut bucket = None;
+        let mut groups: Vec<Vec<(usize, f64, f64)>> = vec![];
+        let mut new_group = None;
+        for wp in look.wes_of_exercise(snap, exercise) {
+            let w = &snap.workout_exercises[wp];
+            let wdate = look
+                .workout_pos(snap, w.workout_id)
+                .map(|i| snap.workouts[i].date.as_str())
+                .unwrap_or("");
+            let mut group = vec![];
+            for sp in look.sets_of_we(snap, w.id) {
+                if sp == pos {
+                    continue;
+                }
+                let t = &snap.sets[sp];
+                if t.is_planned {
+                    continue;
+                }
+                let (Some(tw), Some(tr)) = (t.weight, t.reps) else {
+                    continue;
+                };
+                let tw = weight_key(Some(tw));
+                if negative_zero(tw) || negative_zero(tr) {
+                    return false;
+                }
+                // Strictly earlier in the exercise's chronology.
+                let key = (wdate, w.order, t.order);
+                let earlier = match key.cmp(&new_key) {
+                    Ordering::Less => true,
+                    Ordering::Greater => false,
+                    Ordering::Equal => (timestamp(&t.created_at), t.id) < (new_time, new.id),
+                };
+                if !earlier {
+                    return false;
+                }
+                if w.id == new.workout_exercise_id && (t.order, t.id) > (new.order, new.id) {
+                    return false;
+                }
+                if tw >= nw && tr >= nr {
+                    beats_new = true;
+                }
+                if t.is_pr && nw >= tw && nr >= tr && (nw, nr) != (tw, tr) {
+                    lose_current.push(sp);
+                }
+                group.push((sp, tw, tr, t.order, t.id));
+            }
+            group.sort_by_key(|c| (c.3, c.4));
+            if w.id == new.workout_exercise_id {
+                new_group = Some(groups.len());
+                bucket = Some(group.len());
+            }
+            groups.push(group.into_iter().map(|c| (c.0, c.1, c.2)).collect());
+        }
+        let (Some(_), Some(p)) = (new_group, bucket) else {
+            return false;
+        };
+        let mut position_beats_new = false;
+        let mut lose_position = vec![];
+        for group in &groups {
+            if let Some(&(sp, tw, tr)) = group.get(p) {
+                if tw >= nw && tr >= nr {
+                    position_beats_new = true;
+                }
+                if snap.sets[sp].is_position_pr && nw >= tw && nr >= tr && (nw, nr) != (tw, tr) {
+                    lose_position.push(sp);
+                }
+            }
+        }
+        (!beats_new, !position_beats_new, lose_current, lose_position)
+    };
+    let (current, position, lose_current, lose_position) = changes;
+    let s = &mut snapshot.sets[pos];
+    s.is_pr = current;
+    s.was_pr = current;
+    s.is_position_pr = position;
+    s.was_position_pr = position;
+    for sp in lose_current {
+        snapshot.sets[sp].is_pr = false;
+    }
+    for sp in lose_position {
+        snapshot.sets[sp].is_position_pr = false;
+    }
+    APPEND_FAST_PATH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    true
+}
+fn full_indexed(snapshot: &mut Snapshot, exercises: &HashSet<u64>, look: &Lookup) {
     let changes = {
         let snap = &*snapshot;
         let mut changes = vec![];

@@ -529,7 +529,13 @@ fn duplicate_gym_names_are_dropped_on_open_and_stay_dropped() {
         .unwrap();
         // An earlier build stored the same name twice.
         s.db()
-            .execute("INSERT INTO records(kind,key,value,ordinal) VALUES('gyms','9','{\"id\":9,\"name\":\"Golds\"}',99)", [])
+            .execute(
+                "INSERT INTO records(kind,key,value,ordinal) VALUES('gyms','9',?,99)",
+                [crate::rows::encode(&GymRow {
+                    id: 9,
+                    name: "Golds".into(),
+                })],
+            )
             .unwrap();
     }
     let s = Store::open(path, "d".into(), "now".into()).unwrap();
@@ -542,4 +548,213 @@ fn duplicate_gym_names_are_dropped_on_open_and_stay_dropped() {
         })
         .unwrap();
     assert_eq!(left, 1);
+}
+
+/// Rewrites a current database in the JSON-row format of version `v` (2 or
+/// 3), as those builds wrote it.
+fn downgrade_to_json(path: &str, v: i64) {
+    let db = Connection::open(path).unwrap();
+    let rows: Vec<(i64, String, Vec<u8>)> = {
+        let mut stmt = db
+            .prepare("SELECT rowid, kind, value FROM records")
+            .unwrap();
+        let r = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        r
+    };
+    for (rowid, kind, bytes) in rows {
+        use crate::rows::decode;
+        let json = match kind.as_str() {
+            "exercises" => serde_json::to_string(&decode::<ExerciseRow>(&bytes).unwrap()),
+            "workouts" => serde_json::to_string(&decode::<WorkoutRow>(&bytes).unwrap()),
+            "workout_exercises" => {
+                serde_json::to_string(&decode::<WorkoutExerciseRow>(&bytes).unwrap())
+            }
+            "sets" => serde_json::to_string(&decode::<SetRow>(&bytes).unwrap()),
+            "gyms" => serde_json::to_string(&decode::<GymRow>(&bytes).unwrap()),
+            _ => serde_json::to_string(&decode::<DayNoteRow>(&bytes).unwrap()),
+        }
+        .unwrap();
+        db.execute(
+            "UPDATE records SET value=? WHERE rowid=?",
+            rusqlite::params![json, rowid],
+        )
+        .unwrap();
+    }
+    if v == 2 {
+        db.execute_batch("CREATE TABLE backups (slot TEXT PRIMARY KEY, bytes BLOB NOT NULL, metadata TEXT NOT NULL); INSERT INTO backups VALUES('bak', x'01', '{}');").unwrap();
+    }
+    db.execute_batch(&format!("PRAGMA user_version={v};"))
+        .unwrap();
+}
+fn populated(path: &str) -> Snapshot {
+    let mut store = Store::open(path, "device".into(), "now".into()).unwrap();
+    let mut n = 0;
+    let mut run = |store: &mut Store, c: Command| {
+        n += 1;
+        store
+            .execute(
+                format!("u{n}"),
+                store.engine.generation,
+                c,
+                "2026-01-01T00:00:00Z".into(),
+                "2026-01-10".into(),
+            )
+            .unwrap()
+    };
+    for day in 1..=5 {
+        let r = run(
+            &mut store,
+            Command::LogSet {
+                date: format!("2026-01-0{day}"),
+                exercise_id: 1 + day % 2,
+                input: json!({"weight":102.05812 + day as f64 * 0.1,"reps":5,"note":"ünï"}),
+            },
+        );
+        let we = r.result["we_id"].as_u64().unwrap();
+        run(
+            &mut store,
+            Command::AddSet {
+                we_id: we,
+                input: json!({"weight":null,"reps":null,"distance_m":1609.344,"time_seconds":0.30000000000000004}),
+            },
+        );
+    }
+    run(
+        &mut store,
+        Command::CreateGym {
+            name: "Golds".into(),
+        },
+    );
+    run(&mut store, note("day"));
+    run(&mut store, Command::DeleteExercise { id: 1 });
+    let id = store.engine.snapshot().sets[3].id;
+    run(&mut store, Command::DeleteSets { ids: vec![id] });
+    store.engine.snapshot().clone()
+}
+type SetBits = (u64, Option<u64>, Option<u64>, Option<u64>);
+fn bits(s: &Snapshot) -> Vec<SetBits> {
+    s.sets
+        .iter()
+        .map(|x| {
+            (
+                x.id,
+                x.weight.map(f64::to_bits),
+                x.distance_m.map(f64::to_bits),
+                x.time_seconds.map(f64::to_bits),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn json_databases_upgrade_in_place_and_reopen_identical() {
+    for v in [2, 3] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let path = path.to_str().unwrap();
+        let before = populated(path);
+        let sync_before = Store::open(path, "device".into(), "now".into())
+            .unwrap()
+            .sync_state
+            .clone();
+        downgrade_to_json(path, v);
+        let store = Store::open(path, "device".into(), "now".into()).unwrap();
+        assert_eq!(store.engine.snapshot(), &before, "v{v}");
+        assert_eq!(bits(store.engine.snapshot()), bits(&before));
+        assert_eq!(store.engine.revision, 14);
+        assert_eq!(store.sync_state, sync_before);
+        assert!(store.receipt("u1").unwrap().is_some());
+        let version: i64 = store
+            .db()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, DB_VERSION);
+        if v == 2 {
+            assert_eq!(store.backup_bytes("bak").unwrap(), Some(vec![1]));
+        }
+        drop(store);
+        let again = Store::open(path, "device".into(), "now".into()).unwrap();
+        assert_eq!(again.engine.snapshot(), &before);
+        assert_eq!(
+            again.engine.snapshot().exercises[0].is_deleted,
+            before.exercises[0].is_deleted
+        );
+    }
+}
+
+#[test]
+fn an_interrupted_upgrade_leaves_the_old_database_intact() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.sqlite");
+    let path = path.to_str().unwrap();
+    let before = populated(path);
+    downgrade_to_json(path, 2);
+    let image = |p: &str| {
+        let db = Connection::open(p).unwrap();
+        let mut stmt = db
+            .prepare("SELECT kind, key, value, ordinal FROM records ORDER BY kind, key")
+            .unwrap();
+        let rows: Vec<(String, String, String, i64)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let v: i64 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        (rows, v)
+    };
+    let old = image(path);
+    {
+        // Fail on the last row the upgrade rewrites.
+        let db = Connection::open(path).unwrap();
+        let n: i64 = db
+            .query_row("SELECT COUNT(*) FROM records", [], |r| r.get(0))
+            .unwrap();
+        db.execute_batch(&format!("CREATE TRIGGER fail_upgrade BEFORE UPDATE ON records WHEN (SELECT COUNT(*) FROM records WHERE typeof(value)='blob') >= {} BEGIN SELECT RAISE(ABORT,'interrupted'); END;", n - 1)).unwrap();
+    }
+    let err = Store::open(path, "device".into(), "now".into())
+        .err()
+        .unwrap();
+    assert_ne!(err.kind, crate::error::Kind::Corrupt);
+    assert_eq!(image(path), old);
+    assert_eq!(old.1, 2);
+    {
+        let db = Connection::open(path).unwrap();
+        db.execute_batch("DROP TRIGGER fail_upgrade;").unwrap();
+    }
+    let store = Store::open(path, "device".into(), "now".into()).unwrap();
+    assert_eq!(store.engine.snapshot(), &before);
+}
+
+#[test]
+fn verified_pr_flags_survive_reopen_for_the_append_path() {
+    use std::sync::atomic::Ordering;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.sqlite");
+    let path = path.to_str().unwrap();
+    let before = populated(path);
+    let we = before.workout_exercises.iter().last().unwrap().id;
+    let mut store = Store::open(path, "device".into(), "now".into()).unwrap();
+    let hits = lift_domain::prs::APPEND_FAST_PATH.load(Ordering::Relaxed);
+    store
+        .execute(
+            "late".into(),
+            1,
+            Command::AddSet {
+                we_id: we,
+                input: json!({"weight":300.0,"reps":5}),
+            },
+            "2026-01-05T23:00:00Z".into(),
+            "2026-01-10".into(),
+        )
+        .unwrap();
+    assert!(lift_domain::prs::APPEND_FAST_PATH.load(Ordering::Relaxed) > hits);
+    let mut full = store.engine.snapshot().clone();
+    lift_domain::prs::recompute(&mut full, None);
+    assert_eq!(&full, store.engine.snapshot());
 }

@@ -22,6 +22,9 @@ export interface DataTransport {
  * set edits. Hosts keep file pickers, sharing, HTTP, and credentials. */
 export class EngineDataApi implements SyncEngine {
   private sequence=0
+  /** generation:revision of the last restore point this session saved. */
+  private lastRestorePoint:string|null=null
+  private restorePointsInFlight=new Map<string,Promise<void>>()
   constructor(private client:EngineClient,private data:DataTransport,private prefix:string,private clock=()=>new Date()){}
   importFile(format:'json'|'csv',text:string,replace:boolean,commandId?:string){
     const at=this.clock()
@@ -44,13 +47,31 @@ export class EngineDataApi implements SyncEngine {
       return this.data.replaceSnapshot(bytes,generation,revision,null,this.clock().toISOString())
     })
   }
-  prepareUpload(now:string){return this.client.effect(()=>this.data.prepareUpload(now))}
+  // Captures read a copy of the committed data, so they wait for earlier
+  // writes but never make a later set save wait behind their compression.
+  prepareUpload(now:string){return this.client.observe(()=>this.data.prepareUpload(now))}
   acknowledgePush(generation:number,revision:number,expectedEtag:string|null,etag:string,now:string){return this.client.effect(()=>this.data.acknowledgePush(generation,revision,expectedEtag,etag,now))}
-  snapshotBytes(){return this.client.effect(()=>this.data.snapshotBytes(this.clock().toISOString()))}
-  saveRestorePoint(){return this.client.effect(()=>this.data.saveRestorePoint(this.clock().toISOString()))}
-  restorePoints(){return this.client.effect(()=>this.data.restorePoints())}
+  snapshotBytes(){return this.client.observe(()=>this.data.snapshotBytes(this.clock().toISOString()))}
+  /** Skipped when nothing was committed since this session's last one. */
+  saveRestorePoint(){
+    return this.client.observe(async version=>{
+      const key=`${version.generation}:${version.revision}`
+      if(this.lastRestorePoint===key)return
+      const pending=this.restorePointsInFlight.get(key)
+      if(pending)return pending
+      const save=this.data.saveRestorePoint(this.clock().toISOString())
+      this.restorePointsInFlight.set(key,save)
+      try{
+        await save
+        this.lastRestorePoint=key
+      }finally{
+        this.restorePointsInFlight.delete(key)
+      }
+    })
+  }
+  restorePoints(){return this.client.observe(()=>this.data.restorePoints())}
   syncState(){return this.client.effect(()=>this.data.syncState())}
-  parseAiPlan(raw:string){return this.client.effect(()=>this.data.parseAiPlan(raw))}
-  exportJson(username:string){return this.client.effect(()=>this.data.exportJson(username,this.clock().toISOString()))}
-  exportFitnotes(skeleton:Uint8Array){return this.client.effect(()=>this.data.exportFitnotes(skeleton,this.clock().toISOString()))}
+  parseAiPlan(raw:string){return this.client.observe(()=>this.data.parseAiPlan(raw))}
+  exportJson(username:string){return this.client.observe(()=>this.data.exportJson(username,this.clock().toISOString()))}
+  exportFitnotes(skeleton:Uint8Array){return this.client.observe(()=>this.data.exportFitnotes(skeleton,this.clock().toISOString()))}
 }

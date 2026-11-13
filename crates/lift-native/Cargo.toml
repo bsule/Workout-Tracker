@@ -29,7 +29,7 @@ name = "lift-bindgen"
 path = "src/bin/bindgen.rs"
 required-features = ["bindgen"]
 [dev-dependencies]
-flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
 [[bench]]
 name = "native_bench"

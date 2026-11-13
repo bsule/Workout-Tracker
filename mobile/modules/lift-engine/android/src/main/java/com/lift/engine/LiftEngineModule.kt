@@ -34,15 +34,30 @@ private inline fun <T> coded(body: () -> T): T =
   try { body() } catch (error: Throwable) { throw engineException(error) }
 
 class LiftEngineModule : Module() {
+  /** Commands, queries and session changes run in order here. */
   private val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
   private val engineScope = CoroutineScope(SupervisorJob() + dispatcher)
+  /**
+   * Whole-snapshot work (restore points, uploads, exports). The Rust engine
+   * copies the data under its lock and compresses outside it, so running these
+   * here keeps a set save from waiting behind a compression on the engine thread.
+   */
+  private val captureDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+  private val captureScope = CoroutineScope(SupervisorJob() + captureDispatcher)
+  /** Guards `engine` and `session`, which both threads read. */
+  private val stateLock = Any()
   private var engine: NativeEngine? = null
   private var session: String? = null
 
-  private fun active(id: String): NativeEngine {
+  private fun active(id: String): NativeEngine = synchronized(stateLock) {
     val current = engine
     if (session != id || current == null) throw CodedException("ERR_ENGINE_CLOSED", "Stale engine session", null)
-    return current
+    current
+  }
+
+  private fun setActive(next: NativeEngine?, id: String?) = synchronized(stateLock) {
+    engine = next
+    session = id
   }
 
   private fun version(value: Double): ULong {
@@ -59,16 +74,15 @@ class LiftEngineModule : Module() {
       mapOf("protocolVersion" to info.protocolVersion.toDouble(), "engineVersion" to info.engineVersion)
     }.runOnQueue(engineScope)
 
-    AsyncFunction("exportLegacyFitnotes") { snapshotJson: String, skeleton: ByteArray, now: String -> coded { exportLegacyFitnotes(snapshotJson, skeleton, now) } }.runOnQueue(engineScope)
-    AsyncFunction("exportLegacyJson") { snapshotJson: String, username: String, now: String -> coded { exportLegacyJson(snapshotJson, username, now) } }.runOnQueue(engineScope)
+    AsyncFunction("exportLegacyFitnotes") { snapshotJson: String, skeleton: ByteArray, now: String -> coded { exportLegacyFitnotes(snapshotJson, skeleton, now) } }.runOnQueue(captureScope)
+    AsyncFunction("exportLegacyJson") { snapshotJson: String, username: String, now: String -> coded { exportLegacyJson(snapshotJson, username, now) } }.runOnQueue(captureScope)
 
     AsyncFunction("open") { id: String, path: String, deviceId: String, now: String, legacyJson: String ->
-      if (engine != null) throw CodedException("ERR_ENGINE", "Close the active session first", null)
+      if (synchronized(stateLock) { engine != null }) throw CodedException("ERR_ENGINE", "Close the active session first", null)
       val localPath = if (path.startsWith("file://")) URI(path).path else path
       coded {
         val opened = NativeEngine.open(localPath, deviceId, now, legacyJson)
-        engine = opened
-        session = id
+        setActive(opened, id)
         opened.query("""{"kind":"counts"}""")
       }
     }.runOnQueue(engineScope)
@@ -82,43 +96,44 @@ class LiftEngineModule : Module() {
 
     AsyncFunction("query") { id: String, queryJson: String -> coded { active(id).query(queryJson) } }.runOnQueue(engineScope)
     AsyncFunction("importFile") { id: String, request: String -> coded { active(id).importFileJson(request) } }.runOnQueue(engineScope)
-    AsyncFunction("snapshotBytes") { id: String, now: String -> coded { active(id).snapshotBytes(now) } }.runOnQueue(engineScope)
-    AsyncFunction("backupBytes") { id: String, slot: String -> coded { active(id).backupBytes(slot) } }.runOnQueue(engineScope)
-    AsyncFunction("saveRestorePoint") { id: String, now: String -> coded { active(id).saveRestorePoint(now) } }.runOnQueue(engineScope)
-    AsyncFunction("restorePoints") { id: String -> coded { active(id).restorePoints() } }.runOnQueue(engineScope)
+    AsyncFunction("snapshotBytes") { id: String, now: String -> coded { active(id).snapshotBytes(now) } }.runOnQueue(captureScope)
+    AsyncFunction("backupBytes") { id: String, slot: String -> coded { active(id).backupBytes(slot) } }.runOnQueue(captureScope)
+    AsyncFunction("saveRestorePoint") { id: String, now: String -> coded { active(id).saveRestorePoint(now) } }.runOnQueue(captureScope)
+    AsyncFunction("restorePoints") { id: String -> coded { active(id).restorePoints() } }.runOnQueue(captureScope)
     AsyncFunction("syncState") { id: String -> coded { active(id).syncState() } }.runOnQueue(engineScope)
     AsyncFunction("prepareUpload") { id: String, now: String ->
       val value = coded { active(id).prepareUpload(now) }
       mapOf("bytes" to value.bytes, "generation" to value.generation.toDouble(), "revision" to value.revision.toDouble(), "etag" to value.etag, "deviceId" to value.deviceId)
-    }.runOnQueue(engineScope)
+    }.runOnQueue(captureScope)
     AsyncFunction("replaceSnapshot") { id: String, bytes: ByteArray, generation: Double, revision: Double, etag: String?, now: String ->
       coded { active(id).replaceSnapshot(bytes, version(generation), version(revision), etag, now) }
     }.runOnQueue(engineScope)
     AsyncFunction("acknowledgePush") { id: String, generation: Double, revision: Double, expectedEtag: String?, etag: String, now: String ->
       coded { active(id).acknowledgePush(version(generation), version(revision), expectedEtag, etag, now) }
     }.runOnQueue(engineScope)
-    AsyncFunction("exportFitnotes") { id: String, skeleton: ByteArray, now: String -> coded { active(id).exportFitnotes(skeleton, now) } }.runOnQueue(engineScope)
+    AsyncFunction("exportFitnotes") { id: String, skeleton: ByteArray, now: String -> coded { active(id).exportFitnotes(skeleton, now) } }.runOnQueue(captureScope)
     AsyncFunction("parseAiPlan") { id: String, raw: String -> coded { active(id).parseAiPlan(raw) } }.runOnQueue(engineScope)
-    AsyncFunction("exportJson") { id: String, username: String, now: String -> coded { active(id).exportJson(username, now) } }.runOnQueue(engineScope)
+    AsyncFunction("exportJson") { id: String, username: String, now: String -> coded { active(id).exportJson(username, now) } }.runOnQueue(captureScope)
     AsyncFunction("close") { id: String ->
       val current = active(id)
       // The session is cleared even if shutdown reports an error.
       try {
         coded { current.shutdown() }
       } finally {
-        engine = null
-        session = null
+        setActive(null, null)
+        // UniFFI frees the object only after in-flight capture calls return.
         current.destroy()
       }
     }.runOnQueue(engineScope)
 
     OnDestroy {
       engineScope.launch {
-        try { engine?.shutdown() } finally {
-          engine?.destroy()
-          engine = null
-          session = null
+        val current = synchronized(stateLock) { engine }
+        try { current?.shutdown() } finally {
+          setActive(null, null)
+          current?.destroy()
           dispatcher.close()
+          captureDispatcher.close()
         }
       }
     }

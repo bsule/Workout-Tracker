@@ -3,6 +3,7 @@
 //! past the indexed length; positions below it stay valid until a row is
 //! removed, after which the affected table falls back to a scan.
 use crate::{model::Snapshot, queries::Indexes, table::Table};
+use std::{cell::RefCell, collections::HashSet};
 
 #[derive(Clone, Copy)]
 struct Mark {
@@ -23,12 +24,36 @@ impl Mark {
     }
 }
 
+/// Exercises whose stored PR flags are known to equal a full recompute,
+/// because a full pass ran over them in this session. Only these may take
+/// the incremental append path: flags loaded from disk or a cloud copy are
+/// not trusted to be derived.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Verified {
+    pub all: bool,
+    pub exercises: HashSet<u64>,
+}
+impl Verified {
+    /// Bumped whenever the PR rules change, so verification recorded under
+    /// older rules is not trusted.
+    pub const RULES: u32 = 1;
+    pub fn contains(&self, exercise: u64) -> bool {
+        self.all || self.exercises.contains(&exercise)
+    }
+    pub fn absorb(&mut self, other: &Verified) {
+        self.all |= other.all;
+        self.exercises.extend(other.exercises.iter().copied());
+    }
+}
+
 pub struct Lookup<'a> {
     ix: &'a Indexes,
     exercises: Mark,
     workouts: Mark,
     wes: Mark,
     sets: Mark,
+    verified: Option<&'a Verified>,
+    newly: RefCell<Verified>,
 }
 impl<'a> Lookup<'a> {
     /// `ix` must have been built for `snap`.
@@ -39,7 +64,33 @@ impl<'a> Lookup<'a> {
             workouts: Mark::of(&snap.workouts),
             wes: Mark::of(&snap.workout_exercises),
             sets: Mark::of(&snap.sets),
+            verified: None,
+            newly: RefCell::default(),
         }
+    }
+    /// As `new`, knowing which exercises' flags are verified in `snap`.
+    pub fn with_verified(ix: &'a Indexes, snap: &Snapshot, verified: &'a Verified) -> Self {
+        Self {
+            verified: Some(verified),
+            ..Self::new(ix, snap)
+        }
+    }
+    pub fn is_verified(&self, exercise: u64) -> bool {
+        self.verified.is_some_and(|v| v.contains(exercise))
+            || self.newly.borrow().contains(exercise)
+    }
+    pub(crate) fn mark_verified(&self, exercises: impl IntoIterator<Item = u64>) {
+        self.newly.borrow_mut().exercises.extend(exercises);
+    }
+    pub(crate) fn mark_all_verified(&self) {
+        self.newly.borrow_mut().all = true;
+    }
+    /// Exercises a full pass verified while preparing this change.
+    pub fn take_verified(&self) -> Verified {
+        std::mem::take(&mut *self.newly.borrow_mut())
+    }
+    pub fn base_sets_len(&self) -> usize {
+        self.sets.len
     }
     /// Whether every indexed position still holds the row it was indexed for.
     pub fn current(&self, s: &Snapshot) -> bool {

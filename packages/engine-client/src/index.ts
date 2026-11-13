@@ -102,6 +102,8 @@ export class EngineClient {
   private entries = new Map<string, Entry>()
   private revision = 0
   private writes: Promise<void> = Promise.resolve()
+  /** Read-only captures still running; `close` waits for them. */
+  private observers = new Set<Promise<unknown>>()
   private currentGeneration: number
   constructor(private transport: EngineTransport, generation: number, revision = 0) {
     this.currentGeneration = generation
@@ -268,13 +270,34 @@ export class EngineClient {
       return result
     })
   }
+  /** Read the committed data without holding up later writes: waits for the
+   * writes accepted so far (so a capture includes them), but a set saved while
+   * it runs does not queue behind it. For whole-snapshot work the engine copies
+   * under its lock and compresses outside it: restore points, uploads, exports.
+   * Never use this for anything that changes data or sync state. */
+  observe<T>(effect: (version: {generation:number; revision:number}) => Promise<T>): Promise<T> {
+    if (this.closed) return Promise.reject(new Error('Engine session closed.'))
+    // Work accepted before close must finish, just like queued commands.
+    const run = this.writes.then(() => effect(this.version))
+    const settled = run.then(() => {}, () => {})
+    this.observers.add(settled)
+    void settled.then(() => this.observers.delete(settled))
+    return run.then(result => {
+      if (this.closed) throw new Error('Engine session closed during effect.')
+      return result
+    })
+  }
   close(): Promise<void> {
     if (this.closing) return this.closing
     this.closed = true
     for (const entry of this.entries.values()) entry.request++
     this.entries.clear()
     this.idle.clear()
-    this.closing = this.writes.then(() => this.transport.close())
+    this.closing = this.writes.then(() =>
+      this.observers.size
+        ? Promise.all([...this.observers]).then(() => this.transport.close())
+        : this.transport.close()
+    )
     return this.closing
   }
 }

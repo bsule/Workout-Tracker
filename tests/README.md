@@ -81,6 +81,7 @@ under `engine-parity/` and `scripts/engine/`.
 | `engineQueryCache.test.ts` | retained results (no blank frame on reopen, no refetch while idle, catch-up on resubscribe), `prefetch`, the paged whole-history read from one revision, calendar invalidation on exercise edits, and the query hook under StrictMode double subscribe, unmount mid-read, a key change, a covered screen, and `queryValue` throwing a failed read |
 | `engineSessions.test.ts` | one account session at a time: a late open closes before the next account starts |
 | `engineDataApi.test.ts` | imports and uploads share the command queue; replace refuses a changed local version |
+| `engineCaptureQueue.test.ts` | restore points wait for earlier saves but never hold up a later one; unchanged data skips the restore point; close waits for a capture in flight |
 | `engineSync.test.ts` | the snapshot HTTP wire (conditional ETags, byte ranges), preview not adopting the cloud etag, late results after close |
 | `engineAutoSync.test.ts` | engine sync on mobile: Sync now, the 412 prompt once per cloud etag, quota errors, preview, force push, pull, and `maybeAutoSync` (never synced, signed out, empty, not due, conflict open) |
 | `engineBrowserStorage.test.ts` | the browser worker store: atomic commits and receipts, stale writers refused, replacement generations |
