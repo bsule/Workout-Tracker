@@ -1,6 +1,6 @@
 /** Browser-worker storage adapter for the Rust prepare/persist/publish protocol. */
 export interface WriteSet {
-  base_revision: number; revision: number; generation: number; next_id: number
+  base_revision: number; base_generation: number; revision: number; generation: number; next_id: number
   header: Record<string, unknown>
   rows: {table: string; key: string; value: unknown | null; ordinal: number}[]
   receipt: {command_id: string; generation: number; [key: string]: unknown}
@@ -68,8 +68,8 @@ export class BrowserStorage {
       const current=meta.get('state')
       current.onsuccess=()=>{
         const revision=current.result?.revision ?? 0
-        const generation=current.result?.generation ?? writes.generation
-        if(revision!==writes.base_revision||generation!==writes.generation){reason=new Error('Concurrent writer; reopen required.');tx.abort();return}
+        const generation=current.result?.generation ?? writes.base_generation
+        if(revision!==writes.base_revision||generation!==writes.base_generation){reason=new Error('Concurrent writer; reopen required.');tx.abort();return}
         const records=tx.objectStore('records')
         for(const row of writes.rows) {
           if(row.value===null) records.delete([row.table,row.key])

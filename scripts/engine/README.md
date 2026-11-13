@@ -76,3 +76,21 @@ database, verifies retry/reopen behavior, removes its data and logs
 on the iPhone 17 Pro simulator. Production screens still use TypeScript.
 
 Android module `:lift-engine:compileDebugKotlin` passes. Device runtime still needs verification.
+
+## Import, restore and sync checkpoint
+
+User JSON import is tested against replace and repeated-merge TypeScript traces.
+Malformed JSON is rejected atomically even in replace mode, intentionally fixing
+the old path that could clear data for invalid input. Imports use a SHA-256
+content identity for receipts rather than retaining entire files in retry rows.
+
+Native local schema is now v2. Snapshot replacement atomically writes undo,
+records, revision, generation and sync metadata. Local restore retains ETags and
+marks data dirty; remote replacement adopts its ETag only after commit. Native
+restore-point capture preserves previous/daily slots. Late upload acknowledgement
+keeps newer edits dirty. These APIs are exposed through UniFFI; Expo backup/sync
+screens are not switched yet. Failure-injection tests exercise receipt and undo
+write rollback, and the Swift smoke checks binary snapshot/restore calls.
+
+The expanded iOS Expo smoke also passes JSON import, Uint8Array snapshot transfer,
+restore-point creation/listing and sync dirty-state checks in a cache database.

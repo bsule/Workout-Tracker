@@ -44,6 +44,12 @@ class LiftEngineModule : Module() {
     }.runOnQueue(engineScope)
 
     AsyncFunction("query") { id: String, queryJson: String -> active(id).query(queryJson) }.runOnQueue(engineScope)
+    AsyncFunction("importFile") { id: String, request: String -> active(id).importFileJson(request) }.runOnQueue(engineScope)
+    AsyncFunction("snapshotBytes") { id: String, now: String -> active(id).snapshotBytes(now) }.runOnQueue(engineScope)
+    AsyncFunction("backupBytes") { id: String, slot: String -> active(id).backupBytes(slot) }.runOnQueue(engineScope)
+    AsyncFunction("saveRestorePoint") { id: String, now: String -> active(id).saveRestorePoint(now) }.runOnQueue(engineScope)
+    AsyncFunction("restorePoints") { id: String -> active(id).restorePoints() }.runOnQueue(engineScope)
+    AsyncFunction("syncState") { id: String -> active(id).syncState() }.runOnQueue(engineScope)
     AsyncFunction("close") { id: String ->
       val current = active(id)
       current.shutdown()

@@ -170,3 +170,4 @@ pub mod export;
 pub mod fitnotes;
 pub mod names;
 pub mod replay;
+pub mod user_import;

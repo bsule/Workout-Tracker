@@ -18,6 +18,7 @@ lift-engine = { path = "../lift-engine" }
 lift-codec = { path = "../lift-codec" }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
+serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tempfile = "3"
 

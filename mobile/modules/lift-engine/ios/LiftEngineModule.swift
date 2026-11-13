@@ -42,6 +42,30 @@ public class LiftEngineModule: Module {
       return try self.active(id).query(queryJson: queryJson)
     }.runOnQueue(engineQueue)
 
+    AsyncFunction("importFile") { (id: String, request: String) throws -> String in
+      return try self.active(id).importFileJson(requestJson: request)
+    }.runOnQueue(engineQueue)
+
+    AsyncFunction("snapshotBytes") { (id: String, now: String) throws -> Data in
+      return try self.active(id).snapshotBytes(now: now)
+    }.runOnQueue(engineQueue)
+
+    AsyncFunction("backupBytes") { (id: String, slot: String) throws -> Data? in
+      return try self.active(id).backupBytes(slot: slot)
+    }.runOnQueue(engineQueue)
+
+    AsyncFunction("saveRestorePoint") { (id: String, now: String) throws in
+      try self.active(id).saveRestorePoint(now: now)
+    }.runOnQueue(engineQueue)
+
+    AsyncFunction("restorePoints") { (id: String) throws -> String in
+      return try self.active(id).restorePoints()
+    }.runOnQueue(engineQueue)
+
+    AsyncFunction("syncState") { (id: String) throws -> String in
+      return try self.active(id).syncState()
+    }.runOnQueue(engineQueue)
+
     AsyncFunction("close") { (id: String) throws in
       try self.active(id).shutdown()
       self.engine = nil

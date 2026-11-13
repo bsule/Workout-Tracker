@@ -4,10 +4,13 @@ use crate::{model::Snapshot, units::weight_key};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
-pub fn timestamp(iso: &str) -> i64 {
+pub fn timestamp_checked(iso: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(iso)
+        .ok()
         .map(|d| d.timestamp_millis())
-        .unwrap_or(0)
+}
+pub fn timestamp(iso: &str) -> i64 {
+    timestamp_checked(iso).unwrap_or(0)
 }
 
 #[derive(Clone)]

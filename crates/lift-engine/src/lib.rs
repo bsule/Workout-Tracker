@@ -18,6 +18,7 @@ pub struct Receipt {
 }
 pub struct Prepared {
     pub base_revision: u64,
+    pub base_generation: u64,
     pub snapshot: Snapshot,
     pub next_id: u64,
     pub receipt: Receipt,
@@ -61,6 +62,7 @@ impl Engine {
         lift_domain::model::validate(&snapshot)?;
         Ok(Prepared {
             base_revision: self.revision,
+            base_generation: self.generation,
             snapshot,
             next_id: ctx.next_id,
             receipt: Receipt {
@@ -72,11 +74,90 @@ impl Engine {
             },
         })
     }
+    pub fn prepare_import(
+        &self,
+        id: String,
+        format: &str,
+        input: &str,
+        replace: bool,
+        mut ctx: Context,
+    ) -> Result<Prepared, String> {
+        if id.is_empty() || id.len() > 256 {
+            return Err("Invalid import ID".into());
+        }
+        let mut snapshot = self.snapshot.clone();
+        let result = match format {
+            "json" => lift_codec::user_import::import(&mut snapshot, input, replace, &mut ctx),
+            "csv" => lift_codec::fitnotes::import(&mut snapshot, input, replace, &mut ctx),
+            _ => return Err("Unsupported import format".into()),
+        }
+        .map_err(|e| e.to_string())?;
+        let generation = if replace {
+            self.generation
+                .checked_add(1)
+                .ok_or("Generation overflow")?
+        } else {
+            self.generation
+        };
+        Ok(Prepared {
+            base_revision: self.revision,
+            base_generation: self.generation,
+            snapshot,
+            next_id: ctx.next_id,
+            receipt: Receipt {
+                command_id: id,
+                payload: import_identity(format, input, replace),
+                generation,
+                revision: self.revision.checked_add(1).ok_or("Revision overflow")?,
+                result,
+            },
+        })
+    }
+    pub fn prepare_replacement(
+        &self,
+        id: String,
+        snapshot: Snapshot,
+        payload: Value,
+    ) -> Result<Prepared, String> {
+        lift_domain::model::validate(&snapshot)?;
+        if id.is_empty() || id.len() > 256 {
+            return Err("Invalid replacement ID".into());
+        }
+        let next_id = snapshot
+            .exercises
+            .iter()
+            .map(|r| r.id)
+            .chain(snapshot.workouts.iter().map(|r| r.id))
+            .chain(snapshot.workout_exercises.iter().map(|r| r.id))
+            .chain(snapshot.sets.iter().map(|r| r.id))
+            .chain(snapshot.gyms.iter().map(|r| r.id))
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let generation = self
+            .generation
+            .checked_add(1)
+            .ok_or("Generation overflow")?;
+        let revision = self.revision.checked_add(1).ok_or("Revision overflow")?;
+        Ok(Prepared {
+            base_revision: self.revision,
+            base_generation: self.generation,
+            snapshot,
+            next_id,
+            receipt: Receipt {
+                command_id: id,
+                payload,
+                generation,
+                revision,
+                result: Value::Null,
+            },
+        })
+    }
     pub fn publish(&mut self, prepared: Prepared) -> Result<Receipt, String> {
-        if prepared.base_revision != self.revision || prepared.receipt.generation != self.generation
-        {
+        if prepared.base_revision != self.revision || prepared.base_generation != self.generation {
             return Err("Stale prepared change".into());
         }
+        self.generation = prepared.receipt.generation;
         self.snapshot = prepared.snapshot;
         self.revision = prepared.receipt.revision;
         self.next_id = prepared.next_id;
@@ -125,6 +206,7 @@ pub struct RowWrite {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WriteSet {
     pub base_revision: u64,
+    pub base_generation: u64,
     pub revision: u64,
     pub generation: u64,
     pub next_id: u64,
@@ -204,11 +286,19 @@ pub fn write_set(engine: &Engine, pending: &Prepared) -> Result<WriteSet, String
     let header = json!({"schema_version":new.schema_version,"exported_at":new.exported_at,"device_id":new.device_id,"settings":new.settings});
     Ok(WriteSet {
         base_revision: pending.base_revision,
+        base_generation: pending.base_generation,
         revision: pending.receipt.revision,
-        generation: engine.generation,
+        generation: pending.receipt.generation,
         next_id: pending.next_id,
         header,
         rows,
         receipt: pending.receipt.clone(),
     })
+}
+
+pub mod sync;
+
+pub fn import_identity(format: &str, input: &str, replace: bool) -> Value {
+    use sha2::{Digest, Sha256};
+    json!({"op":"import_file","format":format,"replace":replace,"sha256":format!("{:x}",Sha256::digest(input.as_bytes()))})
 }

@@ -46,6 +46,18 @@ mod tests {
 mod migration;
 mod storage;
 
+#[derive(uniffi::Record, serde::Deserialize)]
+pub struct ImportRequest {
+    pub command_id: String,
+    pub generation: u64,
+    pub revision: u64,
+    pub format: String,
+    pub text: String,
+    pub replace: bool,
+    pub now: String,
+    pub today: String,
+}
+
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum EngineError {
     #[error("{details}")]
@@ -97,6 +109,116 @@ impl NativeEngine {
             .execute(command_id, generation, command, now, today)
             .map_err(bridge_error)?;
         serde_json::to_string(&receipt).map_err(|e| bridge_error(e.to_string()))
+    }
+    pub fn import_file_json(&self, request_json: String) -> Result<String, EngineError> {
+        let request =
+            serde_json::from_str(&request_json).map_err(|e| bridge_error(e.to_string()))?;
+        self.import_file(request)
+    }
+    pub fn import_file(&self, request: ImportRequest) -> Result<String, EngineError> {
+        let mut guard = self
+            .store
+            .lock()
+            .map_err(|_| bridge_error("Engine invalidated".into()))?;
+        let receipt = guard
+            .as_mut()
+            .ok_or_else(|| bridge_error("Engine closed".into()))?
+            .import_file(&request)
+            .map_err(bridge_error)?;
+        serde_json::to_string(&receipt).map_err(|e| bridge_error(e.to_string()))
+    }
+    pub fn snapshot_bytes(&self, now: String) -> Result<Vec<u8>, EngineError> {
+        let guard = self
+            .store
+            .lock()
+            .map_err(|_| bridge_error("Engine invalidated".into()))?;
+        guard
+            .as_ref()
+            .ok_or_else(|| bridge_error("Engine closed".into()))?
+            .snapshot_bytes(&now)
+            .map_err(bridge_error)
+    }
+    pub fn replace_snapshot(
+        &self,
+        bytes: Vec<u8>,
+        generation: u64,
+        revision: u64,
+        remote_etag: Option<String>,
+        now: String,
+    ) -> Result<String, EngineError> {
+        let mut guard = self
+            .store
+            .lock()
+            .map_err(|_| bridge_error("Engine invalidated".into()))?;
+        let receipt = guard
+            .as_mut()
+            .ok_or_else(|| bridge_error("Engine closed".into()))?
+            .replace_snapshot(&bytes, generation, revision, remote_etag, &now)
+            .map_err(bridge_error)?;
+        serde_json::to_string(&receipt).map_err(|e| bridge_error(e.to_string()))
+    }
+    pub fn save_restore_point(&self, now: String) -> Result<(), EngineError> {
+        let mut guard = self
+            .store
+            .lock()
+            .map_err(|_| bridge_error("Engine invalidated".into()))?;
+        guard
+            .as_mut()
+            .ok_or_else(|| bridge_error("Engine closed".into()))?
+            .save_restore_point(&now)
+            .map_err(bridge_error)
+    }
+    pub fn restore_points(&self) -> Result<String, EngineError> {
+        let guard = self
+            .store
+            .lock()
+            .map_err(|_| bridge_error("Engine invalidated".into()))?;
+        let value = guard
+            .as_ref()
+            .ok_or_else(|| bridge_error("Engine closed".into()))?
+            .restore_points()
+            .map_err(bridge_error)?;
+        Ok(value.to_string())
+    }
+    pub fn backup_bytes(&self, slot: String) -> Result<Option<Vec<u8>>, EngineError> {
+        let guard = self
+            .store
+            .lock()
+            .map_err(|_| bridge_error("Engine invalidated".into()))?;
+        guard
+            .as_ref()
+            .ok_or_else(|| bridge_error("Engine closed".into()))?
+            .backup_bytes(&slot)
+            .map_err(bridge_error)
+    }
+    pub fn acknowledge_push(
+        &self,
+        generation: u64,
+        revision: u64,
+        expected_etag: Option<String>,
+        etag: String,
+        now: String,
+    ) -> Result<(), EngineError> {
+        let mut guard = self
+            .store
+            .lock()
+            .map_err(|_| bridge_error("Engine invalidated".into()))?;
+        guard
+            .as_mut()
+            .ok_or_else(|| bridge_error("Engine closed".into()))?
+            .acknowledge_push(generation, revision, expected_etag.as_deref(), &etag, &now)
+            .map_err(bridge_error)
+    }
+    pub fn sync_state(&self) -> Result<String, EngineError> {
+        let guard = self
+            .store
+            .lock()
+            .map_err(|_| bridge_error("Engine invalidated".into()))?;
+        Ok(guard
+            .as_ref()
+            .ok_or_else(|| bridge_error("Engine closed".into()))?
+            .sync_state
+            .to_string())
     }
     pub fn shutdown(&self) -> Result<(), EngineError> {
         let mut store = self

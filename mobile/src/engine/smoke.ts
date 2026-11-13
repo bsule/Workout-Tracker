@@ -15,6 +15,15 @@ export async function runEngineSmoke():Promise<void>{
     const receipt=await first.transport.execute('one',first.generation,command,now,today)
     const retry=await first.transport.execute('one',first.generation,command,now,today)
     if(receipt.revision!==retry.revision)throw new Error('Duplicate command advanced revision.')
+    const imported=await first.data.importFile({command_id:'import',generation:first.generation,revision:receipt.revision,format:'json',text:JSON.stringify({version:2,workouts:[],day_notes:[{date:'2026-01-02',text:'imported'}]}),replace:false,now,today})
+    if(imported.revision!==receipt.revision+1)throw new Error('Import did not commit.')
+    await first.data.saveRestorePoint(now)
+    const points=await first.data.restorePoints()
+    if(!points.current)throw new Error('Restore point not captured.')
+    const bytes=await first.data.snapshotBytes(now)
+    if(!(bytes instanceof Uint8Array)||bytes.byteLength===0)throw new Error('Snapshot did not cross Expo as binary bytes.')
+    const state=await first.data.syncState()
+    if(state.dirty!==true)throw new Error('Local edits not marked dirty.')
   }finally{await first.transport.close()}
   const second=await openNativeTransport('reopened-'+token,path,'synthetic',now)
   try{
@@ -22,5 +31,5 @@ export async function runEngineSmoke():Promise<void>{
     if(reply.data!=='native durable smoke')throw new Error('Native data did not survive reopen.')
   }finally{await second.transport.close()}
   await FileSystem.deleteAsync(directory,{idempotent:true})
-  console.info('[lift-engine-smoke] PASS: native commit, retry, close and reopen')
+  console.info('[lift-engine-smoke] PASS: native commit, import, binary snapshot, restore point, retry and reopen')
 }
