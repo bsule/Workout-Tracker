@@ -19,23 +19,32 @@ The app isn't in the App Store or Play Store. You build it yourself with one com
 
 To run the app locally, test it, or deploy it, see **[docs/development.md](docs/development.md)**.
 
-## Engine Architecture & Performance
+## Engine architecture and performance
 
-Workout storage, queries, and data invariants are powered by a shared Rust engine compiled natively for mobile (iOS & Android via Expo modules) and via WebAssembly for web workers.
+On mobile, workout data lives in a Rust engine (SQLite on the device, called through an Expo module). It owns storage, queries, PRs, imports, exports, restore points and sync. The web app still runs on the TypeScript store; a WebAssembly build of the same engine exists but is switched off until browser migration is done.
 
-### Performance Benchmarks (vs. Legacy TypeScript Engine)
+### TypeScript vs. Rust engine
 
-Measurements compare the legacy TypeScript engine against the release-mode Rust engine across synthetic datasets (desktop diagnostics; see [`scripts/engine/README.md`](scripts/engine/README.md)):
+Desktop measurements on one Apple Silicon Mac with synthetic data (10 exercises, 10 sets per workout, one workout per day). Phones are slower in absolute terms. Details and every size are in [`scripts/engine/README.md`](scripts/engine/README.md).
 
-| Operation | Scale (Sets) | TypeScript Baseline (mean) | Rust Engine (mean) | Improvement |
+| Operation | Sets | TypeScript | Rust | Result |
 | :--- | :--- | :--- | :--- | :--- |
-| **Index Hydration & Clones** | 1,000 | **1.08 ms** | **0.09 ms** | **~12x faster** |
-| | 10,000 | **9.69 ms** | **0.83 ms** | **~11.6x faster** |
-| | 50,000 | **50.2 ms** | **4.47 ms** | **~11.2x faster** |
-| | 100,000 | **104.5 ms** | **10.9 ms** | **~9.6x faster** |
-| **Snapshot Serialization** | 1,000 | **4.16 ms** | **0.26 ms** | **~16x faster** |
-| | 10,000 | **36.8 ms** | **2.85 ms** | **~13x faster** |
-| | 50,000 | **183.7 ms** | **15.1 ms** | **~12.1x faster** |
-| | 100,000 | **362.5 ms** | **28.6 ms** | **~12.6x faster** |
-| **Set Mutation (`addSet`)** | 100,000 | **20.8 ms** | **21.5 ms** | **Parity** (strict schema validation) |
-| **Snapshot Parse** | 100,000 | **72.1 ms** | **77.4 ms** | **Parity** |
+| Log a set | 10,000 | 1.6 ms | 0.3 ms | 4.6x faster |
+|  | 100,000 | 22.6 ms | 3.5 ms | 6.4x faster |
+| Load data and build indexes | 10,000 | 10.5 ms | 1.3 ms | 7.9x faster |
+|  | 100,000 | 107.8 ms | 16.7 ms | 6.5x faster |
+| Recompute PRs for one exercise | 10,000 | 1.6 ms | 0.6 ms | 2.5x faster |
+|  | 100,000 | 15.1 ms | 6.5 ms | 2.3x faster |
+| Save the whole snapshot (JSON + gzip) | 10,000 | 37.8 ms | 11.3 ms | 3.3x faster |
+|  | 100,000 | 378.2 ms | 129.8 ms | 2.9x faster |
+| Read a whole snapshot (gunzip + JSON) | 10,000 | 8.6 ms | 5.8 ms | 1.5x faster |
+|  | 100,000 | 81.4 ms | 59.7 ms | 1.4x faster |
+
+What that means on the phone path, at 100,000 sets:
+
+| | TypeScript store | Rust engine |
+| :--- | :--- | :--- |
+| Log a set and make it durable | 22.6 ms in memory, plus a 378 ms full-snapshot save every 30 s of activity | 4.1 ms including the SQLite commit, no periodic full save |
+| Open the app | 189 ms (read snapshot + build indexes) | 95 ms (open from SQLite) |
+| First launch after updating | n/a | 825 ms once, to migrate the old store |
+
