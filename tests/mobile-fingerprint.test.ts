@@ -19,7 +19,7 @@ it('reuses docs-only edits while invalidating source, dependencies, configuratio
   const fingerprint=()=>mobileFingerprint(root,settings)
   const original=fingerprint()
   put('README.md','new docs');expect(fingerprint()).toBe(original)
-  put('mobile/help.md','bundled help');git('add','.');expect(fingerprint()).not.toBe(original)
+  put('mobile/help.md','bundled help');git('add','mobile/help.md');expect(fingerprint()).not.toBe(original)
   git('rm','--cached','mobile/help.md');expect(fingerprint()).toBe(original)
   for(const path of ['mobile/app.ts','packages/core.ts','crates/lib.rs','package-lock.json','.github/workflows/build.yml']){
     put(path,readOriginal(path)+' changed');expect(fingerprint()).not.toBe(original);put(path,readOriginal(path))
@@ -27,7 +27,7 @@ it('reuses docs-only edits while invalidating source, dependencies, configuratio
   expect(mobileFingerprint(root,{...settings,configuration:'Debug'})).not.toBe(original)
   expect(mobileFingerprint(root,{...settings,architectures:'simulator'})).not.toBe(original)
   expect(mobileFingerprint(root,{...settings,toolchain:'xcode-27'})).not.toBe(original)
-  put('mobile/new.ts','new');git('add','.');expect(fingerprint()).not.toBe(original)
+  put('mobile/new.ts','new');git('add','mobile/new.ts');expect(fingerprint()).not.toBe(original)
   git('rm','--cached','mobile/new.ts');expect(fingerprint()).toBe(original)
   git('rm','--cached','mobile/app.ts');expect(fingerprint()).not.toBe(original)
 })
