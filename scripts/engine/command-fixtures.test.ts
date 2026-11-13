@@ -1,6 +1,8 @@
 import { test, vi } from 'vitest'
 import { writeFileSync } from 'node:fs'
 import * as M from '../../packages/core/src/store/mutations'
+import {installMemoryStorage} from '../../tests/helpers/store'
+import {configure} from '../../packages/core/src/store/persist'
 import * as Q from '../../packages/core/src/store/queries'
 import {chartPoints,repRecordRows,weightRepSets} from '../../packages/core/src/exerciseStats'
 import { buildJson } from '../../packages/core/src/export/snapshot'
@@ -10,6 +12,7 @@ import { getState, setSnapshot } from '../../packages/core/src/store/store'
 test('generate command trace',()=>{
   vi.useFakeTimers();vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'))
   try {
+    const memory=installMemoryStorage();configure('default');
     const initial=emptySnapshot('command-test');initial.gyms=[{id:1000,name:'Home'}];setSnapshot(initial)
     const steps:any[]=[]
     const step=<T>(command:any,run:()=>T):T=>{const result=run();const snapshot=getState().snapshot;
@@ -45,6 +48,7 @@ test('generate command trace',()=>{
     step({op:'delete_gym',id:1000},()=>M.deleteGym(1000))
     step({op:'create_gym',name:'New gym'},()=>M.createGym('New gym'))
     step({op:'set_day_note',date:w.date,text:''},()=>M.setDayNote(w.date,''))
+    writeFileSync('tests/engine-parity/replay.json',JSON.stringify({initial,now:new Date().toISOString(),pending:memory.pending.join('\n'),expected:getState().snapshot})+'\n')
     writeFileSync('tests/engine-parity/commands.json',JSON.stringify({initial,now:new Date().toISOString(),today:'2026-01-01',steps})+'\n')
   }finally{vi.useRealTimers()}
 })

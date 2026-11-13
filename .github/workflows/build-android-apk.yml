@@ -47,6 +47,19 @@ jobs:
         run: npm ci
         working-directory: .
 
+      - name: Install Rust toolchain and targets
+        working-directory: .
+        run: |
+          rustup show
+          rustup target add aarch64-linux-android x86_64-linux-android
+
+      - name: Install pinned Android NDK
+        run: sdkmanager "ndk;27.1.12297006"
+
+      - name: Prepare Rust native module
+        working-directory: .
+        run: node scripts/engine/prepare-native.mjs android
+
       - name: Expo prebuild (generate android/)
         run: npx expo prebuild --platform android --clean --no-install
 

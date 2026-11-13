@@ -1,0 +1,18 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+group = 'com.lift.engine'
+version = '0.1.0'
+android {
+  namespace "com.lift.engine"
+  sourceSets {
+    main {
+      java.srcDirs += 'generated/java'
+      jniLibs.srcDirs += 'generated/jniLibs'
+    }
+  }
+}
+dependencies {
+  implementation 'net.java.dev.jna:jna:5.13.0@aar'
+}

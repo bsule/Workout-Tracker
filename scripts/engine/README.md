@@ -65,3 +65,14 @@ preparing/publishing. It is a correctness foundation, not the final optimized
 storage model. History currently uses bounded offset pages; revision-bound
 cursors, generated TypeScript DTOs and selective invalidation remain pending.
 Native errors are currently string-based; structured codes remain pending.
+
+## Expo simulator verification
+
+The full iOS arm64 simulator app builds with the module linked. Start Metro
+with `EXPO_PUBLIC_ENGINE_SMOKE=1`, install the development build and launch it.
+The development-only check in `mobile/src/engine/smoke.ts` uses a temporary cache
+database, verifies retry/reopen behavior, removes its data and logs
+`[lift-engine-smoke] PASS`. It never accesses an account store. This check passed
+on the iPhone 17 Pro simulator. Production screens still use TypeScript.
+
+Android module `:lift-engine:compileDebugKotlin` passes. Device runtime still needs verification.

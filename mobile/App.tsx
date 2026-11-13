@@ -27,6 +27,11 @@ const RootNavigator = lazy(() =>
 )
 
 export default function App() {
+  useEffect(() => {
+    if (__DEV__ && process.env.EXPO_PUBLIC_ENGINE_SMOKE === "1") {
+      void import("./src/engine/smoke").then(m => m.runEngineSmoke()).catch(error => console.error("[lift-engine-smoke] FAIL", error))
+    }
+  }, [])
   const [themeReady, setThemeReady] = useState(false)
   useEffect(() => {
     let cancelled = false

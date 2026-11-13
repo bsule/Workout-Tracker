@@ -48,11 +48,11 @@ mod storage;
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum EngineError {
-    #[error("{message}")]
-    Failed { message: String },
+    #[error("{details}")]
+    Failed { details: String },
 }
 fn bridge_error(message: String) -> EngineError {
-    EngineError::Failed { message }
+    EngineError::Failed { details: message }
 }
 
 /// The Expo wrapper schedules calls onto its serial worker queue. The mutex

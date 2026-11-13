@@ -44,3 +44,8 @@ test_dbs/
 # Rust build outputs and local performance reports
 /target/
 /benchmarks/local/
+/mobile/modules/lift-engine/ios/Generated/
+/mobile/modules/lift-engine/android/generated/
+
+# Local Expo module Gradle outputs
+/mobile/modules/*/android/build/

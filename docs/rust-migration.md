@@ -9,6 +9,16 @@ Status: implementation started on `feat/rust-workout-engine`. Foundation slice a
 - Early Stage 2: weight conversion, quantization and display rounding ported; 268 deterministic TypeScript cases plus non-finite/negative-rounding checks. JSON fixture decoding uses float round-trip support to preserve exact comparisons.
 - Developer commands and measurement limits: `scripts/engine/README.md`.
 
+### Latest implementation checkpoint
+
+- Portable models, command operations, PRs, workout/history/calendar queries and chart/summary queries implemented. Command/query/PR traces compare to TypeScript fixtures.
+- Legacy gzip schema migrations v1–v9 and log replay implemented; native migration stages/verifies a separate SQLite database and keeps originals. More crash injection and recovery cases remain.
+- SQLite command commits and receipts survive reopen; duplicate command/payload checks implemented. Swift command/query-to-SQLite smoke verified.
+- Actual Wasm executes prepare/publish/discard traces; IndexedDB adapter and worker coordinator integration verified using fake-indexeddb.
+- JSON user export and first FitNotes CSV import fixture match TypeScript. JSON import, database export, complete import edge coverage, backups and sync orchestration remain pending.
+- iOS device/simulator and Android arm64/x86_64 Rust libraries compile. Expo module registered, CocoaPods installation verified; full iOS arm64 simulator app build succeeds and the installed app passes Expo → Rust → SQLite commit/retry/reopen checks. Android Kotlin wrapper compilation passes against the installed Expo dependencies. Android runtime/device checks remain pending.
+- React query client and session guards added; production screen cutover, generated DTOs, selective invalidation, cursor pagination and performance optimization remain pending. The current correctness-first engine still clones snapshots and rebuilds indexes; it is not yet the final performance architecture.
+
 ## 1. Objective and boundaries
 
 Move ownership of workout data and its business rules into Rust. Keep the mobile React Native interface, web React interface, and small platform adapters. Implement and validate mobile first while compiling and testing the portable engine for WebAssembly from the start.

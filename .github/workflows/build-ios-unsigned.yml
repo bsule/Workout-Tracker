@@ -53,6 +53,16 @@ jobs:
         run: npm ci
         working-directory: .
 
+      - name: Install Rust toolchain and targets
+        working-directory: .
+        run: |
+          rustup show
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+
+      - name: Prepare Rust native module
+        working-directory: .
+        run: node scripts/engine/prepare-native.mjs ios
+
       - name: Expo prebuild (generate ios/)
         run: npx expo prebuild --platform ios --clean --no-install
 

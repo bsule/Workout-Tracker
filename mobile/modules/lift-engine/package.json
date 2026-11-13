@@ -1,0 +1,7 @@
+{
+  "name": "lift-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rust engine bridge proof (not yet a production data store)",
+  "main": "index.ts"
+}
