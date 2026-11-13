@@ -105,7 +105,11 @@ For desktop performance diagnostics, run `npm run engine:baseline`, `cargo bench
 
 Both run `expo prebuild --clean` on the runner, so they don't depend on a local `ios/` or `android/` folder.
 
-The workflows cache npm downloads, Rust compilation and finished app artifacts.
+The workflows install only the mobile workspace and its dependencies, excluding
+unrelated web/Worker packages and root test tools. The scoped install was checked
+in an isolated checkout with mobile typechecking, Android prebuild and a complete
+Android and iOS Hermes bundle exports. They cache npm downloads, Rust compilation and
+finished app artifacts.
 Android also caches Gradle dependencies/task outputs and enables configuration
 caching. iOS caches CocoaPods downloads, Pods, Xcode build outputs and C/C++
 compilation through ccache; it uses incremental `build` rather than `clean build`.

@@ -2,11 +2,13 @@
 
 The previous GitHub-hosted Release runs at `32fac7d` provide the baseline:
 
-- iOS: [run 43382328414](https://github.com/bsule/Workout-Tracker/actions/runs/43382328414), successful.
+- iOS: [run 43382328414](https://github.com/bsule/Workout-Tracker/actions/runs/43382328414), successful: **20m 53s** for the job, including **2m 29s** preparing Rust and **14m 19s** in Xcode.
 - Android: [run 43382328221](https://github.com/bsule/Workout-Tracker/actions/runs/43382328221), failed at R8 after compiling all four template ABIs. Its APK step took 23m 45s; this is a failed-build timing, not a successful release baseline.
 
 The updated workflows reduce unnecessary work, cache compiler/dependency outputs,
-and reuse exact finished artifacts. Android now builds the two ABIs actually
+and reuse exact finished artifacts. Mobile-only npm installation avoids unrelated
+web/Worker dependencies (667 packages in the isolated local check; its 5-second
+install used the development machine's warm npm cache, not a clean CI runner). Android now builds the two ABIs actually
 provided by Rust, with an optional single-ABI input. iOS prepares only device Rust
 for IPAs. See [development](development.md#phone-builds) for inputs and cache scope.
 
