@@ -4,13 +4,31 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 
+pub fn seed_catalog() -> &'static [ExerciseRow] {
+    static CATALOG: std::sync::OnceLock<Vec<ExerciseRow>> = std::sync::OnceLock::new();
+    CATALOG.get_or_init(|| {
+        serde_json::from_str(include_str!("seeds.json")).expect("bundled seed catalog")
+    })
+}
 pub fn seeds() -> Vec<ExerciseRow> {
-    serde_json::from_str(include_str!("seeds.json")).expect("bundled seed catalog")
+    seed_catalog().to_vec()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(tag = "op", rename_all = "snake_case")]
+#[cfg_attr(feature = "typescript", ts(export_to = "commands.ts"))]
 pub enum Command {
+    LogSet {
+        date: String,
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
+        exercise_id: u64,
+        input: Value,
+    },
+    ApplyAiPlan {
+        plan: Value,
+        unit: String,
+    },
     UpdateSettings {
         patch: Value,
     },
@@ -20,52 +38,65 @@ pub enum Command {
         kind: Option<String>,
     },
     PatchExercise {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         id: u64,
         patch: Value,
     },
     DeleteExercise {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         id: u64,
     },
     CreateWorkout {
         date: String,
     },
     PatchWorkout {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         id: u64,
         patch: Value,
     },
     DeleteWorkout {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         id: u64,
     },
     AddExercise {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         workout_id: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         exercise_id: u64,
     },
     RemoveExercise {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         we_id: u64,
     },
     AddSet {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         we_id: u64,
         input: Value,
     },
     UpdateSet {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         set_id: u64,
         patch: Value,
     },
     LogPlannedSet {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         set_id: u64,
         patch: Value,
     },
     DeleteSets {
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
         ids: Vec<u64>,
     },
     CreateGym {
         name: String,
     },
     RenameGym {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         id: u64,
         name: String,
     },
     DeleteGym {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         id: u64,
     },
     SetDayNote {
@@ -73,11 +104,14 @@ pub enum Command {
         text: String,
     },
     SetExerciseNote {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         we_id: u64,
         text: String,
     },
     CopyWorkout {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         target_id: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         source_id: u64,
         with_sets: bool,
     },
@@ -122,18 +156,14 @@ fn merge<T: Serialize + for<'de> Deserialize<'de>>(
 /// The caller prepares against an isolated working version, then persists and
 /// publishes atomically. Never call directly against a visible committed state.
 fn apply(snap: &mut Snapshot, command: Command, ctx: &mut Context) -> Result<Value, String> {
-    let mut next_id = snap
-        .exercises
-        .iter()
-        .map(|r| r.id)
-        .chain(snap.workouts.iter().map(|r| r.id))
-        .chain(snap.workout_exercises.iter().map(|r| r.id))
-        .chain(snap.sets.iter().map(|r| r.id))
-        .chain(snap.gyms.iter().map(|r| r.id))
-        .max()
-        .unwrap_or(0)
-        + 1;
-    next_id = next_id.max(ctx.next_id);
+    let mut next_id = ctx.next_id;
+    if matches!(&command, Command::CreateExercise { .. }) {
+        next_id = next_id.max(seed_catalog().len() as u64 + 1);
+    }
+    let returns_set = matches!(
+        &command,
+        Command::AddSet { .. } | Command::UpdateSet { .. } | Command::LogPlannedSet { .. }
+    );
     let mut id = || {
         let n = next_id;
         next_id += 1;
@@ -141,6 +171,48 @@ fn apply(snap: &mut Snapshot, command: Command, ctx: &mut Context) -> Result<Val
     };
     let mut affected = HashSet::new();
     let result = match command {
+        Command::LogSet {
+            date,
+            exercise_id,
+            input,
+        } => {
+            let workout = apply_command_trusted(snap, Command::CreateWorkout { date }, ctx)?;
+            let wid = workout["row"]["id"]
+                .as_u64()
+                .ok_or("Workout creation failed")?;
+            let we = apply_command_trusted(
+                snap,
+                Command::AddExercise {
+                    workout_id: wid,
+                    exercise_id,
+                },
+                ctx,
+            )?;
+            let we_id = we["id"].as_u64().ok_or("Exercise attachment failed")?;
+            let set = apply_command_trusted(snap, Command::AddSet { we_id, input }, ctx)?;
+            let set_id = set["id"].as_u64().ok_or("Set creation failed")?;
+            let row = snap
+                .sets
+                .iter()
+                .find(|s| s.id == set_id)
+                .ok_or("Set missing after commit")?;
+            return Ok(
+                serde_json::json!({"workout_id":wid,"we_id":we_id,"set_id":set_id,"set":row,"merged_into_finished":workout["merged_into_finished"]}),
+            );
+        }
+
+        Command::ApplyAiPlan { plan, unit } => {
+            return crate::ai::apply(
+                snap,
+                &plan,
+                if unit == "kg" {
+                    crate::units::WeightUnit::Kg
+                } else {
+                    crate::units::WeightUnit::Lb
+                },
+                ctx,
+            )
+        }
         Command::UpdateSettings { patch } => {
             let obj = patch
                 .as_object()
@@ -537,10 +609,40 @@ fn apply(snap: &mut Snapshot, command: Command, ctx: &mut Context) -> Result<Val
         prs::recompute(snap, Some(&affected));
     }
     ctx.next_id = next_id;
+    if returns_set {
+        if let Some(row) = result["id"]
+            .as_u64()
+            .and_then(|id| snap.sets.iter().find(|s| s.id == id))
+        {
+            return Ok(json(row));
+        }
+    }
     Ok(result)
 }
 
 pub fn apply_command(
+    snap: &mut Snapshot,
+    command: Command,
+    ctx: &mut Context,
+) -> Result<Value, String> {
+    ctx.next_id = ctx.next_id.max(next_available_id(snap));
+    apply_command_trusted(snap, command, ctx)
+}
+pub fn next_available_id(snap: &Snapshot) -> u64 {
+    snap.exercises
+        .iter()
+        .map(|r| r.id)
+        .chain(snap.workouts.iter().map(|r| r.id))
+        .chain(snap.workout_exercises.iter().map(|r| r.id))
+        .chain(snap.sets.iter().map(|r| r.id))
+        .chain(snap.gyms.iter().map(|r| r.id))
+        .max()
+        .unwrap_or(0)
+        + 1
+}
+/// Engine entry point: allocator is validated on open and persisted with every
+/// commit, so ordinary edits do not rescan all record IDs to allocate one set.
+pub fn apply_command_trusted(
     snap: &mut Snapshot,
     command: Command,
     ctx: &mut Context,

@@ -1,6 +1,6 @@
 //! Transactional native record storage. Derived in-memory state is published
 //! only after SQLite commits records, revision, allocator and receipt together.
-use lift_domain::{commands::Command, model::Snapshot, queries::Query};
+use lift_domain::{commands::Command, model::Snapshot};
 use lift_engine::{Engine, Prepared, Receipt};
 use rusqlite::{Connection, OptionalExtension};
 use serde_json::{json, Value};
@@ -9,6 +9,7 @@ pub struct Store {
     db: Connection,
     pub engine: Engine,
     pub sync_state: Value,
+    pub installation_device_id: String,
 }
 fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -71,9 +72,9 @@ impl Store {
                 meta["revision"].as_u64().ok_or("Invalid revision")?,
                 meta["generation"].as_u64().ok_or("Invalid generation")?,
                 meta["next_id"].as_u64().ok_or("Invalid allocator")?,
-            )
+            )?
         } else {
-            Engine::new(Snapshot::empty(device_id, now), 0, 1, 1)
+            Engine::new(Snapshot::empty(device_id.clone(), now), 0, 1, 1)?
         };
         if uninitialized {
             let rows: i64 = db
@@ -86,7 +87,7 @@ impl Store {
             if rows != 0 {
                 return Err("Missing metadata in a nonempty database; recovery required".into());
             }
-            let s = &engine.snapshot;
+            let s = &engine.snapshot();
             let meta = json!({"header":{"schema_version":s.schema_version,"exported_at":s.exported_at,"device_id":s.device_id,"settings":s.settings},"revision":0,"generation":1,"next_id":1,"sync":sync_state});
             db.execute("INSERT INTO meta(id,value) VALUES(1,?)", [meta.to_string()])
                 .map_err(error)?;
@@ -95,6 +96,7 @@ impl Store {
             db,
             engine,
             sync_state,
+            installation_device_id: device_id,
         })
     }
     pub fn receipt(&self, id: &str) -> Result<Option<Receipt>, String> {
@@ -272,7 +274,7 @@ impl Store {
     }
     pub fn snapshot_bytes(&self, now: &str) -> Result<Vec<u8>, String> {
         lift_codec::encode(
-            &serde_json::to_value(&self.engine.snapshot).map_err(error)?,
+            &serde_json::to_value(self.engine.snapshot()).map_err(error)?,
             now,
         )
         .map_err(error)
@@ -322,7 +324,7 @@ impl Store {
             sync["dirty"] = json!(true);
         }
         let undo = self.snapshot_bytes(now)?;
-        let metadata = json!({"savedAt":now,"generation":self.engine.generation,"revision":self.engine.revision,"workouts":self.engine.snapshot.workouts.len(),"sets":self.engine.snapshot.sets.iter().filter(|s|!s.is_planned).count()});
+        let metadata = json!({"savedAt":now,"generation":self.engine.generation,"revision":self.engine.revision,"workouts":self.engine.snapshot().workouts.len(),"sets":self.engine.snapshot().sets.iter().filter(|s|!s.is_planned).count()});
         self.commit_with(
             pending,
             sync,
@@ -336,7 +338,7 @@ impl Store {
     pub fn save_restore_point(&mut self, now: &str) -> Result<(), String> {
         let time = lift_domain::prs::timestamp_checked(now).ok_or("Invalid restore point time")?;
         let bytes = self.snapshot_bytes(now)?;
-        let meta = json!({"savedAt":now,"workouts":self.engine.snapshot.workouts.len(),"sets":self.engine.snapshot.sets.iter().filter(|s|!s.is_planned).count(),"revision":self.engine.revision,"generation":self.engine.generation});
+        let meta = json!({"savedAt":now,"workouts":self.engine.snapshot().workouts.len(),"sets":self.engine.snapshot().sets.iter().filter(|s|!s.is_planned).count(),"revision":self.engine.revision,"generation":self.engine.generation});
         let tx = self.db.transaction().map_err(error)?;
         let stored: Option<String> = tx
             .query_row("SELECT value FROM meta WHERE id=1", [], |r| r.get(0))
@@ -454,9 +456,6 @@ impl Store {
         })?;
         Ok(())
     }
-    pub fn query(&self, q: Query) -> Value {
-        self.engine.query(q)
-    }
 }
 #[cfg(test)]
 mod tests {
@@ -488,7 +487,7 @@ mod tests {
         assert_eq!(receipt.revision, 1);
         drop(store);
         let mut store = Store::open(path.to_str().unwrap(), "device".into(), "now".into()).unwrap();
-        assert_eq!(store.engine.snapshot.day_notes[0].text, "keep me");
+        assert_eq!(store.engine.snapshot().day_notes[0].text, "keep me");
         assert_eq!(
             store
                 .execute("one".into(), 1, command, "now".into(), "2026-01-01".into())
@@ -558,7 +557,7 @@ mod replacement_tests {
             .unwrap();
         assert_eq!(store.sync_state["dirty"], true);
         assert_eq!(store.sync_state["etag"], "etag-1");
-        assert_eq!(store.engine.snapshot.day_notes[0].text, "new");
+        assert_eq!(store.engine.snapshot().day_notes[0].text, "new");
         let stable_undo = store.backup_bytes("undo").unwrap().unwrap();
         store
             .replace_snapshot(&undo, 3, 4, None, "restore-again")
@@ -611,12 +610,12 @@ mod import_tests {
         store.db.execute_batch("CREATE TRIGGER fail_commit BEFORE INSERT ON receipts BEGIN SELECT RAISE(ABORT,'injected failure'); END;").unwrap();
         assert!(store.import_file(&request).is_err());
         assert_eq!(store.engine.revision, 0);
-        assert!(store.engine.snapshot.sets.is_empty());
+        assert!(store.engine.snapshot().sets.is_empty());
         assert!(store.receipt("import-one").unwrap().is_none());
         store.db.execute_batch("DROP TRIGGER fail_commit;").unwrap();
         let first = store.import_file(&request).unwrap();
         assert_eq!(store.engine.revision, 1);
-        assert!(!store.engine.snapshot.sets.is_empty());
+        assert!(!store.engine.snapshot().sets.is_empty());
         assert_eq!(
             store.import_file(&request).unwrap().revision,
             first.revision
@@ -654,7 +653,7 @@ mod import_tests {
             .is_err());
         assert_eq!(store.sync_state, sync);
         assert_eq!(store.engine.generation, 1);
-        assert_eq!(store.engine.snapshot.day_notes[0].text, "b");
+        assert_eq!(store.engine.snapshot().day_notes[0].text, "b");
         assert!(store.backup_bytes("undo").unwrap().is_none());
     }
 }

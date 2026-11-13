@@ -9,3 +9,7 @@ pub mod commands;
 pub mod queries;
 
 pub mod stats;
+
+pub mod ai;
+
+pub mod table;

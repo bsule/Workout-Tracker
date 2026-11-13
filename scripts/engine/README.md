@@ -60,11 +60,12 @@ fixture trace through actual Wasm. `npm run engine:integration` then connects
 actual Wasm to the worker coordinator and fake-indexeddb transactional adapter.
 The last check is not a real-browser test.
 
-The initial Rust engine still clones snapshots and rebuilds indexes when
-preparing/publishing. It is a correctness foundation, not the final optimized
-storage model. History currently uses bounded offset pages; revision-bound
-cursors, generated TypeScript DTOs and selective invalidation remain pending.
-Native errors are currently string-based; structured codes remain pending.
+Snapshot tables use copy-on-write sharing; unchanged tables skip validation,
+row diffing and index rebuilding. Set edits still clone/rebuild their table.
+History supports bounded pages and revision-bound cursors. Model/input types
+are generated with `cargo run -p lift-domain --features typescript --bin
+lift-typescript -- packages/engine-client/src/generated`. Typed output DTOs,
+structured errors, selective invalidation and row-level updates remain pending.
 
 ## Expo simulator verification
 
@@ -94,3 +95,19 @@ write rollback, and the Swift smoke checks binary snapshot/restore calls.
 
 The expanded iOS Expo smoke also passes JSON import, Uint8Array snapshot transfer,
 restore-point creation/listing and sync dirty-state checks in a cache database.
+
+
+## Current mobile export integration
+
+JSON and FitNotes exports in `ImportExportScreen` now call native Rust when the
+module is present. The transitional read-only export functions accept the
+legacy snapshot and run SQLite/ZIP/JSON conversion on the native queue; they do
+not open another account database or introduce a second writer. Expo Go keeps
+the previous exporter. Full session cutover will remove this bulk legacy
+snapshot boundary and call `EngineDataApi` directly.
+
+The expanded installed iOS smoke passes native exports, AI response parsing,
+Uint8Array upload payloads, push acknowledgement and generation replacement.
+Rust PR prediction also compares against TypeScript for queued saves. The
+async client serializes imports/restores with ordinary commands and advances
+its generation after replacement.

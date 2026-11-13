@@ -33,6 +33,10 @@ jobs:
           npm run engine:wasm
           node scripts/engine/wasm-smoke.mjs
           npm run engine:integration
+      - name: Check generated Rust contracts
+        run: |
+          cargo run -p lift-domain --features typescript --bin lift-typescript -- packages/engine-client/src/generated
+          git diff --exit-code -- packages/engine-client/src/generated
       - name: Check client types
         run: npm --workspace @lift/engine-client run typecheck
 

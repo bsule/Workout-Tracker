@@ -5,6 +5,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 #[derive(Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum Metric {
     OneRm,
@@ -13,6 +14,7 @@ pub enum Metric {
     PerSet,
 }
 #[derive(Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub enum RepSort {
     #[serde(rename = "weight")]
     Weight,

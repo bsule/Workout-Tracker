@@ -24,3 +24,25 @@ it('serializes accepted mutations and keeps failed commands from blocking later 
   await expect(bad).rejects.toThrow('disk failed');expect((await good).command_id).toBe('good')
   expect(seen).toEqual(['bad','good']);await client.close()
 })
+
+it('serializes replacements with commands and refreshes subscribed queries in the new generation',async()=>{
+  let generation=1, revision=4
+  const events:string[]=[]
+  const transport:EngineTransport={query:async()=>({generation,revision,data:generation}),execute:async(id,gen)=>{
+    events.push(`edit:${gen}`);revision++;return {command_id:id,generation:gen,revision,result:null}
+  },close:async()=>{}}
+  const client=new EngineClient(transport,1,4)
+  const query={kind:'counts'}
+  client.subscribe('counts',query,()=>{})
+  await Promise.resolve();await Promise.resolve()
+  const replace=client.commit(async version=>{
+    events.push(`replace:${version.revision}`);generation++;revision++
+    return {command_id:'replace',generation,revision,result:null}
+  })
+  const edit=client.execute('next',{},'now','today')
+  await replace;await edit;await Promise.resolve();await Promise.resolve()
+  expect(events).toEqual(['replace:4','edit:2'])
+  expect(client.version).toEqual({generation:2,revision:6})
+  expect(client.snapshot('counts',query)).toEqual({status:'ready',value:2,revision:6})
+  await client.close()
+})

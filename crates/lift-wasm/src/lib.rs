@@ -29,13 +29,14 @@ impl BrowserEngine {
         let snapshot = serde_json::from_str(snapshot_json).map_err(error)?;
         lift_domain::model::validate(&snapshot).map_err(error)?;
         Ok(Self {
-            engine: Engine::new(snapshot, revision.into(), generation.into(), next_id as u64),
+            engine: Engine::new(snapshot, revision.into(), generation.into(), next_id as u64)
+                .map_err(error)?,
             pending: None,
         })
     }
     pub fn query(&self, query_json: &str) -> Result<String, JsValue> {
         let query = serde_json::from_str(query_json).map_err(error)?;
-        serde_json::to_string(&self.engine.query(query)).map_err(error)
+        serde_json::to_string(&self.engine.try_query(query).map_err(error)?).map_err(error)
     }
     pub fn prepare(
         &mut self,

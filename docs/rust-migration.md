@@ -1,23 +1,27 @@
 # Rust workout engine migration plan
 
-Status: implementation started on `feat/rust-workout-engine`. Foundation slice added: pinned Rust workspace, portable unit rules with TypeScript fixtures, desktop baseline harness and Rust CI gates. Production mobile/web still use the existing engine; native bindings, storage migration and application cutover remain pending.
+Status: implementation in progress on `feat/rust-workout-engine`. Native Rust and Wasm engines compile and pass parity/integration checks. Mobile JSON/FitNotes exports use Rust in builds containing the native module; Expo Go retains the existing read-only exporter. Production workout screens still use the TypeScript store. The complete migration is not finished.
 
-### Implementation progress
+### Verified implementation
 
-- Stage 0: existing 44 suites / 577 tests pass; mobile, web and Worker typechecks pass. Synthetic desktop timings captured with raw local samples. Device release benchmarks, concentrated-history cases and full call-site inventory remain pending.
-- Stage 1: Rust 1.85.1 pinned, native desktop tests and Wasm compilation verified. CI gates added. Native library now cross-compiles for iOS arm64 device and simulator. Pinned UniFFI generates Swift/Kotlin bindings, and a compiled Swift executable calls Rust successfully. Expo wrapper is staged outside autolinking; installable Expo integration, background execution proof and Android NDK compilation remain pending.
-- Early Stage 2: weight conversion, quantization and display rounding ported; 268 deterministic TypeScript cases plus non-finite/negative-rounding checks. JSON fixture decoding uses float round-trip support to preserve exact comparisons.
-- Developer commands and measurement limits: `scripts/engine/README.md`.
+- Portable models, atomic set logging, commands, current/historical/position PRs, queued-save PR prediction, search, workouts, calendar, paged history, charts, statistics, AI history selection and AI plan parsing/application.
+- TypeScript-generated compatibility fixtures cover units, command/query traces, PRs, legacy gzip schemas v1–v9, pending replay, JSON imports/exports, FitNotes CSV imports and database export. AI applies each accepted day atomically, intentionally improving the old partial-day failure behavior.
+- Native SQLite commits records, allocator, revision, retry identity, dirty state and replacement undo atomically. Repeated command IDs cannot create duplicate sets. Original legacy files remain after staged migration. Future schemas and unreadable legacy stores do not become empty databases.
+- Local restore retains cloud ETags and becomes dirty. Remote replacement adopts its ETag only after commit. Uploads capture a committed revision and installation device ID; late acknowledgements preserve newer edits. Previous/daily/undo restore-point APIs are implemented.
+- Expo module autolinking, iOS device/simulator Rust builds, full iOS simulator app build/runtime and Android arm64/x86_64 Rust builds/Kotlin compilation are verified. The iOS development smoke checks commit, retry, import, native exports, AI parsing, binary upload/acknowledgement, generation replacement, restore-point capture and reopen in a synthetic cache database. Android runtime remains unverified.
+- Actual Wasm runs parity traces and prepare/publish/discard checks. The worker connects Wasm to transactional IndexedDB in integration tests using fake-indexeddb. This does not establish real-browser or production-web cutover.
+- Session client rejects stale/closed account responses; accepted writes and bulk operations drain in one queue. Dataset replacement advances the client generation and refreshes active queries. Generated TypeScript input/model contracts and an async workout/data API are available.
+- History pages select dates before allocating set DTOs; cursors bind exercise, generation and revision. Snapshot tables use copy-on-write sharing. Untouched tables skip validation/diff/index reconstruction. Opening validates the complete snapshot and allocator. Set edits still clone/rebuild the set table and compute affected PRs; record-level updates and device performance measurements remain outstanding.
 
-### Latest implementation checkpoint
+### Remaining acceptance work
 
-- Portable models, command operations, PRs, workout/history/calendar queries and chart/summary queries implemented. Command/query/PR traces compare to TypeScript fixtures.
-- Legacy gzip schema migrations v1–v9 and log replay implemented; native migration stages/verifies a separate SQLite database and keeps originals. More crash injection and recovery cases remain.
-- SQLite command commits and receipts survive reopen; duplicate command/payload checks implemented. Swift command/query-to-SQLite smoke verified.
-- Actual Wasm executes prepare/publish/discard traces; IndexedDB adapter and worker coordinator integration verified using fake-indexeddb.
-- JSON user export and first FitNotes CSV import fixture match TypeScript. JSON import now covers replace/repeated merge, same-day sessions and v1 notes against TypeScript fixtures. Native replace/import commits save undo and preserve generation/ETag semantics; restore-point rotation and late-upload acknowledgement rules are tested. Database export, complete import edge coverage and app-level backup/sync wiring remain pending.
-- iOS device/simulator and Android arm64/x86_64 Rust libraries compile. Expo module registered, CocoaPods installation verified; full iOS arm64 simulator app build succeeds and the installed app passes Expo → Rust → SQLite commit/import/binary-snapshot/restore-point/retry/reopen checks. Android Kotlin wrapper compilation passes against the installed Expo dependencies. Android runtime/device checks remain pending.
-- React query client and session guards added; production screen cutover, generated DTOs, selective invalidation, cursor pagination and performance optimization remain pending. The current correctness-first engine still clones snapshots and rebuilds indexes; it is not yet the final performance architecture.
+1. Complete the mobile screen/provider/timer cutover to the async API. Remove direct snapshot/index/mutation access and preserve optimistic save/error behavior. Keep one authoritative writer throughout activation.
+2. Wire imports, backups, sync/conflict policy and AI screens to the session data API; preserve legacy backup/clock metadata on first migration. Native exports already run through Rust without opening a second writer.
+3. Add real-browser worker loading, verified legacy browser migration, origin-wide lock ownership and complete web screen integration.
+4. Finish typed output DTOs/errors, selective query invalidation, cancellable bulk jobs, row-level storage/index updates and required failure/recovery cases.
+5. Run release/device performance comparisons, Android runtime checks, complete offline end-to-end flows and final implementation review. Do not claim speedups from desktop or bridge tests alone.
+
+Developer commands and measurement limits: `scripts/engine/README.md`.
 
 ## 1. Objective and boundaries
 

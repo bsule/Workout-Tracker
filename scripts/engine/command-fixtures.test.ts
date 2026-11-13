@@ -1,9 +1,11 @@
 import { test, vi } from 'vitest'
 import { writeFileSync } from 'node:fs'
+import {predictPrFlags} from '../../packages/core/src/store/prs'
 import * as M from '../../packages/core/src/store/mutations'
 import {installMemoryStorage} from '../../tests/helpers/store'
 import {configure} from '../../packages/core/src/store/persist'
 import * as Q from '../../packages/core/src/store/queries'
+import {buildHistoryContext} from '../../packages/core/src/ai/buildContext'
 import {chartPoints,repRecordRows,weightRepSets} from '../../packages/core/src/exerciseStats'
 import { buildJson } from '../../packages/core/src/export/snapshot'
 import { emptySnapshot } from '../../packages/core/src/store/schema'
@@ -24,6 +26,10 @@ test('generate command trace',()=>{
         for(const metric of ['one_rm','heaviest','avg_weight','per_set'] as const) for(const unit of ['kg','lb'] as const) queries.push({query:{kind:'chart',exercise_id:id,metric,set_index:1,unit} as any,expected:chartPoints(days,metric,1,unit) as any})
         for(const sort of ['weight','oneRm','reps','recent'] as const) queries.push({query:{kind:'summary',exercise_id:id,sort,set_number:null} as any,expected:repRecordRows(weightRepSets(days),sort) as any})
       }
+      for(const we of snapshot.workout_exercises) for(const [weight,reps] of [[56.699,5],[56.7,7],[120,5],[200,1]]) for(const queued of [[],[{weight:56.7,reps:7}]]) {
+        queries.push({query:{kind:'predict_pr',exercise_id:we.exercise_id,we_id:we.id,weight,reps,queued} as any,expected:predictPrFlags(getState().indexes,we.exercise_id,we.id,weight,reps,queued) as any})
+      }
+      queries.push({query:{kind:'ai_history',from:'2025-01-01',to:'2026-01-01',unit:'lb',exercise_ids:[]} as any,expected:buildHistoryContext({from:'2025-01-01',to:'2026-01-01',weightUnit:'lb'}) as any})
       steps.push({command,expected:structuredClone(snapshot),queries,exported:JSON.parse(buildJson(snapshot,"fixture"))});return result}
     step({op:'update_settings',patch:{weight_unit:'kg'}},()=>M.updateSettings({weight_unit:'kg'}))
     const ex=step({op:'create_exercise',name:' Custom bench ',category:'chest',kind:null},()=>M.createExercise({name:' Custom bench ',category:'chest'}))

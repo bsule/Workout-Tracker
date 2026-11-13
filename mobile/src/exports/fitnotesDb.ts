@@ -1,9 +1,6 @@
-/**
- * Mobile wrapper around @lift/core's buildFitnotesDb. Lazily loads sql.js's
- * pure-JS asm.js build (Hermes has no WASM) so the ~1.5MB bundle cost only
- * lands when the user taps "Export FitNotes DB".
- */
-
+/** Native SQLite/ZIP export in development and release builds. Expo Go keeps
+ * the legacy exporter until its custom native module can be loaded. */
+import { nativeExports } from "../../modules/lift-engine"
 import { Asset } from "expo-asset"
 import * as FileSystem from "expo-file-system/legacy"
 import {
@@ -100,15 +97,15 @@ export async function writeFitnotesDbToCache(snap: Snapshot): Promise<{
   uri: string
   filename: string
 }> {
-  // Hermes lacks WASM; sql.js asm.js is pure JS and runs everywhere.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const initSqlJs = require("sql.js/dist/sql-asm.js") as (
-    cfg?: unknown
-  ) => Promise<SqlJsModule>
-  const SQL = await initSqlJs()
   const skeletonBytes = await loadSkeletonBytes()
-
-  const bytes = await buildFitnotesDb(snap, { skeletonBytes, SQL })
+  const bytes = nativeExports.available
+    ? await nativeExports.fitnotes(snap, skeletonBytes)
+    : await (async () => {
+        // Expo Go has no custom native modules. This compatibility path is
+        // removed when the complete app requires an engine development build.
+        const initSqlJs = require("sql.js/dist/sql-asm.js") as (cfg?: unknown) => Promise<SqlJsModule>
+        return buildFitnotesDb(snap, { skeletonBytes, SQL: await initSqlJs() })
+      })()
 
   const filename = timestampedFitnotesDbName()
   const uri = (FileSystem.cacheDirectory ?? "") + filename

@@ -1,7 +1,8 @@
 //! Portable prepare/persist/publish coordinator. A host must persist a prepared
 //! change before publishing it. No filesystem or platform dependencies.
+use lift_domain::table::Table;
 use lift_domain::{
-    commands::{apply_command, Command, Context},
+    commands::{apply_command_trusted, next_available_id, Command, Context},
     model::Snapshot,
     queries::{Indexes, Query},
 };
@@ -24,22 +25,32 @@ pub struct Prepared {
     pub receipt: Receipt,
 }
 pub struct Engine {
-    pub snapshot: Snapshot,
+    snapshot: Snapshot,
     pub revision: u64,
     pub generation: u64,
     pub next_id: u64,
     indexes: Indexes,
 }
 impl Engine {
-    pub fn new(snapshot: Snapshot, revision: u64, generation: u64, next_id: u64) -> Self {
+    pub fn snapshot(&self) -> &Snapshot {
+        &self.snapshot
+    }
+    pub fn new(
+        snapshot: Snapshot,
+        revision: u64,
+        generation: u64,
+        next_id: u64,
+    ) -> Result<Self, String> {
+        lift_domain::model::validate(&snapshot)?;
+        let next_id = next_id.max(next_available_id(&snapshot));
         let indexes = Indexes::build(&snapshot);
-        Self {
+        Ok(Self {
             snapshot,
             revision,
             generation,
             next_id,
             indexes,
-        }
+        })
     }
     pub fn prepare(
         &self,
@@ -58,8 +69,8 @@ impl Engine {
             today,
             next_id: self.next_id,
         };
-        let result = apply_command(&mut snapshot, command, &mut ctx)?;
-        lift_domain::model::validate(&snapshot)?;
+        let result = apply_command_trusted(&mut snapshot, command, &mut ctx)?;
+        lift_domain::model::validate_changed(&snapshot, &self.snapshot)?;
         Ok(Prepared {
             base_revision: self.revision,
             base_generation: self.generation,
@@ -92,6 +103,7 @@ impl Engine {
             _ => return Err("Unsupported import format".into()),
         }
         .map_err(|e| e.to_string())?;
+        lift_domain::model::validate_changed(&snapshot, &self.snapshot)?;
         let generation = if replace {
             self.generation
                 .checked_add(1)
@@ -157,12 +169,66 @@ impl Engine {
         if prepared.base_revision != self.revision || prepared.base_generation != self.generation {
             return Err("Stale prepared change".into());
         }
+        self.indexes.update(&self.snapshot, &prepared.snapshot);
         self.generation = prepared.receipt.generation;
         self.snapshot = prepared.snapshot;
         self.revision = prepared.receipt.revision;
         self.next_id = prepared.next_id;
-        self.indexes = Indexes::build(&self.snapshot);
         Ok(prepared.receipt)
+    }
+    pub fn try_query(&self, q: Query) -> Result<Value, String> {
+        if let Query::HistoryPage {
+            exercise_id,
+            cursor,
+            limit,
+        } = q
+        {
+            #[derive(Serialize, Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Cursor {
+                generation: u64,
+                revision: u64,
+                exercise_id: u64,
+                offset: usize,
+            }
+            let offset = if let Some(cursor) = cursor {
+                if cursor.len() > 512 {
+                    return Err("Invalid history cursor".into());
+                }
+                let cursor: Cursor =
+                    serde_json::from_str(&cursor).map_err(|_| "Invalid history cursor")?;
+                if cursor.generation != self.generation
+                    || cursor.revision != self.revision
+                    || cursor.exercise_id != exercise_id
+                {
+                    return Err("History changed; restart pagination".into());
+                }
+                cursor.offset
+            } else {
+                0
+            };
+            let (total, items) =
+                self.indexes
+                    .history_page(&self.snapshot, exercise_id, offset, limit.clamp(1, 100));
+            let end = offset.saturating_add(items.len());
+            let next_cursor = if end < total {
+                Some(
+                    serde_json::to_string(&Cursor {
+                        generation: self.generation,
+                        revision: self.revision,
+                        exercise_id,
+                        offset: end,
+                    })
+                    .map_err(|e| e.to_string())?,
+                )
+            } else {
+                None
+            };
+            return Ok(
+                json!({"revision":self.revision,"generation":self.generation,"data":{"total":total,"items":items,"next_cursor":next_cursor}}),
+            );
+        }
+        Ok(self.query(q))
     }
     pub fn query(&self, q: Query) -> Value {
         json!({"revision":self.revision,"generation":self.generation,"data":lift_domain::queries::query(&self.snapshot,&self.indexes,q)})
@@ -174,7 +240,8 @@ mod tests {
     use super::*;
     #[test]
     fn prepared_change_is_invisible_until_published() {
-        let mut engine = Engine::new(Snapshot::empty("device".into(), "now".into()), 0, 1, 1);
+        let mut engine =
+            Engine::new(Snapshot::empty("device".into(), "now".into()), 0, 1, 1).unwrap();
         let pending = engine
             .prepare(
                 "c1".into(),
@@ -217,11 +284,14 @@ pub struct WriteSet {
 pub fn write_set(engine: &Engine, pending: &Prepared) -> Result<WriteSet, String> {
     fn diff<T: Serialize + PartialEq, K: std::hash::Hash + Eq + ToString>(
         table: &str,
-        old: &[T],
-        new: &[T],
+        old: &Table<T>,
+        new: &Table<T>,
         key_of: impl Fn(&T) -> K,
         rows: &mut Vec<RowWrite>,
     ) -> Result<(), String> {
+        if old.shares_storage_with(new) {
+            return Ok(());
+        }
         let mut keys = std::collections::HashSet::new();
         for (i, row) in new.iter().enumerate() {
             let key = key_of(row);

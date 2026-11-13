@@ -13,11 +13,26 @@ public class LiftEngineModule: Module {
     return engine
   }
 
+  private func version(_ value: Double) throws -> UInt64 {
+    guard value.isFinite, value >= 0, value.rounded() == value, value <= 9007199254740991 else {
+      throw NSError(domain: "LiftEngine", code: 3, userInfo: [NSLocalizedDescriptionKey: "Invalid engine version"])
+    }
+    return UInt64(value)
+  }
+
   public func definition() -> ModuleDefinition {
     Name("LiftEngine")
     AsyncFunction("info") { () -> [String: Any] in
       let info = engineInfo()
       return ["protocolVersion": info.protocolVersion, "engineVersion": info.engineVersion]
+    }.runOnQueue(engineQueue)
+
+    AsyncFunction("exportLegacyFitnotes") { (snapshotJson: String, skeleton: Data, now: String) throws -> Data in
+      return try exportLegacyFitnotes(snapshotJson: snapshotJson, skeleton: skeleton, now: now)
+    }.runOnQueue(engineQueue)
+
+    AsyncFunction("exportLegacyJson") { (snapshotJson: String, username: String, now: String) throws -> String in
+      return try exportLegacyJson(snapshotJson: snapshotJson, username: username, now: now)
     }.runOnQueue(engineQueue)
 
     AsyncFunction("open") { (id: String, path: String, deviceId: String, now: String) throws -> String in
@@ -64,6 +79,31 @@ public class LiftEngineModule: Module {
 
     AsyncFunction("syncState") { (id: String) throws -> String in
       return try self.active(id).syncState()
+    }.runOnQueue(engineQueue)
+
+    AsyncFunction("prepareUpload") { (id: String, now: String) throws -> [String: Any] in
+      let value = try self.active(id).prepareUpload(now: now)
+      return ["bytes": value.bytes, "generation": value.generation, "revision": value.revision, "etag": value.etag as Any, "deviceId": value.deviceId]
+    }.runOnQueue(engineQueue)
+
+    AsyncFunction("replaceSnapshot") { (id: String, bytes: Data, generation: Double, revision: Double, etag: String?, now: String) throws -> String in
+      return try self.active(id).replaceSnapshot(bytes: bytes, generation: self.version(generation), revision: self.version(revision), remoteEtag: etag, now: now)
+    }.runOnQueue(engineQueue)
+
+    AsyncFunction("acknowledgePush") { (id: String, generation: Double, revision: Double, expectedEtag: String?, etag: String, now: String) throws in
+      try self.active(id).acknowledgePush(generation: self.version(generation), revision: self.version(revision), expectedEtag: expectedEtag, etag: etag, now: now)
+    }.runOnQueue(engineQueue)
+
+    AsyncFunction("exportFitnotes") { (id: String, skeleton: Data, now: String) throws -> Data in
+      return try self.active(id).exportFitnotes(skeleton: skeleton, now: now)
+    }.runOnQueue(engineQueue)
+
+    AsyncFunction("parseAiPlan") { (id: String, raw: String) throws -> String in
+      return try self.active(id).parseAiPlan(raw: raw)
+    }.runOnQueue(engineQueue)
+
+    AsyncFunction("exportJson") { (id: String, username: String, now: String) throws -> String in
+      return try self.active(id).exportJson(username: username, now: now)
     }.runOnQueue(engineQueue)
 
     AsyncFunction("close") { (id: String) throws in

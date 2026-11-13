@@ -25,10 +25,27 @@ const asError = (error: unknown) => error instanceof Error ? error : new Error(S
 
 export class EngineClient {
   private closed = false
+  private closing: Promise<void> | null = null
   private entries = new Map<string, Entry>()
   private revision = 0
   private writes: Promise<void> = Promise.resolve()
-  constructor(private transport: EngineTransport, readonly generation: number) {}
+  private currentGeneration: number
+  constructor(private transport: EngineTransport, generation: number, revision = 0) {
+    this.currentGeneration = generation
+    this.revision = revision
+  }
+  get generation() { return this.currentGeneration }
+  get version() { return { generation: this.generation, revision: this.revision } }
+  private invalidate(replaced: boolean) {
+    for (const [key, entry] of this.entries) {
+      entry.request++
+      if (replaced) {
+        entry.state = { status: 'loading' }
+        for (const listener of entry.listeners) listener()
+      }
+      if (entry.listeners.size) void this.refresh(key, entry)
+    }
+  }
 
   private entry(key: string, query: unknown) {
     let entry = this.entries.get(key)
@@ -76,28 +93,61 @@ export class EngineClient {
     }
     for (const listener of entry.listeners) listener()
   }
+  async query<T>(query: unknown): Promise<T> {
+    if(this.closed)throw new Error('Engine session closed.')
+    await this.writes
+    if(this.closed)throw new Error('Engine session closed during query.')
+    const result=await this.transport.query(query)
+    if(this.closed)throw new Error('Engine session closed during query.')
+    if(result.generation!==this.generation)throw new Error('Dataset changed; reopen session.')
+    if(result.revision<this.revision)throw new Error('Stale query result; retry.')
+    return result.data as T
+  }
   execute<T>(commandId: string, command: unknown, now: string, today: string): Promise<Receipt<T>> {
     if (this.closed) return Promise.reject(new Error('Engine session closed.'))
+    return this.commit(() => this.transport.execute(commandId, this.generation, command, now, today) as Promise<Receipt<T>>)
+  }
+  /** Imports/restores share the mutation queue with ordinary edits. The effect
+   * receives the version when it starts, after previously accepted edits drain.
+   * Replacement receipts advance the generation and invalidate old views. */
+  commit<T>(effect: (version: {generation:number; revision:number}) => Promise<Receipt<T>>): Promise<Receipt<T>> {
+    if (this.closed) return Promise.reject(new Error('Engine session closed.'))
     const run = this.writes.then(async () => {
-      const reply = await this.transport.execute(commandId, this.generation, command, now, today)
+      const base = this.version
+      const reply = await effect(base)
       if (this.closed) throw new Error('Engine session closed during command.')
-      if (reply.generation !== this.generation) throw new Error('Dataset changed during command.')
+      if (!Number.isSafeInteger(reply.generation) || !Number.isSafeInteger(reply.revision) ||
+          reply.generation < base.generation || reply.generation > base.generation + 1 || reply.revision < 0) {
+        throw new Error('Invalid engine commit version.')
+      }
+      const replaced = reply.generation !== base.generation
+      // Deduplicated old command receipts can carry an earlier revision.
+      if (replaced && reply.revision <= base.revision) throw new Error('Invalid replacement revision.')
+      this.currentGeneration = reply.generation
       this.revision = Math.max(this.revision, reply.revision)
-      // Initial correctness-first invalidation; affected-key narrowing follows
-      // the production screen inventory and invalidation parity tests.
-      for (const [key, entry] of this.entries) if (entry.listeners.size) void this.refresh(key, entry)
-      return reply as Receipt<T>
+      this.invalidate(replaced)
+      return reply
     })
     this.writes = run.then(() => {}, () => {})
     return run
   }
-  async close() {
-    if (this.closed) return
-    // Accepted mutations drain, but their late responses cannot refresh UI.
+  /** Serialize storage effects with commands, without treating a read or sync
+   * acknowledgement as a new data revision. Never hold this across HTTP. */
+  effect<T>(effect: (version: {generation:number; revision:number}) => Promise<T>): Promise<T> {
+    if (this.closed) return Promise.reject(new Error('Engine session closed.'))
+    const run = this.writes.then(() => effect(this.version))
+    this.writes = run.then(() => {}, () => {})
+    return run.then(result => {
+      if (this.closed) throw new Error('Engine session closed during effect.')
+      return result
+    })
+  }
+  close(): Promise<void> {
+    if (this.closing) return this.closing
     this.closed = true
     for (const entry of this.entries.values()) entry.request++
     this.entries.clear()
-    await this.writes
-    await this.transport.close()
+    this.closing = this.writes.then(() => this.transport.close())
+    return this.closing
   }
 }

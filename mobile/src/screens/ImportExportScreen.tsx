@@ -13,6 +13,7 @@ import * as DocumentPicker from "expo-document-picker"
 import * as FileSystem from "expo-file-system/legacy"
 import * as Sharing from "expo-sharing"
 import { buildJson, timestampedExportName } from "@lift/core/export"
+import { nativeExports } from "../../modules/lift-engine"
 import { writeFitnotesDbToCache } from "../exports/fitnotesDb"
 import {
   importFitnotesCsv,
@@ -78,7 +79,9 @@ export function ImportExportScreen() {
     setError(null)
     try {
       const filename = timestampedExportName("json")
-      const body = buildJson(snapshot, user?.username ?? "")
+      const body = nativeExports.available
+        ? await nativeExports.json(snapshot, user?.username ?? "")
+        : buildJson(snapshot, user?.username ?? "")
       await shareFile(filename, body, "application/json")
     } catch (e) {
       setError(e instanceof Error ? e.message : "Export failed.")

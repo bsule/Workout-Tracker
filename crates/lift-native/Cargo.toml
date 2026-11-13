@@ -21,6 +21,8 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tempfile = "3"
+zip = { version = "=0.6.6", default-features = false, features = ["deflate"] }
+uuid = { version = "=1.10.0", features = ["v4"] }
 
 [[bin]]
 name = "lift-bindgen"

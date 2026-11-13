@@ -72,7 +72,7 @@ pub fn migrate_if_needed(target: &Path, device: &str, now: &str) -> Result<(), S
     store.checkpoint()?;
     drop(store);
     let verified = Store::open(path, device.into(), now.into())?;
-    if verified.engine.snapshot != snapshot {
+    if verified.engine.snapshot() != &snapshot {
         return Err("Legacy migration verification failed".into());
     }
     verified.checkpoint()?;
@@ -110,8 +110,8 @@ mod tests {
         .unwrap();
         migrate_if_needed(&db, "new-device", "now").unwrap();
         let store = Store::open(db.to_str().unwrap(), "new-device".into(), "now".into()).unwrap();
-        assert_eq!(store.engine.snapshot.day_notes[0].text, "replayed");
-        assert_eq!(store.engine.snapshot.device_id, "legacy-device");
+        assert_eq!(store.engine.snapshot().day_notes[0].text, "replayed");
+        assert_eq!(store.engine.snapshot().device_id, "legacy-device");
         assert_eq!(fs::read(dir.path().join("snapshot.bin")).unwrap(), bytes);
         assert!(dir.path().join("pending.log").exists());
         drop(store);

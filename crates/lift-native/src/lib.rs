@@ -43,8 +43,46 @@ mod tests {
     }
 }
 
+/// Transitional read-only boundary for clients that still own the legacy
+/// dataset. Export processing runs on the native queue without opening or
+/// writing a second account store. Removed after the full session cutover.
+#[uniffi::export]
+pub fn export_legacy_fitnotes(
+    snapshot_json: String,
+    skeleton: Vec<u8>,
+    now: String,
+) -> Result<Vec<u8>, EngineError> {
+    let snapshot: lift_domain::model::Snapshot =
+        serde_json::from_str(&snapshot_json).map_err(|e| bridge_error(e.to_string()))?;
+    lift_domain::model::validate(&snapshot).map_err(bridge_error)?;
+    fitnotes_export::build(&snapshot, &skeleton, &now).map_err(bridge_error)
+}
+
+#[uniffi::export]
+pub fn export_legacy_json(
+    snapshot_json: String,
+    username: String,
+    now: String,
+) -> Result<String, EngineError> {
+    let snapshot: lift_domain::model::Snapshot =
+        serde_json::from_str(&snapshot_json).map_err(|e| bridge_error(e.to_string()))?;
+    lift_domain::model::validate(&snapshot).map_err(bridge_error)?;
+    serde_json::to_string_pretty(&lift_codec::export::user_json(&snapshot, &username, &now))
+        .map_err(|e| bridge_error(e.to_string()))
+}
+
+mod fitnotes_export;
 mod migration;
 mod storage;
+
+#[derive(uniffi::Record)]
+pub struct UploadSnapshot {
+    pub bytes: Vec<u8>,
+    pub generation: u64,
+    pub revision: u64,
+    pub etag: Option<String>,
+    pub device_id: String,
+}
 
 #[derive(uniffi::Record, serde::Deserialize)]
 pub struct ImportRequest {
@@ -126,6 +164,51 @@ impl NativeEngine {
             .import_file(&request)
             .map_err(bridge_error)?;
         serde_json::to_string(&receipt).map_err(|e| bridge_error(e.to_string()))
+    }
+    pub fn export_fitnotes(&self, skeleton: Vec<u8>, now: String) -> Result<Vec<u8>, EngineError> {
+        let guard = self
+            .store
+            .lock()
+            .map_err(|_| bridge_error("Engine invalidated".into()))?;
+        let store = guard
+            .as_ref()
+            .ok_or_else(|| bridge_error("Engine closed".into()))?;
+        fitnotes_export::build(store.engine.snapshot(), &skeleton, &now).map_err(bridge_error)
+    }
+    pub fn parse_ai_plan(&self, raw: String) -> Result<String, EngineError> {
+        let value = lift_domain::ai::parse(&raw).map_err(bridge_error)?;
+        serde_json::to_string(&value).map_err(|e| bridge_error(e.to_string()))
+    }
+    pub fn export_json(&self, username: String, now: String) -> Result<String, EngineError> {
+        let guard = self
+            .store
+            .lock()
+            .map_err(|_| bridge_error("Engine invalidated".into()))?;
+        let store = guard
+            .as_ref()
+            .ok_or_else(|| bridge_error("Engine closed".into()))?;
+        serde_json::to_string_pretty(&lift_codec::export::user_json(
+            store.engine.snapshot(),
+            &username,
+            &now,
+        ))
+        .map_err(|e| bridge_error(e.to_string()))
+    }
+    pub fn prepare_upload(&self, now: String) -> Result<UploadSnapshot, EngineError> {
+        let guard = self
+            .store
+            .lock()
+            .map_err(|_| bridge_error("Engine invalidated".into()))?;
+        let store = guard
+            .as_ref()
+            .ok_or_else(|| bridge_error("Engine closed".into()))?;
+        Ok(UploadSnapshot {
+            bytes: store.snapshot_bytes(&now).map_err(bridge_error)?,
+            generation: store.engine.generation,
+            revision: store.engine.revision,
+            etag: store.sync_state["etag"].as_str().map(str::to_string),
+            device_id: store.installation_device_id.clone(),
+        })
     }
     pub fn snapshot_bytes(&self, now: String) -> Result<Vec<u8>, EngineError> {
         let guard = self
@@ -237,6 +320,7 @@ impl NativeEngine {
         let store = store
             .as_ref()
             .ok_or_else(|| bridge_error("Engine closed".into()))?;
-        serde_json::to_string(&store.query(query)).map_err(|e| bridge_error(e.to_string()))
+        serde_json::to_string(&store.engine.try_query(query).map_err(bridge_error)?)
+            .map_err(|e| bridge_error(e.to_string()))
     }
 }

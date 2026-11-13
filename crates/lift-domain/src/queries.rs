@@ -1,4 +1,8 @@
-use crate::{commands::seeds, model::*, prs::timestamp};
+use crate::{
+    commands::{seed_catalog, seeds},
+    model::*,
+    prs::timestamp,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -14,34 +18,64 @@ pub struct Indexes {
 }
 impl Indexes {
     pub fn build(s: &Snapshot) -> Self {
-        let mut ix = Self::default();
-        for (i, w) in s.workouts.iter().enumerate() {
-            ix.workouts.insert(w.id, i);
-            ix.dates.insert(w.date.clone(), i);
+        let mut indexes = Self::default();
+        indexes.rebuild(s, true, true, true, true);
+        indexes
+    }
+    pub fn update(&mut self, old: &Snapshot, new: &Snapshot) {
+        self.rebuild(
+            new,
+            !old.workouts.shares_storage_with(&new.workouts),
+            !old.exercises.shares_storage_with(&new.exercises),
+            !old.workout_exercises
+                .shares_storage_with(&new.workout_exercises),
+            !old.sets.shares_storage_with(&new.sets),
+        );
+    }
+    fn rebuild(&mut self, s: &Snapshot, workouts: bool, exercises: bool, wes: bool, sets: bool) {
+        if workouts {
+            self.workouts.clear();
+            self.dates.clear();
+            for (i, w) in s.workouts.iter().enumerate() {
+                self.workouts.insert(w.id, i);
+                self.dates.insert(w.date.clone(), i);
+            }
         }
-        for (i, e) in s.exercises.iter().enumerate() {
-            ix.exercises.insert(e.id, i);
+        if exercises {
+            self.exercises.clear();
+            for (i, e) in s.exercises.iter().enumerate() {
+                self.exercises.insert(e.id, i);
+            }
         }
-        for (i, we) in s.workout_exercises.iter().enumerate() {
-            ix.wes.entry(we.workout_id).or_default().push(i);
-            ix.by_exercise.entry(we.exercise_id).or_default().push(i);
+        if wes {
+            self.wes.clear();
+            self.by_exercise.clear();
+            for (i, we) in s.workout_exercises.iter().enumerate() {
+                self.wes.entry(we.workout_id).or_default().push(i);
+                self.by_exercise.entry(we.exercise_id).or_default().push(i);
+            }
+            for rows in self.wes.values_mut() {
+                rows.sort_by_key(|i| s.workout_exercises[*i].order);
+            }
         }
-        for rows in ix.wes.values_mut() {
-            rows.sort_by_key(|i| s.workout_exercises[*i].order);
+        if sets {
+            self.sets.clear();
+            for (i, set) in s.sets.iter().enumerate() {
+                self.sets
+                    .entry(set.workout_exercise_id)
+                    .or_default()
+                    .push(i);
+            }
+            for rows in self.sets.values_mut() {
+                rows.sort_by_key(|i| s.sets[*i].order);
+            }
         }
-        for (i, set) in s.sets.iter().enumerate() {
-            ix.sets.entry(set.workout_exercise_id).or_default().push(i);
-        }
-        for rows in ix.sets.values_mut() {
-            rows.sort_by_key(|i| s.sets[*i].order);
-        }
-        ix
     }
     fn exercise(&self, s: &Snapshot, id: u64) -> ExerciseRow {
         self.exercises
             .get(&id)
             .map(|i| s.exercises[*i].clone())
-            .or_else(|| seeds().into_iter().find(|e| e.id == id))
+            .or_else(|| seed_catalog().iter().find(|e| e.id == id).cloned())
             .unwrap_or(ExerciseRow {
                 id,
                 name: format!("Unknown exercise (#{id})"),
@@ -59,7 +93,7 @@ impl Indexes {
             .map(|i| &s.sets[*i])
             .collect()
     }
-    fn workout(&self, s: &Snapshot, w: &WorkoutRow) -> Value {
+    pub fn workout(&self, s: &Snapshot, w: &WorkoutRow) -> Value {
         let exercises:Vec<_>=self.wes.get(&w.id).into_iter().flatten().map(|i|{
             let we=&s.workout_exercises[*i];
             json!({"id":we.id,"order":we.order,"note":we.note,"exercise":exercise_view(&self.exercise(s,we.exercise_id)),"sets":self.sets(s,we.id).into_iter().map(set_view).collect::<Vec<_>>()})
@@ -74,14 +108,87 @@ impl Indexes {
         };
         json!({"id":w.id,"date":w.date,"status":w.status,"started_at":w.started_at,"finished_at":w.finished_at,"duration_seconds":duration,"gym":w.gym,"notes":w.notes,"created_at":w.created_at,"exercises":exercises})
     }
+    pub fn predict_pr(
+        &self,
+        s: &Snapshot,
+        exercise_id: u64,
+        we_id: u64,
+        weight: f64,
+        reps: f64,
+        queued: &[Effort],
+    ) -> Value {
+        let logged = self
+            .sets(s, we_id)
+            .into_iter()
+            .filter(|s| !s.is_planned && s.weight.is_some() && s.reps.is_some())
+            .count();
+        let position = logged + queued.len() + 1;
+        let weight = crate::units::weight_key(Some(weight));
+        let beats = |w: f64, r: f64| crate::units::weight_key(Some(w)) >= weight && r >= reps;
+        let mut is_pr = !queued.iter().any(|q| beats(q.weight, q.reps));
+        let mut is_pos_pr = true;
+        for i in self.by_exercise.get(&exercise_id).into_iter().flatten() {
+            let we = &s.workout_exercises[*i];
+            let mut sets = self.sets(s, we.id);
+            sets.sort_by_key(|s| (s.order, s.id));
+            let mut pos = 0;
+            for set in sets {
+                if set.is_planned {
+                    continue;
+                }
+                let (Some(w), Some(r)) = (set.weight, set.reps) else {
+                    continue;
+                };
+                pos += 1;
+                if beats(w, r) {
+                    is_pr = false;
+                    if pos == position {
+                        is_pos_pr = false;
+                    }
+                }
+                if !is_pr && !is_pos_pr {
+                    break;
+                }
+            }
+        }
+        json!({"isPr":is_pr,"isPosPr":is_pos_pr,"position":position})
+    }
     pub fn history(&self, s: &Snapshot, id: u64) -> Vec<Value> {
+        self.history_page(s, id, 0, usize::MAX).1
+    }
+    /// Select day keys before materializing set DTOs. Paging a long history
+    /// must not allocate every historical set merely to return its first page.
+    pub fn history_page(
+        &self,
+        s: &Snapshot,
+        id: u64,
+        offset: usize,
+        limit: usize,
+    ) -> (usize, Vec<Value>) {
+        let mut dates = std::collections::BTreeSet::new();
+        for i in self.by_exercise.get(&id).into_iter().flatten() {
+            let we = &s.workout_exercises[*i];
+            let Some(w) = self.workouts.get(&we.workout_id).map(|i| &s.workouts[*i]) else {
+                continue;
+            };
+            if w.status != "planned"
+                && self
+                    .sets
+                    .get(&we.id)
+                    .is_some_and(|rows| rows.iter().any(|i| !s.sets[*i].is_planned))
+            {
+                dates.insert(w.date.as_str());
+            }
+        }
+        let total = dates.len();
+        let selected: HashSet<_> = dates.into_iter().rev().skip(offset).take(limit).collect();
         let mut days: BTreeMap<String, Value> = BTreeMap::new();
         for i in self.by_exercise.get(&id).into_iter().flatten() {
             let we = &s.workout_exercises[*i];
             let Some(w) = self.workouts.get(&we.workout_id).map(|i| &s.workouts[*i]) else {
                 continue;
             };
-            if w.status == "planned" {
+            if w.status == "planned" || !selected.contains(w.date.as_str()) {
                 continue;
             }
             let mut sets = self.sets(s, we.id);
@@ -130,7 +237,7 @@ impl Indexes {
                 });
             }
         }
-        days.into_values().rev().collect()
+        (total, days.into_values().rev().collect())
     }
 }
 fn exercise_view(e: &ExerciseRow) -> Value {
@@ -186,38 +293,81 @@ pub fn fuzzy_match(text: &str, query: &str) -> bool {
         })
 }
 #[derive(Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct Effort {
+    pub weight: f64,
+    pub reps: f64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Query {
     Workout {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         id: u64,
     },
     WorkoutByDate {
         date: String,
     },
     History {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         exercise_id: u64,
         offset: usize,
+        limit: usize,
+    },
+    HistoryPage {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
+        exercise_id: u64,
+        cursor: Option<String>,
         limit: usize,
     },
     Calendar {
         month: String,
     },
+    Exercise {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
+        id: u64,
+    },
+    PlannedDates {
+        month: String,
+    },
     Exercises {
+        sort: Option<String>,
         q: Option<String>,
         category: Option<String>,
         limit: usize,
         today: String,
     },
     Chart {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         exercise_id: u64,
         metric: crate::stats::Metric,
         set_index: usize,
         unit: String,
     },
     Summary {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         exercise_id: u64,
         sort: crate::stats::RepSort,
+        #[cfg_attr(feature = "typescript", ts(type = "number | null"))]
         set_number: Option<i64>,
+    },
+    AiHistory {
+        from: String,
+        to: String,
+        unit: String,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        exercise_ids: Vec<u64>,
+    },
+    PredictPr {
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
+        exercise_id: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
+        we_id: u64,
+        weight: f64,
+        reps: f64,
+        queued: Vec<Effort>,
     },
     Settings,
     Counts,
@@ -243,9 +393,10 @@ pub fn query(s: &Snapshot, ix: &Indexes, q: Query) -> Value {
             offset,
             limit,
         } => {
-            let days = ix.history(s, exercise_id);
-            json!({"total":days.len(),"items":days.into_iter().skip(offset).take(limit.min(100)).collect::<Vec<_>>()})
+            let (total, items) = ix.history_page(s, exercise_id, offset, limit.min(100));
+            json!({"total":total,"items":items})
         }
+        Query::HistoryPage { .. } => Value::Null, // revision-bound; handled by Engine
         Query::Chart {
             exercise_id,
             metric,
@@ -266,6 +417,54 @@ pub fn query(s: &Snapshot, ix: &Indexes, q: Query) -> Value {
             sort,
             set_number,
         } => crate::stats::records(&ix.history(s, exercise_id), sort, set_number),
+        Query::AiHistory {
+            from,
+            to,
+            unit,
+            exercise_ids,
+        } => {
+            let filter: HashSet<_> = exercise_ids.into_iter().collect();
+            let mut workouts: Vec<_> = s
+                .workouts
+                .iter()
+                .filter(|w| w.date >= from && w.date <= to && w.status != "planned")
+                .collect();
+            workouts.sort_by(|a, b| b.date.cmp(&a.date));
+            let mut days = vec![];
+            let unit = if unit == "kg" {
+                crate::units::WeightUnit::Kg
+            } else {
+                crate::units::WeightUnit::Lb
+            };
+            for w in workouts {
+                let mut exercises = vec![];
+                for i in ix.wes.get(&w.id).into_iter().flatten() {
+                    let we = &s.workout_exercises[*i];
+                    if !filter.is_empty() && !filter.contains(&we.exercise_id) {
+                        continue;
+                    }
+                    let ex = ix.exercise(s, we.exercise_id);
+                    let sets:Vec<_>=ix.sets(s,we.id).into_iter().filter(|s|!s.is_planned).map(|s|json!({"weight":s.weight.map(|w|crate::units::round_for_display(crate::units::from_kg(Some(w),unit))),"reps":s.reps,"distance_m":s.distance_m,"time_seconds":s.time_seconds})).collect();
+                    if !sets.is_empty() {
+                        exercises.push(json!({"name":ex.name,"category":ex.category,"kind":ex.kind,"sets":sets}));
+                    }
+                }
+                if !exercises.is_empty() {
+                    days.push(json!({"date":w.date,"exercises":exercises}));
+                }
+                if days.len() == 40 {
+                    break;
+                }
+            }
+            json!(days)
+        }
+        Query::PredictPr {
+            exercise_id,
+            we_id,
+            weight,
+            reps,
+            queued,
+        } => ix.predict_pr(s, exercise_id, we_id, weight, reps, &queued),
         Query::Settings => s.settings.clone(),
         Query::Counts => {
             json!({"workouts":s.workouts.len(),"sets":s.sets.iter().filter(|s|!s.is_planned).count(),"exercises":s.exercises.iter().filter(|e|e.is_deleted!=Some(true)).count()})
@@ -297,7 +496,15 @@ pub fn query(s: &Snapshot, ix: &Indexes, q: Query) -> Value {
             }
             Value::Object(out)
         }
+        Query::Exercise { id } => exercise_view(&ix.exercise(s, id)),
+        Query::PlannedDates { month } => json!(s
+            .workouts
+            .iter()
+            .filter(|w| w.status == "planned" && w.date.starts_with(&format!("{month}-")))
+            .map(|w| w.date.clone())
+            .collect::<Vec<_>>()),
         Query::Exercises {
+            sort,
             q,
             category,
             limit,
@@ -318,9 +525,8 @@ pub fn query(s: &Snapshot, ix: &Indexes, q: Query) -> Value {
             });
             all.sort_by_key(|e| e.name.to_lowercase());
             let today = chrono::NaiveDate::parse_from_str(&today, "%Y-%m-%d").ok();
-            let result: Vec<_> = all
+            let mut result: Vec<_> = all
                 .into_iter()
-                .take(limit.min(500))
                 .map(|e| {
                     let mut count = 0;
                     let mut last: Option<&str> = None;
@@ -349,6 +555,20 @@ pub fn query(s: &Snapshot, ix: &Indexes, q: Query) -> Value {
                     v
                 })
                 .collect();
+            if sort.as_deref() == Some("last_performed") {
+                result.sort_by(|a, b| {
+                    match (
+                        a["last_performed_days_ago"].as_i64(),
+                        b["last_performed_days_ago"].as_i64(),
+                    ) {
+                        (Some(a), Some(b)) => a.cmp(&b),
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        _ => std::cmp::Ordering::Equal,
+                    }
+                });
+            }
+            result.truncate(limit.min(500));
             json!(result)
         }
     }

@@ -1,11 +1,16 @@
 import { requireOptionalNativeModule } from 'expo-modules-core'
+import type { DataTransport } from '../../../packages/engine-client/src/data-api'
+import type { UploadSnapshot } from '../../../packages/engine-client/src/sync-client'
 import type { EngineTransport, QueryReply, Receipt } from '../../../packages/engine-client/src/index'
 
 export interface ImportRequest {
   command_id: string; generation: number; revision: number
   format: 'json' | 'csv'; text: string; replace: boolean; now: string; today: string
 }
-export interface NativeDataApi {
+export interface NativeDataApi extends DataTransport {
+  parseAiPlan(raw: string): Promise<unknown>
+  exportJson(username: string, now: string): Promise<string>
+  exportFitnotes(skeleton: Uint8Array, now: string): Promise<Uint8Array>
   importFile(request: ImportRequest): Promise<Receipt>
   snapshotBytes(now: string): Promise<Uint8Array>
   backupBytes(slot: string): Promise<Uint8Array | null>
@@ -15,7 +20,15 @@ export interface NativeDataApi {
 }
 interface EngineInfo { protocolVersion: number; engineVersion: string }
 interface NativeModule {
+  exportLegacyFitnotes(snapshotJson: string, skeleton: Uint8Array, now: string): Promise<Uint8Array>
+  exportLegacyJson(snapshotJson: string, username: string, now: string): Promise<string>
   info(): Promise<EngineInfo>
+  parseAiPlan(session: string, raw: string): Promise<string>
+  exportJson(session: string, username: string, now: string): Promise<string>
+  prepareUpload(session: string, now: string): Promise<UploadSnapshot>
+  replaceSnapshot(session: string, bytes: Uint8Array, generation: number, revision: number, etag: string | null, now: string): Promise<string>
+  acknowledgePush(session: string, generation: number, revision: number, expectedEtag: string | null, etag: string, now: string): Promise<void>
+  exportFitnotes(session: string, skeleton: Uint8Array, now: string): Promise<Uint8Array>
   importFile(session: string, request: string): Promise<string>
   snapshotBytes(session: string, now: string): Promise<Uint8Array>
   backupBytes(session: string, slot: string): Promise<Uint8Array | null>
@@ -45,6 +58,12 @@ export async function openNativeTransport(session:string,path:string,deviceId:st
     close:()=>native.close(session),
   }
   const data: NativeDataApi={
+    parseAiPlan:async raw=>JSON.parse(await native.parseAiPlan(session,raw)),
+    exportJson:(username,now)=>native.exportJson(session,username,now),
+    prepareUpload:now=>native.prepareUpload(session,now),
+    replaceSnapshot:async(bytes,generation,revision,etag,now)=>JSON.parse(await native.replaceSnapshot(session,bytes,generation,revision,etag,now)),
+    acknowledgePush:(generation,revision,expectedEtag,etag,now)=>native.acknowledgePush(session,generation,revision,expectedEtag,etag,now),
+    exportFitnotes:(skeleton,now)=>native.exportFitnotes(session,skeleton,now),
     importFile:async(request)=>JSON.parse(await native.importFile(session,encode(request))),
     snapshotBytes:now=>native.snapshotBytes(session,now),
     backupBytes:slot=>native.backupBytes(session,slot),
@@ -53,4 +72,17 @@ export async function openNativeTransport(session:string,path:string,deviceId:st
     syncState:async()=>JSON.parse(await native.syncState(session)),
   }
   return {transport,data,generation:opened.generation,revision:opened.revision}
+}
+
+/** Read-only migration bridge: never opens another authoritative store. */
+export const nativeExports = {
+  available: !!native,
+  fitnotes(snapshot: unknown, skeleton: Uint8Array, now = new Date().toISOString()) {
+    if (!native) throw new Error('Rust export requires a development build with lift-engine included.')
+    return native.exportLegacyFitnotes(encode(snapshot), skeleton, now)
+  },
+  json(snapshot: unknown, username: string, now = new Date().toISOString()) {
+    if (!native) throw new Error('Rust export requires a development build with lift-engine included.')
+    return native.exportLegacyJson(encode(snapshot), username, now)
+  },
 }

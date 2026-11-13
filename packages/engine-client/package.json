@@ -15,6 +15,12 @@
     "./react": "./src/react.ts",
     "./browser-storage": "./src/browser-storage.ts",
     "./worker-runtime": "./src/worker-runtime.ts",
-    "./worker-transport": "./src/worker-transport.ts"
+    "./worker-transport": "./src/worker-transport.ts",
+    "./sync-client": "./src/sync-client.ts",
+    "./snapshot-http": "./src/snapshot-http.ts",
+    "./session": "./src/session.ts",
+    "./workout-api": "./src/workout-api.ts",
+    "./types": "./src/types.ts",
+    "./data-api": "./src/data-api.ts"
   }
 }
