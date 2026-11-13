@@ -30,3 +30,7 @@ path = "src/bin/bindgen.rs"
 required-features = ["bindgen"]
 [dev-dependencies]
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+[[bench]]
+name = "native_bench"
+harness = false

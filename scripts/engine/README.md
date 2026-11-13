@@ -24,7 +24,51 @@ median desktop timings were 378 ms serialize, 82 ms parse, 30 ms addSet and
 17 ms affected-exercise PR calculation. Dataset distributes sets over ten
 exercises; concentrated histories and real release-device measurements remain.
 
-Current Rust scope includes models, commands, PRs, queries, chart/summary data,
+### Benchmark results (TypeScript baseline vs. Rust engine)
+
+Desktop diagnostics from one Apple Silicon Mac, release build, means of five timed samples. They are not phone numbers. Reproduce with `npm run engine:baseline`, `cargo bench -p lift-engine --bench engine_bench` and `cargo bench -p lift-native --bench native_bench`.
+
+| Operation | Sets | TypeScript (mean) | Rust (mean) | Result |
+| :--- | :--- | :--- | :--- | :--- |
+| `cloneAndHydrateIndexes` (load into a ready engine) | 1,000 | 1.14 ms | 0.22 ms | 5.1x faster |
+|  | 10,000 | 10.51 ms | 1.34 ms | 7.9x faster |
+|  | 50,000 | 59.43 ms | 7.62 ms | 7.8x faster |
+|  | 100,000 | 107.81 ms | 16.66 ms | 6.5x faster |
+| `prExercise` (full PR pass, one exercise) | 1,000 | 0.20 ms | 0.17 ms | 1.2x faster |
+|  | 10,000 | 1.57 ms | 0.62 ms | 2.5x faster |
+|  | 50,000 | 6.79 ms | 3.16 ms | 2.1x faster |
+|  | 100,000 | 15.06 ms | 6.55 ms | 2.3x faster |
+| `history` (one exercise, whole history) | 1,000 | 0.03 ms | 0.36 ms | 12.1x slower |
+|  | 10,000 | 0.13 ms | 2.18 ms | 17.3x slower |
+|  | 50,000 | 2.85 ms | 2.27 ms | 1.3x faster |
+|  | 100,000 | 1.15 ms | 2.57 ms | 2.2x slower |
+| `addSet` (in memory: command, PRs, diff, publish) | 1,000 | 0.25 ms | 0.21 ms | 1.2x faster |
+|  | 10,000 | 1.59 ms | 0.34 ms | 4.6x faster |
+|  | 50,000 | 9.89 ms | 1.69 ms | 5.8x faster |
+|  | 100,000 | 22.58 ms | 3.54 ms | 6.4x faster |
+| `serialize` (JSON + gzip) | 1,000 | 4.57 ms | 1.53 ms | 3.0x faster |
+|  | 10,000 | 37.76 ms | 11.31 ms | 3.3x faster |
+|  | 50,000 | 191.87 ms | 56.21 ms | 3.4x faster |
+|  | 100,000 | 378.22 ms | 129.76 ms | 2.9x faster |
+| `parse` (gunzip + JSON + version check) | 1,000 | 1.19 ms | 0.73 ms | 1.6x faster |
+|  | 10,000 | 8.59 ms | 5.81 ms | 1.5x faster |
+|  | 50,000 | 38.69 ms | 29.73 ms | 1.3x faster |
+|  | 100,000 | 81.44 ms | 59.67 ms | 1.4x faster |
+
+`history` returns a JSON value ready for the bridge, while the TypeScript query returns cached objects, so that row is not like for like.
+
+Native durable path (medians):
+
+| Sets | First open with legacy migration | Cold open from SQLite | `addSet` including SQLite commit |
+| :--- | :--- | :--- | :--- |
+| 1,000 | 26 ms | 2.7 ms | 0.25 ms |
+| 10,000 | 72 ms | 8.8 ms | 0.44 ms |
+| 50,000 | 329 ms | 38.9 ms | 1.63 ms |
+| 100,000 | 825 ms | 95.1 ms | 4.06 ms |
+
+The old mobile save path also paid a debounced full-snapshot flush (the `serialize` row) every 30 seconds of activity. The engine commits only the changed rows, so that flush no longer exists.
+
+Rust scope includes models, commands, PRs, queries, chart/summary data,
 legacy gzip migrations/replay, JSON export, FitNotes CSV import, SQLite storage
 and Wasm prepare/persist/publish. Negative-half rounding matches JavaScript.
 
