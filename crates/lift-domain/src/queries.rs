@@ -209,11 +209,76 @@ impl Indexes {
             .map(|i| &s.sets[*i])
             .collect()
     }
+    fn exercise_view_ref<'a>(&self, s: &'a Snapshot, id: u64) -> ExerciseView<'a> {
+        if let Some(&i) = self.exercises.get(&id) {
+            let e = &s.exercises[i];
+            return ExerciseView {
+                id: e.id,
+                name: std::borrow::Cow::Borrowed(&e.name),
+                category: &e.category,
+                kind: &e.kind,
+                is_custom: e.is_custom,
+            };
+        }
+        if let Some(e) = seed_catalog().iter().find(|e| e.id == id) {
+            return ExerciseView {
+                id: e.id,
+                name: std::borrow::Cow::Borrowed(&e.name),
+                category: &e.category,
+                kind: &e.kind,
+                is_custom: e.is_custom,
+            };
+        }
+        ExerciseView {
+            id,
+            name: std::borrow::Cow::Owned(format!("Unknown exercise (#{id})")),
+            category: "chest",
+            kind: "weight_reps",
+            is_custom: true,
+        }
+    }
     pub fn workout(&self, s: &Snapshot, w: &WorkoutRow) -> Value {
-        let exercises:Vec<_>=self.wes.get(&w.id).into_iter().flatten().map(|i|{
-            let we=&s.workout_exercises[*i];
-            json!({"id":we.id,"order":we.order,"note":we.note,"exercise":exercise_view(&self.exercise(s,we.exercise_id)),"sets":self.sets(s,we.id).into_iter().map(set_view).collect::<Vec<_>>()})
-        }).collect();
+        let exercises: Vec<_> = self
+            .wes
+            .get(&w.id)
+            .into_iter()
+            .flatten()
+            .map(|&i| {
+                let we = &s.workout_exercises[i];
+                let sets = self
+                    .sets
+                    .get(&we.id)
+                    .into_iter()
+                    .flatten()
+                    .map(|&j| {
+                        let st = &s.sets[j];
+                        SetView {
+                            id: st.id,
+                            weight: st.weight,
+                            reps: st.reps,
+                            distance_m: st.distance_m,
+                            distance_unit_display: &st.distance_unit_display,
+                            time_seconds: st.time_seconds,
+                            is_planned: st.is_planned,
+                            is_pr: st.is_pr,
+                            was_pr: st.was_pr,
+                            is_position_pr: st.is_position_pr,
+                            was_position_pr: st.was_position_pr,
+                            note: &st.note,
+                            order: st.order,
+                            created_at: &st.created_at,
+                        }
+                    })
+                    .collect();
+                WorkoutExerciseView {
+                    id: we.id,
+                    order: we.order,
+                    note: &we.note,
+                    exercise: self.exercise_view_ref(s, we.exercise_id),
+                    sets,
+                }
+            })
+            .collect();
         let duration = match (&w.started_at, &w.finished_at) {
             (Some(a), Some(b)) => Some(
                 ((timestamp(b) - timestamp(a)) as f64 / 1000.0)
@@ -222,7 +287,19 @@ impl Indexes {
             ),
             _ => None,
         };
-        json!({"id":w.id,"date":w.date,"status":w.status,"started_at":w.started_at,"finished_at":w.finished_at,"duration_seconds":duration,"gym":w.gym,"notes":w.notes,"created_at":w.created_at,"exercises":exercises})
+        let view = WorkoutView {
+            id: w.id,
+            date: &w.date,
+            status: &w.status,
+            started_at: w.started_at.as_deref(),
+            finished_at: w.finished_at.as_deref(),
+            duration_seconds: duration,
+            gym: &w.gym,
+            notes: &w.notes,
+            created_at: &w.created_at,
+            exercises,
+        };
+        serde_json::to_value(&view).unwrap()
     }
     pub fn predict_pr(
         &self,
@@ -356,6 +433,57 @@ impl Indexes {
         (total, days.into_values().rev().collect())
     }
 }
+
+#[derive(Serialize)]
+struct ExerciseView<'a> {
+    id: u64,
+    name: std::borrow::Cow<'a, str>,
+    category: &'a str,
+    kind: &'a str,
+    is_custom: bool,
+}
+
+#[derive(Serialize)]
+struct SetView<'a> {
+    id: u64,
+    weight: Option<f64>,
+    reps: Option<f64>,
+    distance_m: Option<f64>,
+    distance_unit_display: &'a str,
+    time_seconds: Option<f64>,
+    is_planned: bool,
+    is_pr: bool,
+    was_pr: bool,
+    is_position_pr: bool,
+    was_position_pr: bool,
+    note: &'a str,
+    order: i64,
+    created_at: &'a str,
+}
+
+#[derive(Serialize)]
+struct WorkoutExerciseView<'a> {
+    id: u64,
+    order: i64,
+    note: &'a str,
+    exercise: ExerciseView<'a>,
+    sets: Vec<SetView<'a>>,
+}
+
+#[derive(Serialize)]
+struct WorkoutView<'a> {
+    id: u64,
+    date: &'a str,
+    status: &'a str,
+    started_at: Option<&'a str>,
+    finished_at: Option<&'a str>,
+    duration_seconds: Option<f64>,
+    gym: &'a str,
+    notes: &'a str,
+    created_at: &'a str,
+    exercises: Vec<WorkoutExerciseView<'a>>,
+}
+
 fn exercise_view(e: &ExerciseRow) -> Value {
     json!({"id":e.id,"name":e.name,"category":e.category,"kind":e.kind,"is_custom":e.is_custom})
 }
@@ -690,6 +818,175 @@ pub fn query(s: &Snapshot, ix: &Indexes, q: Query) -> Value {
             }
             let _ = limit;
             json!(result)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workout_by_date_serialization_parity() {
+        let mut snap = Snapshot::empty("device-1".into(), "now".into());
+        snap.exercises.push(ExerciseRow {
+            id: 1,
+            name: "Bench Press".into(),
+            category: "chest".into(),
+            kind: "weight_reps".into(),
+            is_custom: false,
+            is_deleted: None,
+        });
+        snap.workouts.push(WorkoutRow {
+            id: 10,
+            date: "2026-11-12".into(),
+            status: "done".into(),
+            started_at: Some("2026-11-12T10:00:00.000Z".into()),
+            finished_at: Some("2026-11-12T11:00:00.000Z".into()),
+            gym: "Iron Works".into(),
+            notes: "Great workout".into(),
+            created_at: "2026-11-12T09:59:00.000Z".into(),
+        });
+        snap.workout_exercises.push(WorkoutExerciseRow {
+            id: 100,
+            workout_id: 10,
+            exercise_id: 1,
+            order: 0,
+            note: "Warm up well".into(),
+        });
+        snap.workout_exercises.push(WorkoutExerciseRow {
+            id: 101,
+            workout_id: 10,
+            exercise_id: 9999, // unknown exercise
+            order: 1,
+            note: "".into(),
+        });
+        snap.sets.push(SetRow {
+            id: 1000,
+            workout_exercise_id: 100,
+            weight: Some(225.0),
+            reps: Some(5.0),
+            distance_m: None,
+            distance_unit_display: "".into(),
+            time_seconds: None,
+            is_planned: false,
+            is_pr: true,
+            was_pr: false,
+            is_position_pr: true,
+            was_position_pr: false,
+            note: "Felt light".into(),
+            order: 0,
+            created_at: "2026-11-12T10:05:00.000Z".into(),
+        });
+
+        let ix = Indexes::build(&snap);
+        let res = query(
+            &snap,
+            &ix,
+            Query::WorkoutByDate {
+                date: "2026-11-12".into(),
+            },
+        );
+        assert_ne!(res, Value::Null);
+
+        assert_eq!(res["id"], 10);
+        assert_eq!(res["date"], "2026-11-12");
+        assert_eq!(res["status"], "done");
+        assert_eq!(res["started_at"], "2026-11-12T10:00:00.000Z");
+        assert_eq!(res["finished_at"], "2026-11-12T11:00:00.000Z");
+        assert_eq!(res["duration_seconds"], 3600.0);
+        assert_eq!(res["gym"], "Iron Works");
+        assert_eq!(res["notes"], "Great workout");
+        assert_eq!(res["created_at"], "2026-11-12T09:59:00.000Z");
+
+        let exercises = res["exercises"].as_array().unwrap();
+        assert_eq!(exercises.len(), 2);
+
+        // Exercise 1 (known)
+        assert_eq!(exercises[0]["id"], 100);
+        assert_eq!(exercises[0]["order"], 0);
+        assert_eq!(exercises[0]["note"], "Warm up well");
+        assert_eq!(exercises[0]["exercise"]["id"], 1);
+        assert_eq!(exercises[0]["exercise"]["name"], "Bench Press");
+        assert_eq!(exercises[0]["exercise"]["category"], "chest");
+        assert_eq!(exercises[0]["exercise"]["kind"], "weight_reps");
+        assert_eq!(exercises[0]["exercise"]["is_custom"], false);
+
+        let sets = exercises[0]["sets"].as_array().unwrap();
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets[0]["id"], 1000);
+        assert_eq!(sets[0]["weight"], 225.0);
+        assert_eq!(sets[0]["reps"], 5.0);
+        assert_eq!(sets[0]["distance_m"], Value::Null);
+        assert_eq!(sets[0]["is_planned"], false);
+        assert_eq!(sets[0]["is_pr"], true);
+        assert_eq!(sets[0]["was_pr"], false);
+        assert_eq!(sets[0]["is_position_pr"], true);
+        assert_eq!(sets[0]["was_position_pr"], false);
+        assert_eq!(sets[0]["note"], "Felt light");
+        assert_eq!(sets[0]["order"], 0);
+        assert_eq!(sets[0]["created_at"], "2026-11-12T10:05:00.000Z");
+        // Verify workout_exercise_id is NOT present in set DTO
+        assert!(sets[0].get("workout_exercise_id").is_none());
+
+        // Exercise 2 (unknown fallback)
+        assert_eq!(exercises[1]["id"], 101);
+        assert_eq!(exercises[1]["exercise"]["name"], "Unknown exercise (#9999)");
+        assert_eq!(exercises[1]["exercise"]["is_custom"], true);
+        assert_eq!(exercises[1]["sets"].as_array().unwrap().len(), 0);
+
+        // Non-existent date returns Null
+        let not_found = query(
+            &snap,
+            &ix,
+            Query::WorkoutByDate {
+                date: "1999-01-01".into(),
+            },
+        );
+        assert_eq!(not_found, Value::Null);
+
+        // Compare every field against the previous Value-based implementation,
+        // including catalog fallback and absent/invalid workout timestamps.
+        for exercise_id in [1, seed_catalog().last().unwrap().id, 9999] {
+            snap.workout_exercises[0].exercise_id = exercise_id;
+            for (start, finish) in [
+                (
+                    Some("2026-11-12T10:00:00.000Z"),
+                    Some("2026-11-12T11:00:00.000Z"),
+                ),
+                (None, None),
+                (
+                    Some("2026-11-12T10:00:00.000Z"),
+                    Some("2026-11-12T10:00:00.600Z"),
+                ),
+                (Some("invalid"), Some("invalid")),
+            ] {
+                snap.workouts[0].started_at = start.map(str::to_owned);
+                snap.workouts[0].finished_at = finish.map(str::to_owned);
+                let ix = Indexes::build(&snap);
+                let w = &snap.workouts[0];
+                let exercises: Vec<_> = ix.wes[&w.id]
+                    .iter()
+                    .map(|&i| {
+                        let we = &snap.workout_exercises[i];
+                        json!({"id":we.id,"order":we.order,"note":we.note,
+                        "exercise":exercise_view(&ix.exercise(&snap,we.exercise_id)),
+                        "sets":ix.sets(&snap,we.id).into_iter().map(set_view).collect::<Vec<_>>()})
+                    })
+                    .collect();
+                let duration = match (&w.started_at, &w.finished_at) {
+                    (Some(a), Some(b)) => Some(
+                        ((timestamp(b) - timestamp(a)) as f64 / 1000.0)
+                            .round()
+                            .max(0.0),
+                    ),
+                    _ => None,
+                };
+                let previous = json!({"id":w.id,"date":w.date,"status":w.status,
+                    "started_at":w.started_at,"finished_at":w.finished_at,"duration_seconds":duration,
+                    "gym":w.gym,"notes":w.notes,"created_at":w.created_at,"exercises":exercises});
+                assert_eq!(ix.workout(&snap, w), previous);
+            }
         }
     }
 }
