@@ -1,5 +1,4 @@
-import { useScreenSnapshot } from "../store/useScreenSnapshot"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   FlatList,
   Pressable,
@@ -11,10 +10,11 @@ import {
 import Modal from "react-native-modal"
 import { Ionicons } from "@expo/vector-icons"
 import { SafeAreaView } from "react-native-safe-area-context"
-import {
-  listExercisesQ,
-} from "@lift/core"
-import type { Exercise } from "@lift/core"
+import { queryValue, useExercisesQuery } from "@lift/engine-client/react"
+import { todayString } from "../dates"
+import type { Exercise, Category } from "@lift/core"
+
+const EMPTY_EXERCISES: Exercise[] = []
 import { theme } from "../theme/theme"
 import { useCategoryStyles } from "../categories/CategoryStylesProvider"
 import { formatExerciseSubtitle } from "../format"
@@ -103,16 +103,19 @@ function PickView({
 }) {
   const [search, setSearch] = useState("")
   const [category, setCategory] = useState<string | null>(null)
-  const snapshot = useScreenSnapshot()
-  const exercises = useMemo(
-    () =>
-      listExercisesQ({
-        q: search || undefined,
-        category: category ?? undefined,
-        sort: "last_performed",
-      }),
-    [snapshot, search, category]
-  )
+  const exerciseQuery = useExercisesQuery({
+    q: search || undefined,
+    category: (category as Category) ?? undefined,
+    sort: "last_performed",
+    today: todayString(),
+  })
+  const exercises = queryValue(exerciseQuery, EMPTY_EXERCISES)
+  // Every exercise any list in this sheet has shown, so a selection made
+  // under one search survives switching to another.
+  const seenRef = useRef(new Map<number, Exercise>())
+  useEffect(() => {
+    for (const e of exercises) seenRef.current.set(e.id, e)
+  }, [exercises])
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(
     () => new Set(initialSelectedIds ?? [])
@@ -133,10 +136,10 @@ function PickView({
     // include any selected items that aren't in the current filter view
     if (selectedIds.size > chosen.length) {
       const haveIds = new Set(chosen.map((e) => e.id))
-      const missing = listExercisesQ().filter(
-        (e) => selectedIds.has(e.id) && !haveIds.has(e.id)
-      )
-      chosen.push(...missing)
+      for (const id of selectedIds) {
+        const e = seenRef.current.get(id)
+        if (e && !haveIds.has(id)) chosen.push(e)
+      }
     }
     onPickMany(chosen)
   }

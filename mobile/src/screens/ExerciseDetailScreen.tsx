@@ -1,24 +1,22 @@
-import { useScreenSnapshot } from "../store/useScreenSnapshot"
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useState } from "react"
 import {
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native"
-import {
-  getExerciseHistoryQ,
-  listExercisesQ,
-  localApi as api,
-} from "@lift/core"
 import type { Exercise, ExerciseHistoryDay } from "@lift/core"
+import { queryValue, useExerciseQuery, useFullExerciseHistory } from "@lift/engine-client/react"
+import { useStableValue } from "../hooks/useStableValue"
+import { sameHistory } from "../store/sameHistory"
+import { useScreenQueryOptions } from "../engine/screenQuery"
 import { CategoryBadge } from "../components/CategoryBadge"
 import { Button } from "../components/Button"
 import { theme } from "../theme/theme"
 import { useSettings } from "../settings/SettingsProvider"
 import {
   GraphPanel,
-  PastHistory,
+  PastHistoryList,
   SettingsPanel,
   SummaryPanel,
 } from "./SetLoggerScreen"
@@ -28,19 +26,22 @@ import { SubTabBar, type SubTab as LoggerSubTab } from "../components/SubTabBar"
 
 type SubTab = Exclude<LoggerSubTab, "workout">
 
+const EMPTY_HISTORY: ExerciseHistoryDay[] = []
+
 export function ExerciseDetailScreen({ navigation, route }: any) {
   const { exerciseId } = route.params
-  const snapshot = useScreenSnapshot()
   const { weightUnit: unit } = useSettings()
   const [tab, setTab] = useState<SubTab>("history")
 
-  const exercise: Exercise | null = useMemo(() => {
-    return listExercisesQ({ sort: "name" }).find((e) => e.id === exerciseId) ?? null
-  }, [snapshot, exerciseId])
+  const queryOptions = useScreenQueryOptions()
+  const exerciseQuery = useExerciseQuery(exerciseId, queryOptions)
+  const exercise: Exercise | null = queryValue(exerciseQuery, null)
 
-  const history: ExerciseHistoryDay[] = useMemo(
-    () => getExerciseHistoryQ(exerciseId),
-    [snapshot, exerciseId]
+  // The whole history: History, Graph and Records read every day.
+  const historyQuery = useFullExerciseHistory(exerciseId, queryOptions)
+  const history: ExerciseHistoryDay[] = useStableValue(
+    queryValue(historyQuery, null)?.items ?? EMPTY_HISTORY,
+    sameHistory
   )
 
   // Every hook sits above the early return below, so a render where the
@@ -57,6 +58,8 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
   )
 
   if (!exercise) {
+    // Still reading: the background alone, not a claim that it is gone.
+    if (exerciseQuery.status === "loading") return <View style={styles.flex} />
     return (
       <View style={[styles.flex, { padding: theme.spacing[4] }]}>
         <Text style={{ color: theme.colors.muted }}>Exercise not found.</Text>
@@ -64,11 +67,19 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
     )
   }
 
-  async function logToday() {
-    const today = todayString()
-    const workout = await api.createWorkout(today)
-    const we = await api.addExerciseToWorkout(workout.id, exercise!.id)
-    navigation.replace("SetLogger", { workoutId: workout.id, weId: we.id })
+  // Opens the logger at once, like the picker: the first saved set creates
+  // the day's workout and this exercise's row (or reuses them) in one write,
+  // and backing out without a set leaves nothing behind.
+  function logToday() {
+    const ex = exercise!
+    navigation.replace("SetLogger", {
+      pendingCreate: {
+        date: todayString(),
+        exerciseId: ex.id,
+        exerciseName: ex.name,
+        exerciseCategory: ex.category,
+      },
+    })
   }
 
   const totalWorkouts = history.length
@@ -94,33 +105,36 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
         )}
       </View>
 
-      <ScrollView
-        style={{ flex: 1 }}
-        // No top inset: the fixed header above already ends in its own
-        // padding, which is the line every tab's first card starts on. Same
-        // as the set logger's scroll container.
-        contentContainerStyle={{
-          paddingHorizontal: theme.spacing[4],
-          paddingBottom: theme.spacing[6],
-        }}
-      >
-        {tab === "history" && (
-          <PastHistory
-            days={history}
-            currentDate={todayString()}
-            onPressDate={openCalendarAtDate}
-          />
-        )}
-        {tab === "graph" && <GraphPanel days={history} unit={unit} />}
-        {tab === "summary" && (
-          <SummaryPanel
-            days={history}
-            unit={unit}
-            onPressDate={openCalendarAtDate}
-          />
-        )}
-        {tab === "settings" && <SettingsPanel navigation={navigation} />}
-      </ScrollView>
+      {tab === "history" ? (
+        <PastHistoryList
+          days={history}
+          currentDate={todayString()}
+          onPressDate={openCalendarAtDate}
+          style={{ flex: 1 }}
+          contentContainerStyle={{
+            paddingHorizontal: theme.spacing[4],
+            paddingBottom: theme.spacing[6],
+          }}
+        />
+      ) : (
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{
+            paddingHorizontal: theme.spacing[4],
+            paddingBottom: theme.spacing[6],
+          }}
+        >
+          {tab === "graph" && <GraphPanel days={history} unit={unit} />}
+          {tab === "summary" && (
+            <SummaryPanel
+              days={history}
+              unit={unit}
+              onPressDate={openCalendarAtDate}
+            />
+          )}
+          {tab === "settings" && <SettingsPanel navigation={navigation} />}
+        </ScrollView>
+      )}
 
       <SubTabBar tab={tab} onChange={setTab} withWorkout={false} />
     </View>

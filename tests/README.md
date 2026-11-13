@@ -62,11 +62,34 @@ core. They import those files by relative path. They render no components.
 | `openingBackGuard.test.ts` | early Back-button coalescing, opening versus closing completion, and real stack-router preservation of Main/logger keys when removing the originating picker before replaying Back |
 | `workoutPickerGuard.test.ts` | rapid add-button taps open the picker once, reset and navigation-error recovery, stale touch rejection, selection after a cancelled swipe, and accessibility activation |
 | `restTimerPlan.test.ts` | rest timer rules (`@lift/core/restTimer`, re-exported by `mobile/src/restTimer/plan.ts`): cutoff parse/format/clamp, start vs. update vs. end, settings defaults and blob round-trip, that the two `RestTimerAttributes.swift` copies match, source guards on the iOS cutoff (armed for an adopted timer, ends only its own activity), and what the "since last set" ticker counts from (`lastSetAnchorMs`, and `tickerAnchor` after a manual reset or stop, which only applies on the workout day it was made on) |
-| `restTimerController.test.ts` | rest timer controller call order against a mocked native bridge and `react-native` (Android permission), and Reset timer / Stop timer (native calls, the in-memory mark, `clearMark`), and what the timer does when the set it counts from is deleted, its workout is deleted, or a Stop or Reset came before it |
-| `accountStore.test.ts` | the local store keyed by user id: a `users/<username>` store moves to `accounts/<id>` once on first load, a rename keeps the same store, an existing account store is never overwritten, and a failed move refuses to load |
-| `signOut.test.ts` | mobile sign-out: the rest timer ends and its reset/stop mark is cleared, and the store is saved and dropped from memory |
+| `restTimerController.test.ts` | rest timer controller call order against a mocked native bridge and `react-native` (Android permission), with settings and the anchor set read from an engine client: Reset timer / Stop timer (native calls, the in-memory mark, `clearMark`), and what the timer does when the set it counts from is deleted, its workout is deleted, or a Stop or Reset came before it |
+| `accountStore.test.ts` | the mobile account store keyed by user id: a `users/<username>` store moves to `accounts/<id>` once, before the engine opens; a rename keeps the same store; an existing account store is never overwritten; a fresh account creates no folder first; a failed move refuses to load |
+| `signOut.test.ts` | mobile sign-out: the rest timer ends and its reset/stop mark is cleared, a restore point is saved, the engine session closes, and the next sign-in waits for that close |
 | `snapshotRotation.test.ts` | mobile restore point rotation: `.bak` every write, `.bak2` only after 24 hours, the hold during a restore, the undo entry kept through a rotation, and stale labels dropped by mtime |
-| `restorePoints.test.ts` | `RnFsStorage` against an in-memory `expo-file-system`: the real file moves over a day of saves, labels, the `.bak`/`.bak2` read fallback (including a `snapshot.bin` that reads but does not decode), and `restoreFromSlot()` (daily slot held, undo taken from memory, damaged file changes nothing, account switch cancels the restore) |
+| `restorePoints.test.ts` | `RnFsStorage` (the legacy mobile files the engine migrates from) against an in-memory `expo-file-system`: rotation over a day of saves, labels, the `.bak`/`.bak2` read fallback, and damaged or newer-schema copies |
+
+### Rust engine client
+
+Suites for `@lift/engine-client` (the TypeScript side of the Rust engine) and
+the mobile code built on it. They run against fake transports, a fake Wasm
+factory, `fake-indexeddb` and mocked Expo modules; the Rust parity suites are
+under `engine-parity/` and `scripts/engine/`.
+
+| File | Covers |
+|------|--------|
+| `engineClient.test.ts` | the session client: late reads dropped after close, serialized commands, failed commands not blocking later ones, replacements bumping the generation, selective invalidation |
+| `engineQueryCache.test.ts` | retained results (no blank frame on reopen, no refetch while idle, catch-up on resubscribe), `prefetch`, the paged whole-history read from one revision, calendar invalidation on exercise edits, and the query hook under StrictMode double subscribe, unmount mid-read, a key change, a covered screen, and `queryValue` throwing a failed read |
+| `engineSessions.test.ts` | one account session at a time: a late open closes before the next account starts |
+| `engineDataApi.test.ts` | imports and uploads share the command queue; replace refuses a changed local version |
+| `engineSync.test.ts` | the snapshot HTTP wire (conditional ETags, byte ranges), preview not adopting the cloud etag, late results after close |
+| `engineAutoSync.test.ts` | engine sync on mobile: Sync now, the 412 prompt once per cloud etag, quota errors, preview, force push, pull, and `maybeAutoSync` (never synced, signed out, empty, not due, conflict open) |
+| `engineBrowserStorage.test.ts` | the browser worker store: atomic commits and receipts, stale writers refused, replacement generations |
+| `engineWorkerRuntime.test.ts` | the worker runtime that ships to the browser: open, commands, retried command ids, refusal to start from rows, `replace_snapshot` validated before writing, stale generations refused, allocator kept moving forward |
+| `webEngine.test.ts` | the parked web engine adapter: off by default, a valid empty core snapshot, legacy read errors and legacy data reject instead of opening empty, a new worker per session, no reuse after termination |
+| `mobileEngineOpen.test.ts` | the mobile open: legacy move before the engine opens, rejection on a failed move, fresh installs, the legacy etag, username and shared install id passed in, unique session ids across launches |
+| `mobileRestorePoints.test.ts` | engine restore points on mobile: capture cadence (30 seconds after the last edit, and on leaving the foreground), account isolation, listing slots, restore against the committed version |
+| `setLoggerSaveQueue.test.ts` | the set logger's save queue (`mobile/src/setLogger/saveQueue.ts`): one `log_set` for a fast double tap, failures scoped to their tap, PR previews counting only unwritten earlier taps |
+| `importIdFloor.test.ts` | new custom exercises from CSV and JSON imports (and `createExercise`) get ids above the built-in catalog and never repeat |
 
 ## Helpers (`helpers/`)
 

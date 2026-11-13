@@ -56,14 +56,47 @@ vi.mock("../mobile/src/restTimer/bridge", () => {
 
 const T0 = Date.UTC(2026, 8, 21, 12, 0, 0)
 
+let commitData: (<T>(change: () => T) => T) = (change) => change()
+
 async function load(settings: Record<string, unknown> = {}) {
   // Fresh module state (the `shown` cache, the permission flag, and the
-  // store singleton) per test. Settings go through the same fresh registry
-  // the controller reads from.
+  // store singleton) per test. The controller reads an engine session; this
+  // one answers its queries from a fresh @lift/core store, and commitData()
+  // runs a change and lets the session invalidate like a real command.
   vi.resetModules()
   const M = await import("@lift/core/store/mutations")
+  const Q = await import("@lift/core/store/queries")
+  const S = await import("@lift/core/store/store")
+  const { EngineClient } = await import("../packages/engine-client/src/index")
   if (Object.keys(settings).length) M.updateSettings(settings)
-  return import("../mobile/src/restTimer/controller")
+  let revision = 0
+  const client = new EngineClient(
+    {
+      query: async (q: any) => ({
+        generation: 1,
+        revision,
+        data:
+          q.kind === "settings"
+            ? S.getState().snapshot.settings
+            : q.kind === "workout_by_date"
+              ? Q.getWorkoutByDateQ(q.date)
+              : null,
+      }),
+      execute: async (id: string) => ({ command_id: id, generation: 1, revision: ++revision, result: null }),
+      close: async () => {},
+    },
+    1
+  )
+  let n = 0
+  commitData = (change) => {
+    const result = change()
+    void client.execute(`test:${++n}`, { op: "test_change" }, "now", "today")
+    return result
+  }
+  const c = await import("../mobile/src/restTimer/controller")
+  c.bindEngine(client)
+  await settle()
+  return c
 }
 
 /** Waits for the controller's serial queue to drain. */
@@ -342,15 +375,22 @@ describe("when the set the timer counts from goes", () => {
 
   async function setup() {
     const c = await load()
-    const M = await import("@lift/core/store/mutations")
-    const ex = M.createExercise({ name: "Bench Press", category: "chest" })
-    const w = M.createWorkout(DAY).row
-    const we = M.addExerciseToWorkout(w.id, ex.id)
+    const Core = await import("@lift/core/store/mutations")
+    const ex = Core.createExercise({ name: "Bench Press", category: "chest" })
+    const w = Core.createWorkout(DAY).row
+    const we = Core.addExerciseToWorkout(w.id, ex.id)
+    // Every change goes through the session, like a command from a screen.
+    const M = {
+      deleteSet: (id: number) => commitData(() => Core.deleteSet(id)),
+      deleteWorkout: (id: number) => commitData(() => Core.deleteWorkout(id)),
+      updateSet: (id: number, patch: { reps?: number }) => commitData(() => Core.updateSet(id, patch)),
+      createExercise: (input: { name: string; category: "back" }) => commitData(() => Core.createExercise(input)),
+    }
     // What the set logger does: the timer at the tap, the row a moment later.
     const log = (atMs: number) => {
       vi.setSystemTime(atMs)
-      c.setLogged("Bench Press", atMs)
-      return M.addSet(we.id, { weight: 100, reps: 5, created_at: new Date(atMs).toISOString() })
+      c.setLogged("Bench Press", atMs, DAY)
+      return commitData(() => Core.addSet(we.id, { weight: 100, reps: 5, created_at: new Date(atMs).toISOString() }))
     }
     return { c, M, w, log }
   }

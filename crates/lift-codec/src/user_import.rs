@@ -16,7 +16,7 @@ fn text(v: &Value) -> String {
     }
 }
 fn kind(v: &Value) -> Option<&str> {
-    v.as_str().filter(|s| {
+    v.as_str().map(str::trim).filter(|s| {
         [
             "weight_reps",
             "distance_time",
@@ -82,24 +82,7 @@ pub fn import(
     let workouts = data["workouts"]
         .as_array()
         .ok_or_else(|| invalid("File is not a valid JSON snapshot."))?;
-    let mut next = ctx.next_id.max(
-        snapshot
-            .exercises
-            .iter()
-            .map(|r| r.id)
-            .chain(snapshot.workouts.iter().map(|r| r.id))
-            .chain(snapshot.workout_exercises.iter().map(|r| r.id))
-            .chain(snapshot.sets.iter().map(|r| r.id))
-            .chain(snapshot.gyms.iter().map(|r| r.id))
-            .max()
-            .unwrap_or(0)
-            + 1,
-    );
-    let mut alloc = || {
-        let n = next;
-        next += 1;
-        n
-    };
+    let mut ids = crate::Ids::new(snapshot, ctx);
     let mut result = snapshot.clone();
     if replace {
         result.exercises.clear();
@@ -129,6 +112,10 @@ pub fn import(
         .filter(|s| !s.is_planned)
         .map(|s| (s.workout_exercise_id, s.order))
         .collect();
+    let mut siblings: HashMap<u64, i64> = HashMap::new();
+    for we in &result.workout_exercises {
+        *siblings.entry(we.workout_id).or_default() += 1;
+    }
     let mut counts: HashMap<u64, i64> = HashMap::new();
     let mut max_order: HashMap<u64, i64> = HashMap::new();
     let mut local: HashMap<u64, HashMap<String, usize>> = HashMap::new();
@@ -152,7 +139,12 @@ pub fn import(
     let mut created = BTreeSet::new();
     let mut errors = vec![];
     let mut imported = 0;
-    let session_notes = data["version"].as_u64().unwrap_or(1) >= 2;
+    // `(data.version ?? 1) >= 2`, with JavaScript's number coercion.
+    let session_notes = match &data["version"] {
+        Value::Null => 1.0,
+        v => crate::js_number(v),
+    } >= 2.0;
+    let mut note_dates: HashSet<String> = result.day_notes.iter().map(|n| n.date.clone()).collect();
     for n in data["day_notes"].as_array().into_iter().flatten() {
         if let Some(date) = n["date"].as_str() {
             let note = if n["text"].is_null() {
@@ -161,10 +153,7 @@ pub fn import(
                 text(&n["text"])
             };
             let note = note.trim();
-            if date_shape(date)
-                && !note.is_empty()
-                && !result.day_notes.iter().any(|n| n.date == date)
-            {
+            if date_shape(date) && !note.is_empty() && note_dates.insert(date.to_string()) {
                 result.day_notes.push(DayNoteRow {
                     date: date.into(),
                     text: note.into(),
@@ -178,7 +167,7 @@ pub fn import(
             if !name.is_empty() && !gyms.contains_key(&name.to_lowercase()) {
                 gyms.insert(name.to_lowercase(), name.into());
                 result.gyms.push(GymRow {
-                    id: alloc(),
+                    id: ids.next(),
                     name: name.into(),
                 });
             }
@@ -188,7 +177,7 @@ pub fn import(
         if let Some(name) = e["name"].as_str() {
             let name = normalize(name);
             if !name.is_empty() && lookup.find(&name, kind(&e["kind"])).is_none() {
-                let row = new_exercise(e, alloc(), name.clone(), true);
+                let row = new_exercise(e, ids.exercise(), name.clone(), true);
                 lookup.add(row.clone());
                 result.exercises.push(row);
                 created.insert(name);
@@ -206,7 +195,7 @@ pub fn import(
         }
         let note = text(&w["notes"]);
         let note = note.trim();
-        if !session_notes && !note.is_empty() && !result.day_notes.iter().any(|n| n.date == date) {
+        if !session_notes && !note.is_empty() && note_dates.insert(date.to_string()) {
             result.day_notes.push(DayNoteRow {
                 date: date.into(),
                 text: note.into(),
@@ -235,14 +224,14 @@ pub fn import(
             }
             i
         } else {
-            let id = alloc();
+            let id = ids.next();
             let index = result.workouts.len();
             result.workouts.push(WorkoutRow {
                 id,
                 date: date.into(),
-                status: if !w["finished_at"].is_null() {
+                status: if crate::truthy(&w["finished_at"]) {
                     "done"
-                } else if !w["started_at"].is_null() {
+                } else if crate::truthy(&w["started_at"]) {
                     "active"
                 } else {
                     "done"
@@ -275,7 +264,7 @@ pub fn import(
             let ex = if let Some(ex) = lookup.find(&name, kind(&we["exercise"]["kind"])) {
                 ex.clone()
             } else {
-                let row = new_exercise(&we["exercise"], alloc(), name.clone(), false);
+                let row = new_exercise(&we["exercise"], ids.exercise(), name.clone(), false);
                 lookup.add(row.clone());
                 result.exercises.push(row.clone());
                 created.insert(name);
@@ -284,14 +273,10 @@ pub fn import(
             let weid = if let Some(id) = pairs.get(&(wid, ex.id)) {
                 *id
             } else {
-                let id = alloc();
-                let order = we["order"].as_i64().unwrap_or_else(|| {
-                    result
-                        .workout_exercises
-                        .iter()
-                        .filter(|we| we.workout_id == wid)
-                        .count() as i64
-                });
+                let id = ids.next();
+                let siblings = siblings.entry(wid).or_insert(0);
+                let order = we["order"].as_i64().unwrap_or(*siblings);
+                *siblings += 1;
                 result.workout_exercises.push(WorkoutExerciseRow {
                     id,
                     workout_id: wid,
@@ -307,7 +292,8 @@ pub fn import(
                     || local.get(&weid).is_some_and(|m| !m.is_empty()));
             seen_entries.insert(weid);
             for s in we["sets"].as_array().into_iter().flatten() {
-                if s.is_null() {
+                // `if (!s) continue`: every falsy entry is skipped.
+                if !crate::truthy(s) {
                     continue;
                 }
                 let order = if same_session || !append {
@@ -338,7 +324,7 @@ pub fn import(
                     .or_insert(order);
                 *counts.entry(weid).or_default() += 1;
                 result.sets.push(SetRow {
-                    id: alloc(),
+                    id: ids.next(),
                     workout_exercise_id: weid,
                     weight: s["weight_kg"].as_f64(),
                     reps: s["reps"].as_f64(),
@@ -365,8 +351,9 @@ pub fn import(
     if imported > 0 || !created.is_empty() {
         prs::recompute(&mut result, None);
     }
+    lift_domain::model::repair(&mut result);
     lift_domain::model::validate(&result).map_err(invalid)?;
     *snapshot = result;
-    ctx.next_id = next;
+    ctx.next_id = ids.end();
     Ok(json!({"imported":imported,"exercisesCreated":created,"errors":errors}))
 }

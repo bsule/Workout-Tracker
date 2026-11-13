@@ -17,8 +17,8 @@ pub struct ExerciseLookup {
     kinds: HashMap<(String, String), ExerciseRow>,
 }
 impl ExerciseLookup {
-    pub fn new(existing: &[ExerciseRow]) -> Self {
-        let touched: HashSet<_> = existing.iter().map(|e| e.id).collect();
+    pub fn new<'a>(existing: impl IntoIterator<Item = &'a ExerciseRow> + Clone) -> Self {
+        let touched: HashSet<_> = existing.clone().into_iter().map(|e| e.id).collect();
         let mut names = HashMap::new();
         let mut builtin = HashSet::new();
         for e in seeds() {

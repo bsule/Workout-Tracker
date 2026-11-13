@@ -14,6 +14,12 @@ import {
 
 const ROOT = FileSystem.documentDirectory + "lift/"
 
+/** The account's folder, where the engine keeps engine.sqlite next to any
+ *  snapshot files an older build left. */
+export function accountDirUri(subPath: string): string {
+  return dirFor(subPath)
+}
+
 function dirFor(subPath: string) {
   // subPath may contain "/" — translate to a single safe segment.
   const safe = subPath.replace(/[^a-zA-Z0-9_-]/g, "_")

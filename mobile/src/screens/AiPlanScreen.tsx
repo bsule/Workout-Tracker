@@ -12,19 +12,17 @@ import {
   View,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
-import { listExercisesQ, useStore } from "@lift/core"
 import type { Exercise } from "@lift/core"
+import { useSettingsQuery, useWorkoutApi } from "@lift/engine-client/react"
 import {
   AI_PROVIDERS,
   SYSTEM_PROMPT,
-  applyPlan,
-  buildHistoryContext,
   buildUserPrompt,
   formatPlanSet,
   getProvider,
   parseAiPlanResponse,
 } from "../ai"
-import type { AiPlanResponse } from "../ai"
+import type { AiPlanResponse, HistoryDay } from "../ai"
 import { getApiKey } from "../ai/keys"
 import { Button } from "../components/Button"
 import { ExercisePickerSheet } from "../components/ExercisePickerSheet"
@@ -56,8 +54,10 @@ export function AiPlanScreen({ navigation, route }: any) {
   const [rawResponse, setRawResponse] = useState<string | null>(null)
 
   const { weightUnit } = useSettings()
-  const settings = useStore((s) => s.snapshot.settings)
-  const providerId = settings.ai_provider ?? "openai"
+  const api = useWorkoutApi()
+  const settingsState = useSettingsQuery()
+  const providerId =
+    (settingsState.status === "ready" ? settingsState.value.ai_provider : undefined) ?? "openai"
   const providerLabel = AI_PROVIDERS.find((p) => p.id === providerId)?.label ?? providerId
 
   const planDates = useMemo(() => enumerateDates(planStart, planEnd), [planStart, planEnd])
@@ -87,14 +87,14 @@ export function AiPlanScreen({ navigation, route }: any) {
     setBusy(true)
     try {
       const history = useHistory
-        ? buildHistoryContext({
-            from: historyStart,
-            to: historyEnd,
+        ? ((await api.aiHistory(
+            historyStart,
+            historyEnd,
             weightUnit,
-            exerciseIds: selectedExercises.map((e) => e.id),
-          })
+            selectedExercises.map((e) => e.id)
+          )) as HistoryDay[])
         : []
-      const fullLibrary = listExercisesQ({ sort: "last_performed" })
+      const fullLibrary = await api.listExercises({ sort: "last_performed" })
       const exerciseLibrary =
         selectedExercises.length > 0
           ? fullLibrary.filter((e) =>
@@ -136,7 +136,8 @@ export function AiPlanScreen({ navigation, route }: any) {
     if (!preview) return
     setBusy(true)
     try {
-      const res = await applyPlan(preview, weightUnit)
+      // Each day lands atomically: a day that fails changes nothing.
+      const res = await api.applyAiPlan(preview, weightUnit)
       if (res.errors.length > 0) {
         Alert.alert(
           "Partial success",

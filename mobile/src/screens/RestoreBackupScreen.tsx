@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { ScrollView, StyleSheet, Text, View } from "react-native"
-import { autoSync, type RemotePreview } from "@lift/core"
+import { mobileSync, type CloudPreview } from "../sync/engineSync"
 import { Button } from "../components/Button"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { theme } from "../theme/theme"
@@ -11,14 +11,14 @@ export function RestoreBackupScreen({ onDismiss }: { onDismiss: () => void }) {
   const [busy, setBusy] = useState<null | "cloud-preview" | "cloud-apply">(null)
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
-  const [cloudPreview, setCloudPreview] = useState<RemotePreview | null>(null)
+  const [cloudPreview, setCloudPreview] = useState<CloudPreview | null>(null)
 
   async function loadCloudPreview() {
     setBusy("cloud-preview")
     setError(null)
     setInfo(null)
     try {
-      const p = await autoSync.previewRemote()
+      const p = await mobileSync.previewRemote()
       if (!p) {
         setError("No cloud backup yet for this account.")
         return
@@ -36,7 +36,7 @@ export function RestoreBackupScreen({ onDismiss }: { onDismiss: () => void }) {
     setBusy("cloud-apply")
     setError(null)
     try {
-      await autoSync.applyRemoteBytes(cloudPreview.bytes)
+      await mobileSync.applyRemote(cloudPreview)
       setInfo("Restored from cloud. Continuing…")
       onDismiss()
     } catch (e) {

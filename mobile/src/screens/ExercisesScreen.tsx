@@ -1,4 +1,3 @@
-import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import { useMemo, useRef, useState, type MutableRefObject } from "react"
 import {
   Alert,
@@ -15,8 +14,11 @@ import ReanimatedSwipeable, {
   type SwipeableMethods,
 } from "react-native-gesture-handler/ReanimatedSwipeable"
 import { SwipeActionTray } from "../components/SwipeActionTray"
-import { listExercisesQ, localApi as api } from "@lift/core"
 import type { Exercise } from "@lift/core"
+import { queryValue, useExercisesQuery, useWorkoutApi } from "@lift/engine-client/react"
+import { useScreenQueryOptions } from "../engine/screenQuery"
+import { todayString } from "../dates"
+import { guardWrite } from "../components/writeError"
 import { CategoryBadge } from "../components/CategoryBadge"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { pressedStyle } from "../theme/pressable"
@@ -24,14 +26,17 @@ import { theme } from "../theme/theme"
 import { useCategoryColor } from "../categories/CategoryStylesProvider"
 import { formatExerciseSubtitle } from "../format"
 
+const EMPTY_EXERCISES: Exercise[] = []
+
 export function ExercisesScreen({ navigation }: any) {
+  const api = useWorkoutApi()
   const [search, setSearch] = useState("")
   const openSwipeableRef = useRef<SwipeableMethods | null>(null)
-  const snapshot = useScreenSnapshot(true)
-  const exercises = useMemo(
-    () => listExercisesQ({ q: search || undefined, sort: "last_performed" }),
-    [snapshot, search]
+  const exercisesQuery = useExercisesQuery(
+    { q: search || undefined, sort: "last_performed", today: todayString() },
+    useScreenQueryOptions(true)
   )
+  const exercises = queryValue(exercisesQuery, EMPTY_EXERCISES)
 
   function openDetail(ex: Exercise) {
     navigation.navigate("ExerciseDetail", { exerciseId: ex.id })
@@ -54,7 +59,9 @@ export function ExercisesScreen({ navigation }: any) {
         {
           text: "Delete",
           style: "destructive",
-          onPress: () => api.deleteExercise(ex.id),
+          onPress: () => {
+            guardWrite(api.deleteExercise(ex.id), "Couldn't delete exercise")
+          },
         },
       ]
     )

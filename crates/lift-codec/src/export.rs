@@ -18,6 +18,7 @@ pub fn user_json(s: &Snapshot, username: &str, now: &str) -> Value {
             sets.entry(set.workout_exercise_id).or_default().push(set);
         }
     }
+    let custom_ids: std::collections::HashSet<u64> = s.exercises.iter().map(|e| e.id).collect();
     let mut workouts: Vec<_> = s.workouts.iter().collect();
     workouts.sort_by_key(|w| (&w.date, w.id));
     let workouts:Vec<_>=workouts.into_iter().map(|w|{
@@ -26,7 +27,7 @@ pub fn user_json(s: &Snapshot, username: &str, now: &str) -> Value {
             let ex=exercises.get(&we.exercise_id);let fallback=format!("#{}",we.exercise_id);
             let mut rows=sets.get(&we.id).cloned().unwrap_or_default();rows.sort_by_key(|s|(s.order,s.id));
             let rows:Vec<_>=rows.into_iter().map(|s|json!({"weight_kg":s.weight,"reps":s.reps,"distance_m":s.distance_m,"distance_unit_display":s.distance_unit_display,"time_seconds":s.time_seconds,"is_pr":s.is_pr,"was_pr":s.was_pr,"note":s.note,"order":s.order,"created_at":s.created_at})).collect();
-            json!({"order":we.order,"note":we.note,"exercise":{"name":ex.map(|e|e.name.as_str()).unwrap_or(&fallback),"category":ex.map(|e|e.category.as_str()).unwrap_or(""),"kind":ex.map(|e|e.kind.as_str()).unwrap_or("weight_reps"),"is_custom":s.exercises.iter().any(|e|e.id==we.exercise_id)},"sets":rows})
+            json!({"order":we.order,"note":we.note,"exercise":{"name":ex.map(|e|e.name.as_str()).unwrap_or(&fallback),"category":ex.map(|e|e.category.as_str()).unwrap_or(""),"kind":ex.map(|e|e.kind.as_str()).unwrap_or("weight_reps"),"is_custom":custom_ids.contains(&we.exercise_id)},"sets":rows})
         }).collect();
         json!({"id":w.id,"date":w.date,"started_at":w.started_at,"finished_at":w.finished_at,"gym":w.gym,"notes":w.notes,"exercises":rows})
     }).collect();

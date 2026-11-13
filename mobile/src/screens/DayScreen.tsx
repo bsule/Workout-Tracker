@@ -1,10 +1,12 @@
-import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import {
+  memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react"
 import {
   Alert,
@@ -13,9 +15,12 @@ import {
   FlatList,
   Keyboard,
   LayoutAnimation,
+  type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
+  type ViewStyle,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -26,19 +31,19 @@ import {
   type TextInputInstance,
 } from "react-native"
 import {
-  localApi as api,
-  batchMutations,
   lastSetTimeOf,
-  startPlannedWorkout,
-  useHydrated,
-  getState,
-  getWorkoutByDateQ,
-  getDayNoteQ,
-  setDayNote,
-  deleteWorkout,
   workoutDurationSeconds,
 } from "@lift/core"
 import type { Gym, Workout, WorkoutExercise } from "@lift/core"
+import {
+  queryValue,
+  useDayNote,
+  useEngineClient,
+  useWorkoutApi,
+  useWorkoutByDate,
+} from "@lift/engine-client/react"
+import { useScreenQueryOptions } from "../engine/screenQuery"
+import { guardWrite } from "../components/writeError"
 import { Ionicons } from "@expo/vector-icons"
 import { useIsFocused } from "@react-navigation/native"
 import { Button } from "../components/Button"
@@ -182,6 +187,23 @@ export function DayScreen({ navigation, route }: any) {
   }, [])
   const clearSelection = useCallback(() => setSelectedIds([]), [])
 
+  const api = useWorkoutApi()
+  // Read on demand from what the visible page and the date header already
+  // hold. Subscribing here would re-render the whole date pager on every
+  // change; DateNav subscribes instead (see the note there).
+  const client = useEngineClient()
+  const readDay = useCallback(() => {
+    const note = client.snapshot<string | null>(`day_note:${date}`, { kind: "day_note", date })
+    const workout = client.snapshot<Workout | null>(`workout_by_date:${date}`, {
+      kind: "workout_by_date",
+      date,
+    })
+    return {
+      note: note.status === "ready" ? note.value ?? "" : "",
+      workoutId: workout.status === "ready" ? workout.value?.id ?? null : null,
+    }
+  }, [client, date])
+
   const [noteSheetOpen, setNoteSheetOpen] = useState(false)
   const [noteSheetMode, setNoteSheetMode] = useState<"view" | "edit">("view")
   const [noteDraft, setNoteDraft] = useState("")
@@ -196,13 +218,13 @@ export function DayScreen({ navigation, route }: any) {
 
   const openNoteSheet = useCallback(
     (mode: "view" | "edit") => {
-      const n = getDayNoteQ(date)
+      const n = readDay().note
       setNoteDraft(n)
       setNoteOriginal(n)
       setNoteSheetMode(mode)
       setNoteSheetOpen(true)
     },
-    [date]
+    [readDay]
   )
   const openNoteViewer = useCallback(
     () => openNoteSheet("view"),
@@ -223,7 +245,7 @@ export function DayScreen({ navigation, route }: any) {
         // route.params.date and jumps the grid to that day.
         navigation.navigate("Calendar", { date })
       } else if (id === "deleteWorkout") {
-        const wid = getState().indexes.workoutsByDate.get(date)?.id ?? null
+        const wid = readDay().workoutId
         if (wid == null) return
         Alert.alert(
           "Delete workout?",
@@ -233,13 +255,15 @@ export function DayScreen({ navigation, route }: any) {
             {
               text: "Delete",
               style: "destructive",
-              onPress: () => deleteWorkout(wid),
+              onPress: () => {
+                guardWrite(api.deleteWorkout(wid), "Couldn't delete workout")
+              },
             },
           ]
         )
       }
     },
-    [date, navigation, openNoteEditor]
+    [date, navigation, openNoteEditor, readDay, api]
   )
 
   const data = useMemo(
@@ -345,7 +369,7 @@ export function DayScreen({ navigation, route }: any) {
           // The summary card grows or shrinks by the note's height. This
           // animates that shift; the note line's own fade-in is NoteReveal's.
           LayoutAnimation.configureNext(NOTE_SHIFT_ANIM)
-          setDayNote(date, noteDraft)
+          guardWrite(api.setDayNote(date, noteDraft), "Couldn't save note")
         }}
       />
     </StaticSafeAreaView>
@@ -410,15 +434,13 @@ function DayContent({
     if (!interactive) setBarMounted(false)
   }, [interactive])
 
-  const hydrated = useHydrated()
+  const api = useWorkoutApi()
   // Prepare only the displayed day before the logger pops; adjacent pager
   // pages and the other tabs keep their background subscriptions paused.
-  const snapshot = useScreenSnapshot(interactive)
+  const queryOptions = useScreenQueryOptions(interactive)
+  const workoutQuery = useWorkoutByDate(date, queryOptions)
+  const rawWorkout = queryValue(workoutQuery, undefined) ?? undefined
 
-  const rawWorkout = useMemo(
-    () => (hydrated ? getWorkoutByDateQ(date) : undefined),
-    [hydrated, date, snapshot]
-  )
   // Hide WEs that have no sets yet - they're transient placeholders that only
   // exist while the user is in SetLogger from the picker flow. If a backwards
   // navigation drops them, we don't want a half-second flash of an empty
@@ -441,12 +463,12 @@ function DayContent({
 
   function handleStart() {
     if (!workout || workout.status !== "planned") return
-    startPlannedWorkout(workout.id)
+    guardWrite(api.startPlannedWorkout(workout.id), "Couldn't start workout")
   }
 
   function handlePressExercise(we: WorkoutExercise) {
     if (!workout || !interactive) return
-    navigation.navigate("SetLogger", { workoutId: workout.id, weId: we.id })
+    navigation.navigate("SetLogger", { workoutId: workout.id, weId: we.id, date: workout.date })
   }
 
   function confirmDeleteSelected() {
@@ -461,23 +483,17 @@ function DayContent({
           text: "Remove",
           style: "destructive",
           onPress: () => {
-            // No await in the loop, and one commit for the batch. localApi
-            // resolves against the in-memory snapshot, so awaiting only
-            // yields to React between removals — each one then recomputes
-            // PRs, rebuilds indexes and re-renders on its own.
             // Shift-only, so the cards under the removed ones slide up rather
             // than jumping. The removed cards themselves are left alone on
             // purpose: a selected card has FadeHighlight's native-driven
             // opacity on it, and a JS-driven `delete: opacity` over the same
-            // node throws (see SET_ANIM in ../anim). scaleXY is the usual way
-            // out of that, but a full-width card scaling toward its corner
-            // reads as the card flying sideways.
+            // node throws (see SET_ANIM in ../anim).
             LayoutAnimation.configureNext(SHIFT_ANIM)
-            batchMutations(() => {
-              for (const weId of selectedIds) {
-                api.removeExerciseFromWorkout(workout.id, weId)
-              }
-            })
+            // Not awaited: the engine runs them in order, and the screen
+            // updates once they land.
+            for (const weId of selectedIds) {
+              guardWrite(api.removeExerciseFromWorkout(workout.id, weId), "Couldn't remove exercise")
+            }
             onClearSelection()
           },
         },
@@ -486,10 +502,8 @@ function DayContent({
   }
 
   const [gymPickerOpen, setGymPickerOpen] = useState(false)
-  const dayNote = useMemo(
-    () => (hydrated ? getDayNoteQ(date) : ""),
-    [hydrated, date, snapshot]
-  )
+  const noteQuery = useDayNote(date, queryOptions)
+  const dayNote = queryValue(noteQuery, null) ?? ""
 
   const showSummary = !!(workout || dayNote)
   const showBanner = workout?.status === "planned"
@@ -609,27 +623,12 @@ function DateNav({
   // than being gathered on press. DateNav subscribes here rather
   // than DayScreen doing it: this component is three buttons, while DayScreen
   // hosts the whole date pager and would re-render all of it.
-  const snapshot = useScreenSnapshot(true)
-
-  // The menu needs its items before the press, so this is derived on render
-  // instead of gathered in an open handler. It is a few index lookups
-  // and it only reruns when the snapshot or the date moves.
-  const menuCtx = useMemo(() => {
-    const { indexes } = getState()
-    const w = indexes.workoutsByDate.get(date)
-    let hasExercises = false
-    if (w) {
-      const wes = indexes.workoutExercisesByWorkout.get(w.id) ?? []
-      hasExercises = wes.some(
-        (we) => (indexes.setsByWorkoutExercise.get(we.id) ?? []).length > 0
-      )
-    }
-    return {
-      note: getDayNoteQ(date),
-      hasExercises,
-      workoutId: w?.id ?? null,
-    }
-  }, [snapshot, date])
+  const queryOptions = useScreenQueryOptions(true)
+  const workout = queryValue(useWorkoutByDate(date, queryOptions), null)
+  const note = queryValue(useDayNote(date, queryOptions), null) ?? ""
+  // Only sets count: an exercise row with none is a transient placeholder.
+  const hasExercises = workout?.exercises.some((we) => we.sets.length > 0) ?? false
+  const menuCtx = useMemo(() => ({ note, hasExercises }), [note, hasExercises])
 
   const dateMenuActions = useMemo<MenuAction[]>(() => {
     // No separate "remove" item: the editor deletes the note when you clear it
@@ -845,6 +844,7 @@ function GymPickerModal({
   workout: Workout
   onClose: () => void
 }) {
+  const api = useWorkoutApi()
   // Rows, not names: the list is keyed by gym id (an older import could save
   // the same name twice, which made React warn about duplicate keys).
   const [gyms, setGyms] = useState<Gym[]>([])
@@ -876,13 +876,17 @@ function GymPickerModal({
     Keyboard.dismiss()
     onClose()
     if (name === workout.gym) return
-    deferMutation(() => api.patchWorkout(workout.id, { gym: name }))
+    deferMutation(() => {
+      guardWrite(api.patchWorkout(workout.id, { gym: name }), "Couldn't set gym")
+    })
   }
 
   function clearGym() {
     Keyboard.dismiss()
     onClose()
-    deferMutation(() => api.patchWorkout(workout.id, { gym: "" }))
+    deferMutation(() => {
+      guardWrite(api.patchWorkout(workout.id, { gym: "" }), "Couldn't clear gym")
+    })
   }
 
   function commitNew() {
@@ -894,8 +898,10 @@ function GymPickerModal({
     const existing = matchGymName(gymNames, name)
     onClose()
     deferMutation(() => {
-      if (!existing) api.createGym(name)
-      api.patchWorkout(workout.id, { gym: existing ?? name })
+      // The engine runs these in order: the gym exists before the workout
+      // names it.
+      if (!existing) guardWrite(api.createGym(name), "Couldn't add gym")
+      guardWrite(api.patchWorkout(workout.id, { gym: existing ?? name }), "Couldn't set gym")
     })
   }
 

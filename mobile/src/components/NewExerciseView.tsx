@@ -9,8 +9,8 @@ import {
   View,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
-import { localApi as api } from "@lift/core"
 import type { Exercise } from "@lift/core"
+import { useWorkoutApi } from "@lift/engine-client/react"
 import { Button } from "./Button"
 import { CategoryChips } from "./CategoryChips"
 import { Input } from "./Input"
@@ -24,6 +24,7 @@ export function NewExerciseView({
   onBack: () => void
   onCreated: (ex: Exercise) => void
 }) {
+  const api = useWorkoutApi()
   const [name, setName] = useState("")
   const [category, setCategory] = useState<string>("chest")
   const [submitting, setSubmitting] = useState(false)

@@ -1,13 +1,14 @@
 import { usePrepareScreenReturn } from "../store/useScreenSnapshot"
 import { useState } from "react"
 import { ScrollView, StyleSheet, Text, View } from "react-native"
-import { localApi as api } from "@lift/core"
+import { useWorkoutApi } from "@lift/engine-client/react"
 import { Button } from "../components/Button"
 import { Input } from "../components/Input"
 import { theme } from "../theme/theme"
 import { useCategoryStyles } from "../categories/CategoryStylesProvider"
 
 export function NewExerciseScreen({ navigation, route }: any) {
+  const api = useWorkoutApi()
   const prepareReturn = usePrepareScreenReturn()
   const { date, workoutId } = route.params ?? {}
   const { categories, labels } = useCategoryStyles()
@@ -29,7 +30,7 @@ export function NewExerciseScreen({ navigation, route }: any) {
       }
       if (id) {
         const we = await api.addExerciseToWorkout(id, ex.id)
-        navigation.replace("SetLogger", { workoutId: id, weId: we.id })
+        navigation.replace("SetLogger", { workoutId: id, weId: we.id, ...(date ? { date } : {}) })
       } else {
         prepareReturn()
         navigation.goBack()

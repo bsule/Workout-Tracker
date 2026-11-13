@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { LayoutAnimation, Platform, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
-import { localApi as api } from "@lift/core"
+import { useWorkoutApi } from "@lift/engine-client/react"
+import { guardWrite, reportWriteError } from "../../components/writeError"
 import { DUR, EXPAND_ANIM, deferPastAnimation } from "../../anim"
 import { Button } from "../../components/Button"
 import { PopupModal } from "../../components/PopupModal"
@@ -22,15 +23,21 @@ import { theme, tint } from "../../theme/theme"
 import { settingsPageStyles } from "./GeneralSettingsScreen"
 
 export function RestTimerSettingsScreen() {
+  const api = useWorkoutApi()
   const { restTimerEnabled, restTimerCutoffS } = useSettings()
 
   function setEnabled(on: boolean) {
     if (on === restTimerEnabled) return
-    // The cutoff row appears or goes away under the switch.
-    LayoutAnimation.configureNext(EXPAND_ANIM)
-    api.updateSettings({ rest_timer_activity: on })
-    if (on) restTimer.enable()
-    else restTimer.disable()
+    // The timer follows the saved setting, so it changes once the write lands.
+    api.updateSettings({ rest_timer_activity: on }).then(
+      () => {
+        // The cutoff row appears or goes away under the switch.
+        LayoutAnimation.configureNext(EXPAND_ANIM)
+        if (on) restTimer.enable()
+        else restTimer.disable()
+      },
+      (e: unknown) => reportWriteError(e, "Couldn't save setting")
+    )
   }
 
   const [editorOpen, setEditorOpen] = useState(false)
@@ -55,7 +62,9 @@ export function RestTimerSettingsScreen() {
     // The store commit re-renders every settings consumer; let the popup
     // fade out first.
     if (secs !== restTimerCutoffS) {
-      deferPastAnimation(() => api.updateSettings({ rest_timer_cutoff_s: secs }), DUR.fade)
+      deferPastAnimation(() => {
+        guardWrite(api.updateSettings({ rest_timer_cutoff_s: secs }), "Couldn't save setting")
+      }, DUR.fade)
     }
   }
 

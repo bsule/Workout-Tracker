@@ -8,7 +8,8 @@
  * shot, then run a single PR recompute pass at the end.
  */
 
-import { nextId } from "../store/ids"
+import { nextId, nextIdAtLeast } from "../store/ids"
+import { FIRST_CUSTOM_ID } from "../store/seed"
 import { recomputeAllPrs } from "../store/mutations"
 import { flushNow, runBatched } from "../store/persist"
 import type {
@@ -242,7 +243,7 @@ export async function importFitnotesCsv(
           ? (rawCat as Category)
           : (rawCat || "chest") as Category
         exRow = {
-          id: nextId(),
+          id: nextIdAtLeast(FIRST_CUSTOM_ID),
           name: exName,
           category,
           kind,

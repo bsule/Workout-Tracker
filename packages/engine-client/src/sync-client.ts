@@ -1,4 +1,4 @@
-import {SnapshotHttp,type RemoteSnapshot} from './snapshot-http'
+import {SnapshotHttp,type RemoteSnapshot,type SyncQuota} from './snapshot-http'
 export interface UploadSnapshot {bytes:Uint8Array;generation:number;revision:number;etag:string|null;deviceId:string}
 export interface SyncEngine {
   prepareUpload(now:string):Promise<UploadSnapshot>
@@ -10,13 +10,20 @@ export interface SyncEngine {
 export class EngineSync {
   private active=true
   private abort=new AbortController()
-  private running:Promise<void>|null=null
-  constructor(private engine:SyncEngine,private http:SnapshotHttp,private now=()=>new Date().toISOString()){}
+  private running:Promise<{quota:SyncQuota|null}>|null=null
+  constructor(private engine:SyncEngine,readonly http:SnapshotHttp,private now=()=>new Date().toISOString()){}
+  get closed(){return !this.active}
   preview():Promise<RemoteSnapshot|null>{
     if(!this.active)return Promise.reject(new Error('Sync session closed.'))
     return this.http.preview(this.abort.signal).then(result=>{this.check();return result})
   }
-  push(overwriteEtag?:string|null):Promise<void>{
+  quota():Promise<SyncQuota>{
+    if(!this.active)return Promise.reject(new Error('Sync session closed.'))
+    return this.http.quota(this.abort.signal).then(result=>{this.check();return result})
+  }
+  /** `overwriteEtag` replaces the If-Match precondition (null: the cloud is
+   * empty) when the user chose to overwrite a newer cloud copy. */
+  push(overwriteEtag?:string|null):Promise<{quota:SyncQuota|null}>{
     if(!this.active)return Promise.reject(new Error('Sync session closed.'))
     if(this.running)return this.running
     const run=(async()=>{
@@ -26,6 +33,7 @@ export class EngineSync {
       // Overwrite uses a refreshed remote precondition but local adoption still
       // checks the ETag that was current when the source was captured.
       await this.engine.acknowledgePush(source.generation,source.revision,source.etag,result.etag,this.now())
+      return {quota:result.quota}
     })()
     this.running=run.finally(()=>{this.running=null});return this.running
   }

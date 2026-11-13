@@ -7,17 +7,11 @@ import {
   useState,
   type ReactNode,
 } from "react"
-import AsyncStorage from "@react-native-async-storage/async-storage"
 import type { User } from "@lift/core"
-import {
-  CloudflareTransport,
-  clearSyncClock,
-  configureSyncClock,
-  createDeviceIdSource,
-  sync as syncModule,
-} from "@lift/core"
+import { clearSyncClock, configureSyncClock } from "@lift/core/sync/syncClock"
 import { rnSyncClockStore } from "../sync/clockStore"
-import Constants from "expo-constants"
+import { clearLegacyEtag } from "../sync/deviceId"
+import { configureEngineSync } from "../sync/engineSync"
 import {
   api,
   getToken,
@@ -26,30 +20,6 @@ import {
   setCachedUser,
   ApiError,
 } from "./api"
-
-const API_BASE: string =
-  (Constants.expoConfig?.extra?.apiBaseUrl as string | undefined) ??
-  "http://localhost:8787/api"
-
-const ETAG_KEY = "lift.sync.etag"
-// Names this install, not the account, so sign-out leaves it in place.
-const DEVICE_ID_KEY = "lift.sync.deviceId"
-
-const syncTransport = new CloudflareTransport({
-  apiBase: API_BASE,
-  getToken,
-  onEtagChange: (etag) => {
-    if (etag) {
-      AsyncStorage.setItem(ETAG_KEY, etag).catch(() => {})
-    } else {
-      AsyncStorage.removeItem(ETAG_KEY).catch(() => {})
-    }
-  },
-  getDeviceId: createDeviceIdSource({
-    get: () => AsyncStorage.getItem(DEVICE_ID_KEY),
-    set: (id) => AsyncStorage.setItem(DEVICE_ID_KEY, id),
-  }),
-})
 
 interface AuthState {
   user: User | null
@@ -78,10 +48,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!cancelled) setLoading(false)
         return
       }
-      const savedEtag = await AsyncStorage.getItem(ETAG_KEY).catch(() => null)
-      if (savedEtag) syncTransport.setEtag(savedEtag)
+      // The engine keeps the sync etag. A legacy one under lift.sync.etag is
+      // read once, by the open that migrates an older store.
       configureSyncClock(rnSyncClockStore)
-      syncModule.configureSync(syncTransport)
+      configureEngineSync(token)
 
       // Tokens never expire server-side, so a stored token is a valid session.
       // Render from cache first; waiting on /auth/me means no network, no app.
@@ -101,7 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await setToken(null)
           await setCachedUser(null)
           if (!cancelled) setUser(null)
-          syncModule.configureSync(null)
+          configureEngineSync(null)
         }
         // Network / 5xx: keep the cached session exactly as it is.
       } finally {
@@ -118,12 +88,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await setToken(res.token)
     await setCachedUser(res.user)
     setUser(res.user)
-    syncTransport.setEtag(null)
-    // setEtag only notifies on a change, so drop the stored value directly.
-    AsyncStorage.removeItem(ETAG_KEY).catch(() => {})
+    // A legacy etag on this device belongs to whoever was signed in before.
+    clearLegacyEtag()
     configureSyncClock(rnSyncClockStore)
     clearSyncClock()
-    syncModule.configureSync(syncTransport)
+    configureEngineSync(res.token)
   }, [])
 
   const signup = useCallback(
@@ -132,11 +101,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await setToken(res.token)
       await setCachedUser(res.user)
       setUser(res.user)
-      syncTransport.setEtag(null)
-      AsyncStorage.removeItem(ETAG_KEY).catch(() => {})
+      clearLegacyEtag()
       configureSyncClock(rnSyncClockStore)
       clearSyncClock()
-      syncModule.configureSync(syncTransport)
+      configureEngineSync(res.token)
     },
     []
   )
@@ -159,10 +127,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await setToken(null)
     await setCachedUser(null)
     setUser(null)
-    syncTransport.setEtag(null)
+    clearLegacyEtag()
     clearSyncClock()
     configureSyncClock(null)
-    syncModule.configureSync(null)
+    configureEngineSync(null)
   }, [])
 
   const value = useMemo<AuthState>(

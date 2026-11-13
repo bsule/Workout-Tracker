@@ -21,6 +21,7 @@
     "./session": "./src/session.ts",
     "./workout-api": "./src/workout-api.ts",
     "./types": "./src/types.ts",
-    "./data-api": "./src/data-api.ts"
+    "./data-api": "./src/data-api.ts",
+    "./auto-sync": "./src/auto-sync.ts"
   }
 }

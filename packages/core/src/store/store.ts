@@ -1,3 +1,7 @@
+/**
+ * @deprecated Legacy TypeScript store. Replaced by the Rust engine and @lift/engine-client.
+ * Retained for legacy migrations, test parity oracles, and compatibility.
+ */
 import { useSyncExternalStore } from "react"
 import { buildIndexes, type Indexes } from "./indexes"
 import { emptySnapshot, type Snapshot } from "./schema"

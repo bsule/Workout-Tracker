@@ -473,6 +473,7 @@ dependencies = [
  "csv",
  "flate2",
  "lift-domain",
+ "serde",
  "serde_json",
  "unicode-normalization",
 ]
@@ -520,6 +521,7 @@ dependencies = [
 name = "lift-wasm"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "lift-codec",
  "lift-domain",
  "lift-engine",

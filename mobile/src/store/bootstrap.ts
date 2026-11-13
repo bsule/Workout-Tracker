@@ -1,87 +1,96 @@
 import { AppState } from "react-native"
-import {
-  setStorageFactory,
-  configureStore,
-  hydrateStore,
-  flushOnHide,
-  autoSync,
-  unloadStore,
-} from "@lift/core"
-import { accountStorePath, legacyStorePath } from "@lift/core/store/paths"
-import { adoptLegacyStore, createActiveStorage } from "./storage"
+import type { AccountEngineSession } from "@lift/engine-client/session"
+import { mobileSessions } from "../engine/mobileEngine"
 import { restTimer } from "../restTimer"
+import { mobileSync } from "../sync/engineSync"
+import { cancelRestorePoint, saveRestorePointNow } from "./restorePoints"
 
-let installed = false
+/** The engine owns the account's data: no @lift/core store loads on mobile. */
+
 let lifecycleWired = false
-// A sign-out's save must finish before a sign-in configures the next store.
+// A sign-out's close must finish before a sign-in opens the next account.
 let unloading: Promise<void> = Promise.resolve()
 
-/** Sign-out: end the rest timer, save the store, then drop it from memory.
- *  The timer names the signed-out user's exercise, and no later set of theirs
- *  will end or replace it. A manual reset or stop goes with it. */
+const SETTINGS_QUERY = { kind: "settings" }
+const COUNTS_QUERY = { kind: "counts" }
+
+/** Sign-out: end the rest timer and its manual reset or stop, save a restore
+ *  point, then close the engine. The timer names the signed-out user's
+ *  exercise, and no later set of theirs will end or replace it. */
 export function unloadForSignOut(): Promise<void> {
   restTimer.disable()
   restTimer.clearMark()
-  unloading = unloading.then(unloadStore).catch((e) => {
-    console.error("Failed to unload the store", e)
-  })
+  restTimer.bindEngine(null)
+  mobileSync.reset()
+  unloading = unloading
+    .then(async () => {
+      await saveRestorePointNow().catch(() => {})
+      cancelRestorePoint()
+      await mobileSessions.switchAccount(null)
+    })
+    .catch((e) => {
+      console.error("Failed to close the account", e)
+    })
   return unloading
 }
 
-/**
- * Idempotent install: registers the FS-backed storage adapter and wires the
- * RN AppState lifecycle (background/inactive → flushOnHide). Safe to call
- * before login; per-user `configure()` happens in bootstrapForUser().
- */
-export function installMobileStore() {
-  if (installed) return
-  installed = true
-  setStorageFactory(createActiveStorage)
-  if (!lifecycleWired) {
-    lifecycleWired = true
-    AppState.addEventListener("change", (state) => {
-      if (state !== "active") {
-        flushOnHide()
-      } else {
-        scheduleAutoSync()
-        // iOS cannot end the rest timer while the app is suspended, so one
-        // past its cutoff can still be on the Lock Screen.
-        restTimer.reconcile()
-      }
-    })
+/** Idempotent: background saves a restore point; foreground catches up on
+ *  sync and on a rest timer iOS could not end while suspended. */
+export function installMobileLifecycle() {
+  if (lifecycleWired) return
+  lifecycleWired = true
+  AppState.addEventListener("change", (state) => {
+    if (state !== "active") {
+      void saveRestorePointNow().catch(() => {})
+    } else {
+      scheduleAutoSync()
+      restTimer.reconcile()
+    }
+  })
+}
+
+/** A newer open for another account took over before this one finished. */
+export class OpenSupersededError extends Error {
+  constructor() {
+    super("Another account opened.")
   }
 }
 
 /**
- * Hydrates the store for a signed-in user, keyed by user id (the web uses the
- * same path scheme, accountStorePath). A store an older build kept under the
- * username moves over first, once.
+ * Opens the signed-in user's engine, keyed by user id. A store an older build
+ * kept under the username moves over first, once (openEngine.ts). Resolves
+ * when the settings and counts are read, so the first frame has the right
+ * weight unit and the restore prompt decision.
  */
-export async function bootstrapForUser(user: { id: number; username: string }) {
+export async function openForUser(user: { id: number; username: string }): Promise<AccountEngineSession> {
   await unloading
-  installMobileStore()
-  const subPath = accountStorePath(user.id)
-  if (user.username) await adoptLegacyStore(legacyStorePath(user.username), subPath)
-  configureStore(subPath)
-  await hydrateStore()
-  scheduleAutoSync()
-  // After hydrate, because the rest timer settings live in the snapshot. On
-  // a cold start this picks up a timer the previous process left running.
+  installMobileLifecycle()
+  const key = String(user.id)
+  await mobileSessions.switchAccount(key, { username: user.username })
+  const state = mobileSessions.getSnapshot()
+  if (state.status === "error" && state.accountKey === key) throw state.error
+  if (state.status !== "ready" || state.session.accountKey !== key) throw new OpenSupersededError()
+  const { client } = state.session
+  await Promise.all([
+    client.prefetch("settings", SETTINGS_QUERY),
+    client.prefetch("counts", COUNTS_QUERY),
+  ])
+  if (mobileSessions.session !== state.session) throw new OpenSupersededError()
+  restTimer.bindEngine(client)
+  // After the settings are read: the rest timer settings live there. On a
+  // cold start this picks up a timer the previous process left running.
   restTimer.reconcile()
+  scheduleAutoSync()
+  return state.session
 }
 
 /**
- * Cloud sync catch-up: push if this device hasn't synced in a day.
- *
- * Runs on cold start and on every foreground, which is often — that is fine.
- * After the first call the clock is in memory, so a "not due" answer is one
- * comparison: no disk, no network, no render. serialize() (JSON.stringify +
- * gzipSync) only runs on the rare due call, and requestIdleCallback keeps it
- * off the first frames. Signed out, offline, or unhydrated it does nothing —
- * see autoSync.maybeAutoSync().
+ * Cloud sync catch-up: push if this device hasn't synced in a day. Runs on
+ * open and on every foreground. A "not due" answer costs one comparison, and
+ * requestIdleCallback keeps the rare push off the first frames.
  */
 function scheduleAutoSync() {
   requestIdleCallback(() => {
-    void autoSync.maybeAutoSync()
+    void mobileSync.maybeAutoSync()
   })
 }

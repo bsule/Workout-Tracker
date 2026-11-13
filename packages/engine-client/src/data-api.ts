@@ -34,6 +34,8 @@ export class EngineDataApi implements SyncEngine {
       return this.data.replaceSnapshot(bytes,generation,revision,etag,now)
     })
   }
+  /** The committed version once every accepted write has landed. */
+  currentVersion(){return this.client.effect(version=>Promise.resolve(version))}
   async restore(slot:string,generation:number,revision:number){
     return this.client.commit(async version=>{
       if(version.generation!==generation||version.revision!==revision)throw new Error('Local data changed; review the restore point again.')

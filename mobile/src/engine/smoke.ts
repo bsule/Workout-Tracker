@@ -10,7 +10,7 @@ export async function runEngineSmoke():Promise<void>{
   await FileSystem.makeDirectoryAsync(directory,{intermediates:true})
   const path=directory+'engine.sqlite'
   const now='2026-01-01T12:00:00.000Z',today='2026-01-01'
-  const first=await openNativeTransport('smoke-'+token,path,'synthetic',now)
+  const first=await openNativeTransport('smoke-'+token,path,'synthetic',now,{etag:null})
   try{
     const command={op:'set_day_note',date:today,text:'native durable smoke'}
     const receipt=await first.transport.execute('one',first.generation,command,now,today)
@@ -46,7 +46,7 @@ export async function runEngineSmoke():Promise<void>{
     const replaced=await first.transport.query({kind:'counts'})
     if(replaced.generation!==upload.generation+1)throw new Error('Replacement generation failed.')
   }finally{await first.transport.close()}
-  const second=await openNativeTransport('reopened-'+token,path,'synthetic',now)
+  const second=await openNativeTransport('reopened-'+token,path,'synthetic',now,{etag:null})
   try{
     const reply=await second.transport.query({kind:'day_note',date:today})
     if(reply.data!=='native durable smoke')throw new Error('Native data did not survive reopen.')

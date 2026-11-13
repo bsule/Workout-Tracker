@@ -89,20 +89,26 @@ function bytesToBase64(bytes: Uint8Array): string {
   return out
 }
 
+import type { EngineDataApi } from "@lift/engine-client/data-api"
+
 /**
- * Build the .fitnotesdb bytes for the given snapshot, write them to the
- * cache directory, and return the local file URI for the caller to share.
+ * Build the .fitnotesdb bytes for the given snapshot or engine data API,
+ * write them to the cache directory, and return the local file URI for the caller to share.
  */
-export async function writeFitnotesDbToCache(snap: Snapshot): Promise<{
+export async function writeFitnotesDbToCache(
+  snap?: Snapshot,
+  dataApi?: EngineDataApi
+): Promise<{
   uri: string
   filename: string
 }> {
   const skeletonBytes = await loadSkeletonBytes()
-  const bytes = nativeExports.available
+  const bytes = dataApi
+    ? await dataApi.exportFitnotes(skeletonBytes)
+    : nativeExports.available && snap
     ? await nativeExports.fitnotes(snap, skeletonBytes)
     : await (async () => {
-        // Expo Go has no custom native modules. This compatibility path is
-        // removed when the complete app requires an engine development build.
+        if (!snap) throw new Error("Snapshot required for legacy export")
         const initSqlJs = require("sql.js/dist/sql-asm.js") as (cfg?: unknown) => Promise<SqlJsModule>
         return buildFitnotesDb(snap, { skeletonBytes, SQL: await initSqlJs() })
       })()

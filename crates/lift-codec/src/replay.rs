@@ -1,5 +1,9 @@
 //! Compatibility replay for the legacy pending.log. Missing copy_from inputs
 //! cannot be reconstructed; those entries retain the legacy no-op behavior.
+//!
+//! PR flags are derived from the final rows, and no logged operation reads
+//! them, so the exercises every operation touched are recomputed once at the
+//! end. That gives the same flags as the TypeScript per-operation recompute.
 use crate::{invalid, CodecError};
 use lift_domain::{model::Snapshot, prs};
 use serde_json::{json, Value};
@@ -14,7 +18,9 @@ fn rows<'a>(s: &'a mut Value, key: &str) -> Result<&'a mut Vec<Value>, CodecErro
 }
 fn add(s: &mut Value, table: &str, row: &Value) -> Result<(), CodecError> {
     if !row.is_object() {
-        return Err(invalid("Invalid logged row"));
+        // TypeScript would fail the whole boot on such a line; skipping it
+        // keeps every other logged change.
+        return Ok(());
     }
     let rows = rows(s, table)?;
     if !rows.iter().any(|r| r["id"] == row["id"]) {
@@ -34,11 +40,32 @@ fn patch(s: &mut Value, table: &str, target: u64, patch: &Value) -> Result<(), C
     Ok(())
 }
 pub fn replay(mut s: Value, lines: &str, now: &str) -> Result<Value, CodecError> {
+    if !s.is_object() {
+        return Err(invalid("Snapshot must be an object"));
+    }
+    for key in [
+        "exercises",
+        "workouts",
+        "workout_exercises",
+        "sets",
+        "gyms",
+        "day_notes",
+    ] {
+        if !s[key].is_array() {
+            s[key] = json!([]);
+        }
+    }
+    if !s["settings"].is_object() {
+        s["settings"] = json!({});
+    }
+    let mut affected = HashSet::new();
     for line in lines.lines() {
         let Ok(op) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        let mut affected = HashSet::new();
+        if !op.is_object() {
+            continue;
+        }
         let exercise_of_we = |we: u64| {
             s["workout_exercises"]
                 .as_array()
@@ -70,7 +97,7 @@ pub fn replay(mut s: Value, lines: &str, now: &str) -> Result<Value, CodecError>
                 }
             }
             "delete_workout" => {
-                for we in s["workout_exercises"].as_array().unwrap() {
+                for we in s["workout_exercises"].as_array().into_iter().flatten() {
                     if id(we, "workout_id") == id(&op, "id") {
                         affected.insert(id(we, "exercise_id"));
                     }
@@ -129,16 +156,15 @@ pub fn replay(mut s: Value, lines: &str, now: &str) -> Result<Value, CodecError>
             }
             "add_set" => {
                 let mut row = op["row"].clone();
-                if !row.is_object() {
-                    return Err(invalid("Invalid logged set"));
+                if row.is_object() {
+                    if row.get("is_position_pr").is_none_or(Value::is_null) {
+                        row["is_position_pr"] = json!(false);
+                    }
+                    if row.get("was_position_pr").is_none_or(Value::is_null) {
+                        row["was_position_pr"] = json!(false);
+                    }
+                    add(&mut s, "sets", &row)?;
                 }
-                if row.get("is_position_pr").is_none() {
-                    row["is_position_pr"] = json!(false);
-                }
-                if row.get("was_position_pr").is_none() {
-                    row["was_position_pr"] = json!(false);
-                }
-                add(&mut s, "sets", &row)?;
             }
             "update_set" | "log_planned_set" => {
                 let mut p = op["patch"].clone();
@@ -200,11 +226,11 @@ pub fn replay(mut s: Value, lines: &str, now: &str) -> Result<Value, CodecError>
             }
             _ => {}
         }
-        if !affected.is_empty() {
-            let mut typed: Snapshot = serde_json::from_value(s).map_err(invalid)?;
-            prs::recompute(&mut typed, Some(&affected));
-            s = serde_json::to_value(typed).map_err(invalid)?;
-        }
+    }
+    if !affected.is_empty() {
+        let mut typed: Snapshot = serde_json::from_value(s).map_err(invalid)?;
+        prs::recompute(&mut typed, Some(&affected));
+        s = serde_json::to_value(typed).map_err(invalid)?;
     }
     Ok(s)
 }

@@ -1,6 +1,6 @@
 /**
- * The mobile restore points end to end: RnFsStorage's file moves and
- * metadata, and restoreFromSlot() through the real @lift/core persist layer.
+ * The legacy mobile snapshot files: RnFsStorage's file moves and metadata.
+ * Older builds wrote these; the engine reads them once, on migration.
  * expo-file-system is replaced by an in-memory disk that keeps mtimes across
  * moves and, like the iOS implementation, refuses to move onto an existing
  * file.
@@ -59,7 +59,6 @@ import {
 import { parse, serialize } from "@lift/core/store/blob"
 import type { Snapshot } from "@lift/core/store/schema"
 import { RnFsStorage, createActiveStorage } from "../mobile/src/store/storage"
-import { listRestorePoints, restoreFromSlot } from "../mobile/src/store/restorePoints"
 import type { Slot } from "../mobile/src/store/snapshotRotation"
 import { currentSnapshot, loadSnapshot, resetStore } from "./helpers/store"
 import { getState } from "@lift/core/store/store"
@@ -247,104 +246,5 @@ describe("hydrate with a damaged snapshot.bin", () => {
   })
 })
 
-describe("restoreFromSlot", () => {
-  beforeEach(() => {
-    resetStore()
-    setStorageFactory(createActiveStorage)
-    configure("users/other") // a switch, so "users/tester" gets a fresh adapter
-    configure("users/tester")
-  })
-
-  async function flushWith(n: number, at: number) {
-    vi.setSystemTime(at)
-    loadSnapshot(withWorkouts(n))
-    await flushNow()
-  }
-
-  it("restores the daily copy, keeps it in place, and can be undone", async () => {
-    await flushWith(1, T0)
-    await flushWith(2, T0 + 60_000)
-    await flushWith(3, T0 + 2 * 60_000) // .bak2 = 1
-    await flushWith(4, T0 + 30 * HOUR) // .bak2 expired: now holds 2
-
-    const storage = new RnFsStorage("users/tester")
-    expect(await slots(storage)).toEqual({ current: 4, bak: 3, bak2: 2 })
-
-    // The data on screen has an edit the last flush has not written yet.
-    loadSnapshot(withWorkouts(5))
-    vi.setSystemTime(T0 + 60 * HOUR) // .bak2 is well past a day old
-    await restoreFromSlot("bak2")
-
-    expect(currentSnapshot().workouts).toHaveLength(2)
-    // The restore's own write did not move .bak into the daily slot.
-    expect(await slots(storage)).toEqual({ current: 2, bak: 4, bak2: 2 })
-    // Undo holds what was on screen, including the unflushed edit.
-    expect(await workoutsIn(storage, "undo")).toBe(5)
-    expect((await listRestorePoints()).undo).toMatchObject({ workouts: 5 })
-
-    await restoreFromSlot("undo")
-    expect(currentSnapshot().workouts).toHaveLength(5)
-  })
-
-  it("a second restore with no edits in between keeps the data from before the first", async () => {
-    await flushWith(1, T0)
-    await flushWith(2, T0 + 60_000)
-    await flushWith(3, T0 + 2 * 60_000) // .bak2 = 1, .bak = 2
-    const storage = new RnFsStorage("users/tester")
-
-    loadSnapshot(withWorkouts(4))
-    await restoreFromSlot("bak2")
-    // A double tap, or "it didn't seem to work": the same restore again.
-    await restoreFromSlot("bak2")
-    expect(currentSnapshot().workouts).toHaveLength(1)
-    expect(await workoutsIn(storage, "undo")).toBe(4)
-
-    // An edit after a restore makes the next restore save it to undo.
-    loadSnapshot(withWorkouts(6))
-    await restoreFromSlot("bak2")
-    expect(await workoutsIn(storage, "undo")).toBe(6)
-  })
-
-  it("changes nothing when the chosen file is damaged", async () => {
-    await flushWith(1, T0)
-    await flushWith(2, T0 + 60_000)
-    disk.files.set(DIR + "snapshot.bin.bak", { data: "bm90IGd6aXA=", mtime: T0 / 1000 })
-
-    await expect(restoreFromSlot("bak")).rejects.toThrow()
-    expect(currentSnapshot().workouts).toHaveLength(2)
-    expect(disk.files.has(DIR + "snapshot.bin.undo")).toBe(false)
-  })
-})
-
-describe("restore account isolation", () => {
-  it("cancels a restore when accounts change while the file is being read", async () => {
-    setStorageFactory(createActiveStorage)
-    configure("users/other")
-    configure("users/tester")
-    loadSnapshot(withWorkouts(1))
-    await flushNow()
-    loadSnapshot(withWorkouts(2))
-    await flushNow()
-    let release!: () => void
-    const gate = new Promise<void>((r) => { release = r })
-    const original = RnFsStorage.prototype.readSlot
-    const spy = vi.spyOn(RnFsStorage.prototype, "readSlot").mockImplementation(async function (slot) {
-      const bytes = await original.call(this, slot)
-      await gate
-      return bytes
-    })
-    try {
-      const restoring = restoreFromSlot("bak")
-      configure("users/another")
-      await hydrate()
-      const before = new Map(disk.files)
-      release()
-      await expect(restoring).rejects.toThrow("account changed")
-      expect(currentSnapshot().workouts).toEqual([])
-      expect(disk.files).toEqual(before)
-    } finally {
-      release()
-      spy.mockRestore()
-    }
-  })
-})
+// restoreFromSlot now goes through the engine (mobile/src/store/restorePoints.ts):
+// see tests/mobileRestorePoints.test.ts. The slot rules themselves live in Rust.

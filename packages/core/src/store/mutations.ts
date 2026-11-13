@@ -1,6 +1,6 @@
 import type { Category, ExerciseKind, UserSettings, WorkoutStatus } from "../types"
 import { applyMutation, getState } from "./store"
-import { nextId } from "./ids"
+import { nextId, nextIdAtLeast } from "./ids"
 import { recordPending } from "./persist"
 import type {
   ExerciseRow,
@@ -55,7 +55,7 @@ export function createExercise(input: {
   category: Category
   kind?: ExerciseKind
 }): ExerciseRow {
-  const id = Math.max(nextId(), FIRST_CUSTOM_ID)
+  const id = nextIdAtLeast(FIRST_CUSTOM_ID)
   const row: ExerciseRow = {
     id,
     name: input.name.trim(),

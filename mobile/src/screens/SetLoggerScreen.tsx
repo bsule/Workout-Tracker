@@ -1,4 +1,4 @@
-import { useScreenSnapshot, usePrepareScreenReturn } from "../store/useScreenSnapshot"
+import { usePrepareScreenReturn } from "../store/useScreenSnapshot"
 import { useOpeningBackGuard } from "../navigation/useOpeningBackGuard"
 import {
   memo,
@@ -40,31 +40,27 @@ import ReanimatedSwipeable, {
 import { SwipeActionTray } from "../components/SwipeActionTray"
 import { SwipeHold } from "../animation/SwipeHold"
 import {
-  addExerciseToWorkout,
-  batchMutations,
-  setExerciseNote,
-  createWorkout,
   defaultStep,
-  deleteWorkout,
-  deleteSets,
   formatWeight,
   fromKg,
-  getDayNoteQ,
-  getExerciseHistoryQ,
-  getState,
-  getWorkoutByDateQ,
-  getWorkoutQ,
-  localApi as api,
-  logPlannedSet,
   roundForDisplay,
   toKg,
   topRepRecords,
   topRepRecordsByPosition,
 } from "@lift/core"
 import {
-  getExerciseHistorySourceRowsQ,
-  sameExerciseHistorySourceRows,
-} from "@lift/core/store/queries"
+  queryValue,
+  useDayNote,
+  useEngineClient,
+  useFullExerciseHistory,
+  useWorkout,
+  useWorkoutApi,
+  useWorkoutByDate,
+} from "@lift/engine-client/react"
+import { useScreenQueryOptions } from "../engine/screenQuery"
+import { guardWrite, reportWriteError } from "../components/writeError"
+import { SetSaveQueue, type TapSet } from "../setLogger/saveQueue"
+import { HISTORY_PAGE_DAYS } from "@lift/engine-client"
 import type {
   ExerciseHistoryDay,
   TopRepRecord,
@@ -93,7 +89,6 @@ import {
   useToggleTiming,
 } from "../anim"
 import { sameHistory } from "../store/sameHistory"
-import { predictPrFlags as corePredictPrFlags } from "@lift/core/store/prs"
 import { useStableValue } from "../hooks/useStableValue"
 import { PrIcon } from "../components/PrIcon"
 import { SetList as SharedSetList } from "../components/SetList"
@@ -144,23 +139,6 @@ import {
 } from "@lift/core/exerciseStats"
 import { lastSetAnchorMs, restTimer, tickerAnchor } from "../restTimer"
 import { SubTabBar, type SubTab } from "../components/SubTabBar"
-
-
-// Predict whether a hypothetical (weight, reps) added to `weId` would be the
-// current overall PR / position PR for `exerciseId`, against the live store at
-// click time, so the optimistic placeholder can render the gold star on the
-// same frame as the click instead of waiting for the (rAF-deferred) mutation
-// and a second React commit. The rule itself lives in core's prs.ts, next to
-// recomputePrsForExercise, so the preview and the saved flag cannot drift.
-function predictPrFlags(
-  exerciseId: number,
-  weId: number,
-  weight: number,
-  reps: number,
-  queued: readonly { weight: number; reps: number }[]
-): { isPr: boolean; isPosPr: boolean; position: number } {
-  return corePredictPrFlags(getState().indexes, exerciseId, weId, weight, reps, queued)
-}
 
 // An optimistic row: a set tapped into the list whose store mutation has not
 // landed yet. See `pendingAdds` in SetLoggerScreen.
@@ -680,6 +658,16 @@ export function SetLoggerScreen({ route, navigation }: any) {
   //      below naturally no-ops because workoutId stays -1.
   // Until either path resolves, the stub UI synthesized from
   // `pendingCreate` is what the user sees and interacts with.
+  const client = useEngineClient()
+  const api = useWorkoutApi()
+  const queryOptions = useScreenQueryOptions()
+  const pendingCreate = route.params?.pendingCreate as
+    | { date: string; exerciseId: number; exerciseName: string; exerciseCategory: string }
+    | undefined
+  // The day this logger works on. Callers pass it with the ids, so the first
+  // frame reads the day's workout the Day or Calendar screen already holds
+  // instead of waiting a round trip for it.
+  const dayDate: string | null = route.params?.date ?? pendingCreate?.date ?? null
   const [resolved, setResolved] = useState<{
     workoutId: number
     weId: number
@@ -688,14 +676,17 @@ export function SetLoggerScreen({ route, navigation }: any) {
     if (p?.workoutId != null && p?.weId != null) {
       return { workoutId: p.workoutId, weId: p.weId }
     }
-    if (p?.pendingCreate) {
-      const existing = getWorkoutByDateQ(p.pendingCreate.date)
-      if (existing) {
-        const we = existing.exercises.find(
-          (e: WorkoutExercise) => e.exercise.id === p.pendingCreate.exerciseId
-        )
-        if (we) return { workoutId: existing.id, weId: we.id }
-      }
+    if (pendingCreate) {
+      // Read-only: if the day already holds this exercise, reuse its row.
+      const cached = client.snapshot<Workout | null>(
+        `workout_by_date:${pendingCreate.date}`,
+        { kind: "workout_by_date", date: pendingCreate.date }
+      )
+      const existing = cached.status === "ready" ? cached.value : null
+      const we = existing?.exercises.find(
+        (e: WorkoutExercise) => e.exercise.id === pendingCreate.exerciseId
+      )
+      if (existing && we) return { workoutId: existing.id, weId: we.id }
     }
     return null
   })
@@ -707,6 +698,13 @@ export function SetLoggerScreen({ route, navigation }: any) {
   useEffect(() => {
     const id = requestAnimationFrame(() => setFirstPaintDone(true))
     return () => cancelAnimationFrame(id)
+  }, [])
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
   }, [])
   const workoutId = resolved?.workoutId ?? -1
   const weId = resolved?.weId ?? -1
@@ -720,26 +718,40 @@ export function SetLoggerScreen({ route, navigation }: any) {
   } = useSettings()
   const [tab, setTab] = useState<SubTab>("workout")
 
-  const snapshot = useScreenSnapshot()
-  // While `resolved` is null we render a stub workout/we synthesized from
-  // the picker's `pendingCreate` payload — the real workoutId/weId land
-  // ~one frame after the push animation finishes, and showing the
-  // populated header +
-  // form during the slide-in is what makes the transition feel instant.
-  // For a fresh exercise add the stub is visually identical to what the
-  // post-mutation render produces (no logged sets), so the swap is
-  // imperceptible.
-  const realWorkout = useMemo(
-    () => (resolved ? getWorkoutQ(workoutId) : null),
-    [snapshot, workoutId, resolved]
-  )
+  // The day's workout, shared with the Day and Calendar screens' cache. Only
+  // a caller that passes no date reads the workout by id instead.
+  const dayQuery = useWorkoutByDate(dayDate ?? "", {
+    ...queryOptions,
+    active: queryOptions.active !== false && dayDate != null,
+  })
+  const byIdQuery = useWorkout(resolved && dayDate == null ? resolved.workoutId : 0, {
+    ...queryOptions,
+    active: queryOptions.active !== false && resolved != null && dayDate == null,
+  })
+  const dayWorkout: Workout | null = dayDate != null ? queryValue(dayQuery, null) : null
+  const realWorkout: Workout | null = resolved
+    ? dayDate != null
+      ? dayWorkout?.id === resolved.workoutId
+        ? dayWorkout
+        : null
+      : queryValue(byIdQuery, null)
+    : null
+  const workoutLoading =
+    resolved != null &&
+    realWorkout == null &&
+    (dayDate != null ? dayQuery.status === "loading" : byIdQuery.status === "loading")
   const realWe = realWorkout?.exercises.find((e) => e.id === weId)
+  // Until the exercise row exists (and while the first save's result is on
+  // its way back), the screen renders a stub built from the picker's
+  // `pendingCreate` payload, so the slide-in shows the populated header and
+  // form at once. For a fresh exercise the stub looks the same as the saved
+  // state with no sets, so the swap cannot be seen.
   const stubFromPending = useMemo<{
     workout: Workout
     we: WorkoutExercise
   } | null>(() => {
-    if (resolved) return null
-    const p = route.params?.pendingCreate
+    if (realWe) return null
+    const p = pendingCreate
     if (!p) return null
     const stubWe: WorkoutExercise = {
       id: -1,
@@ -748,7 +760,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
       exercise: {
         id: p.exerciseId,
         name: p.exerciseName,
-        category: p.exerciseCategory,
+        category: p.exerciseCategory as WorkoutExercise["exercise"]["category"],
         kind: "weight_reps",
         is_custom: false,
       },
@@ -767,7 +779,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
       created_at: new Date().toISOString(),
     }
     return { workout: stubWorkout, we: stubWe }
-  }, [resolved, route.params?.pendingCreate])
+  }, [realWe, pendingCreate])
   const workout = realWorkout ?? stubFromPending?.workout ?? null
   const we = realWe ?? stubFromPending?.we
   const sets = we?.sets ?? []
@@ -777,33 +789,23 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // `weight` field) and a level integer (in the `reps` field). No kg/lb
   // conversion is applied for cardio.
   const isCardio = isCardioCategory(we?.exercise.category)
-  // Lazy: only run the history query when a tab that needs it is active.
-  // The query iterates indexes and is fast, but it runs inside the same
-  // synchronous React commit triggered by add/delete-set mutations, where
-  // every saved millisecond delays the new row's fade-in start.
+  // Lazy: only read the history when a tab that needs it is active.
+  // The workout tab's "Last time" card reads history as well. Gated on
+  // firstPaintDone so the push animation and the first commit still pay
+  // nothing for the query, and none at all when the card is switched off.
   const needsHistory =
     tab === "history" ||
     tab === "graph" ||
     tab === "summary" ||
-    // The workout tab's "Last time" card reads history as well. Gated on
-    // firstPaintDone so the push animation and the first commit still pay
-    // nothing for the query — only later commits do, and none at all when
-    // the card is switched off.
     (tab === "workout" && firstPaintDone && showLastTime)
-  // Source row references stay the same when an unrelated exercise or a
-  // setting changes. A target set's PR flags also replace its row, so this
-  // invalidates for historical PR changes as well as new/deleted sets.
-  const rawHistorySources = useMemo(
-    () => exerciseId != null && needsHistory
-      ? getExerciseHistorySourceRowsQ(exerciseId)
-      : [],
-    [snapshot, exerciseId, needsHistory]
-  )
-  const historySources = useStableValue(rawHistorySources, sameExerciseHistorySourceRows)
-  const rawHistory: ExerciseHistoryDay[] = useMemo(() => {
-    if (exerciseId == null || !needsHistory) return EMPTY_HISTORY
-    return getExerciseHistoryQ(exerciseId)
-  }, [historySources, exerciseId, needsHistory])
+  const historyQuery = useFullExerciseHistory(exerciseId ?? -1, {
+    ...queryOptions,
+    active: queryOptions.active !== false && needsHistory && exerciseId != null,
+  })
+  const rawHistory: ExerciseHistoryDay[] =
+    exerciseId != null && needsHistory
+      ? queryValue(historyQuery, null)?.items ?? EMPTY_HISTORY
+      : EMPTY_HISTORY
   // Identity-stable while the content is unchanged, so LastTimePanel,
   // GraphPanel, and SummaryPanel skip their render on commits that did not
   // touch this exercise's history (a set edit elsewhere, a note, a sync).
@@ -814,37 +816,50 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // the live "since last set" ticker (gated by showTimeSinceLastSet), so this
   // is always computed regardless of those flags.
   //
-  // Important: during the stub phase (resolved is null), `workout` is a
-  // synthetic placeholder containing only the pending exercise. We look up
-  // the real workout from the snapshot by date so the bench → pushdowns
-  // hand-off still surfaces the prior exercise's last-set timestamp before
-  // the user saves their first pushdown set.
+  // During the stub phase `workout` is a placeholder holding only the pending
+  // exercise, so this reads the day's real workout: the bench to pushdowns
+  // hand-off still shows the prior exercise's last-set time before the first
+  // pushdown set is saved.
+  const anchorWorkout = realWorkout ?? dayWorkout
   const prevWorkoutLastSetIso = useMemo<string | null>(() => {
-    const date = workout?.date ?? route.params?.pendingCreate?.date ?? null
-    if (!date) return null
-    const realByDate = getWorkoutByDateQ(date)
-    if (!realByDate) return null
-    const skipWeId = realWe?.id ?? null
-    return latestOtherSetIso(realByDate.exercises, skipWeId)
-  }, [snapshot, workout?.date, route.params?.pendingCreate?.date, realWe?.id])
+    if (!anchorWorkout) return null
+    return latestOtherSetIso(anchorWorkout.exercises, realWe?.id ?? null)
+  }, [anchorWorkout, realWe?.id])
 
   const nextPlanned = !isPlanned ? sets.find((s) => s.is_planned) ?? null : null
   const lastSet = sets.length ? sets[sets.length - 1] : null
   const seed = nextPlanned ?? lastSet
 
-  // Seed each field independently, as before, but query the prior session at
-  // most once when either field needs a fallback. Runs only on mount.
-  const [initialForm] = useState(() => {
-    const top = (seed?.weight == null || seed?.reps == null) && exerciseId != null
-      ? coreLastWorkoutTopSet(getExerciseHistoryQ(exerciseId), workout?.date ?? null)
-      : null
-    const storedWeight = seed?.weight ?? top?.weight ?? (isCardio ? 20 : 0)
+  // The prior session's top set from a history this screen (or the exercise
+  // page) already holds, or undefined when none is kept.
+  function cachedTopSet(id: number | null, currentDate: string | null) {
+    if (id == null) return undefined
+    const cached = client.snapshot<{ total: number; items: ExerciseHistoryDay[] }>(
+      `history_all:${id}`,
+      { kind: "history_all", exercise_id: id }
+    )
+    return cached.status === "ready"
+      ? coreLastWorkoutTopSet(cached.value.items, currentDate)
+      : undefined
+  }
+  function formFrom(
+    from: Pick<WorkoutSet, "weight" | "reps"> | null,
+    top: { weight: number; reps: number } | null | undefined
+  ) {
+    const storedWeight = from?.weight ?? top?.weight ?? (isCardio ? 20 : 0)
     return {
       weight: isCardio
         ? storedWeight
         : roundForDisplay(fromKg(storedWeight, unit), unit),
-      reps: seed?.reps ?? top?.reps ?? (isCardio ? 5 : 8),
+      reps: from?.reps ?? top?.reps ?? (isCardio ? 5 : 8),
     }
+  }
+
+  // Seed each field independently, as before, and read the prior session at
+  // most once when either field needs a fallback.
+  const [initialForm] = useState(() => {
+    const needsTop = seed?.weight == null || seed?.reps == null
+    return formFrom(seed, needsTop ? cachedTopSet(exerciseId, workout?.date ?? null) : null)
   })
   const [weight, setWeight] = useState(initialForm.weight)
   const [reps, setReps] = useState(initialForm.reps)
@@ -899,11 +914,132 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // Sets tapped but not yet written to the store, oldest first, and the
   // scheduled write that drains them. A tap while a write is waiting joins it,
   // so a double tap costs one PR recompute, index rebuild and list re-render.
-  const saveQueueRef = useRef<{ weight: number; reps: number; createdAt: string }[]>([])
+  const saveQueueRef = useRef<TapSet[]>([])
   const cancelSaveRef = useRef<(() => void) | null>(null)
   // When the last edit was saved. The form flips back to add mode on that
   // tap, so a fast second tap meant for Update would log a new set instead.
   const editSavedAtRef = useRef(0)
+
+  // Late prefill. The day's workout or the prior session may not be in hand
+  // on the first frame (nothing kept them). Fill the fields once they are,
+  // but only while the fields still hold what this screen put there: a value
+  // the user typed is never replaced.
+  const autoFormRef = useRef(initialForm)
+  const formRef = useRef({ weight, reps })
+  formRef.current = { weight, reps }
+  const prefillDoneRef = useRef(false)
+  const formSourceReady = realWe != null || (pendingCreate != null && resolved == null)
+  useEffect(() => {
+    if (prefillDoneRef.current || !formSourceReady || exerciseId == null) return
+    prefillDoneRef.current = true
+    const from = seed
+    const date = workout?.date ?? null
+    const apply = (top: { weight: number; reps: number } | null | undefined) => {
+      const next = formFrom(from, top)
+      const current = formRef.current
+      const auto = autoFormRef.current
+      if (current.weight !== auto.weight || current.reps !== auto.reps) return
+      if (next.weight === auto.weight && next.reps === auto.reps) return
+      autoFormRef.current = next
+      setWeight(next.weight)
+      setReps(next.reps)
+    }
+    if (from?.weight != null && from?.reps != null) {
+      apply(null)
+      return
+    }
+    const cached = cachedTopSet(exerciseId, date)
+    if (cached !== undefined) {
+      apply(cached)
+      return
+    }
+    api
+      .exerciseHistoryPage(exerciseId, 0, HISTORY_PAGE_DAYS)
+      .then((page) => {
+        if (mountedRef.current) apply(coreLastWorkoutTopSet(page.items, date))
+      })
+      .catch(() => {
+        // The prefill is a convenience; the defaults stay.
+      })
+  }, [formSourceReady, exerciseId])
+
+  // Writes and PR previews for tapped sets, in tap order. See
+  // ../setLogger/saveQueue for the rules.
+  const apiRef = useRef(api)
+  apiRef.current = api
+  const targetRef = useRef<{ exerciseId: number | null; date: string | null }>({
+    exerciseId: null,
+    date: null,
+  })
+  targetRef.current = {
+    exerciseId,
+    date: pendingCreate?.date ?? workout?.date ?? null,
+  }
+  const queueEvents = useRef({
+    onResolved: (_ids: { workoutId: number; weId: number }) => {},
+    onPredicted: (_key: number, _p: { isPr: boolean; isPosPr: boolean; position: number }) => {},
+    onFailed: (_key: number, _error: unknown) => {},
+  })
+  queueEvents.current = {
+    onResolved: (ids) => {
+      if (!mountedRef.current) return
+      // This commit is where the exercise-note row first mounts, which
+      // pushes the form and the set list down by a row. Only `update` is
+      // configured: the shift animates natively, while newly created views
+      // (the note row, the new set row) keep their own fade-ins.
+      LayoutAnimation.configureNext(SHIFT_ANIM)
+      setResolved(ids)
+    },
+    onPredicted: (key, p) => {
+      if (!mountedRef.current) return
+      setPendingAdds((prev) =>
+        prev.map((a) =>
+          a.key === key
+            ? { ...a, isPr: p.isPr, isPosPr: p.isPosPr, position: p.position }
+            : a
+        )
+      )
+    },
+    onFailed: (key, error) => {
+      if (mountedRef.current) setPendingAdds((prev) => prev.filter((a) => a.key !== key))
+      reportWriteError(error, "Couldn't save set")
+    },
+  }
+  const [saveQueue] = useState(
+    () =>
+      new SetSaveQueue(
+        {
+          logSet: (date, id, input) => apiRef.current.logSet(date, id, input),
+          addSet: (target, input) => apiRef.current.addSet(target, input),
+          predictPr: (id, target, w, r, queued) =>
+            apiRef.current.predictPr(id, target, w, r, queued),
+        },
+        {
+          onResolved: (ids) => queueEvents.current.onResolved(ids),
+          onPredicted: (key, p) => queueEvents.current.onPredicted(key, p),
+          onFailed: (key, error) => queueEvents.current.onFailed(key, error),
+        },
+        () => targetRef.current,
+        resolved
+      )
+  )
+  // The day may turn out to hold this exercise already once its workout
+  // arrives (nothing had it cached when the picker opened this screen).
+  // Reuse that row, as the synchronous lookup above does.
+  useEffect(() => {
+    if (resolved) {
+      saveQueue.setResolved(resolved)
+      return
+    }
+    if (!pendingCreate || !dayWorkout) return
+    const existing = dayWorkout.exercises.find(
+      (e) => e.exercise.id === pendingCreate.exerciseId
+    )
+    if (!existing) return
+    const ids = { workoutId: dayWorkout.id, weId: existing.id }
+    saveQueue.setResolved(ids)
+    setResolved(ids)
+  }, [resolved, pendingCreate, dayWorkout, saveQueue])
 
   // The delete commit and the re-render behind it block JS. A swipe on
   // another row that releases inside that window sits frozen mid-swipe until
@@ -941,6 +1077,18 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // otherwise DayScreen flashes the empty card for the duration of the
   // animation. If the exercise was the only thing on a freshly-created
   // workout (no gym, no started_at, not planned), delete the workout too.
+  // The latest data, read by the leave handler below. It binds once per
+  // route, so reading the render's values directly would see a stale copy.
+  const latestRef = useRef({ workout: realWorkout, workoutId, weId })
+  latestRef.current = { workout: realWorkout, workoutId, weId }
+  // Set ids whose delete has been sent but may not be back in `sets` yet.
+  const sentDeletesRef = useRef(new Set<number>())
+  useEffect(() => {
+    const sent = sentDeletesRef.current
+    if (sent.size === 0) return
+    const present = new Set(sets.map((s) => s.id))
+    for (const id of [...sent]) if (!present.has(id)) sent.delete(id)
+  }, [sets])
   useEffect(() => {
     const unsub = navigation.addListener("beforeRemove", (event: { defaultPrevented: boolean }) => {
       // An early Back is replayed after the picker handoff finishes.
@@ -949,8 +1097,8 @@ export function SetLoggerScreen({ route, navigation }: any) {
       try {
         // Deletes still held for a swipe must land before the checks below.
         swipeHold.flush()
-        if (pendingAddsRef.current.length > 0) return
-        const w = getWorkoutQ(workoutId)
+        if (pendingAddsRef.current.length > 0 || saveQueue.pending.length > 0) return
+        const { workout: w, workoutId, weId } = latestRef.current
         if (!w) return
         const currentWe = w.exercises.find((e) => e.id === weId)
         if (!currentWe) return
@@ -960,14 +1108,24 @@ export function SetLoggerScreen({ route, navigation }: any) {
         // orphaned (the cleanup check sees a non-empty WE, the deferred
         // deleteSet runs after we're gone).
         const leaving = leavingIdsRef.current
-        const effectiveLen = currentWe.sets.filter((s) => !leaving.has(s.id)).length
+        const sent = sentDeletesRef.current
+        const effectiveLen = currentWe.sets.filter(
+          (s) => !leaving.has(s.id) && !sent.has(s.id)
+        ).length
         if (effectiveLen > 0) return
+        // isEmptyWorkoutShell keeps a workout that has a note, a gym, a
+        // start time or a plan: a note-only workout stays on purpose.
         const isOnlyExercise = w.exercises.length === 1
         const isSideEffectWorkout = isOnlyExercise && isEmptyWorkoutShell(w)
+        // Not awaited: the day already hides set-less exercises and an empty
+        // shell workout, so the screen below shows the result at once.
         if (isSideEffectWorkout) {
-          deleteWorkout(workoutId)
+          guardWrite(api.deleteWorkout(workoutId), "Couldn't remove the empty workout")
         } else {
-          api.removeExerciseFromWorkout(workoutId, weId)
+          guardWrite(
+            api.removeExerciseFromWorkout(workoutId, weId),
+            "Couldn't remove the empty exercise"
+          )
         }
       } finally {
         // Include cleanup mutations, then refresh the day before the native
@@ -983,7 +1141,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
       unsub()
       stopTransition()
     }
-  }, [navigation, workoutId, weId, swipeHold, prepareReturn, openingFromPicker])
+  }, [navigation, swipeHold, prepareReturn, openingFromPicker, saveQueue, api])
 
   const showSummaryTab = useCallback(() => setTab("summary"), [])
 
@@ -1055,7 +1213,19 @@ export function SetLoggerScreen({ route, navigation }: any) {
           }
           leavingIdsRef.current = next
           const c0 = Date.now()
-          deleteSets(ids)
+          for (const deletedId of ids) sentDeletesRef.current.add(deletedId)
+          api.deleteSets(ids).catch((error: unknown) => {
+            // The rows come back: they were only collapsed while leaving.
+            for (const deletedId of ids) sentDeletesRef.current.delete(deletedId)
+            if (mountedRef.current) {
+              setLeavingIds((prev) => {
+                const kept = new Set(prev)
+                for (const deletedId of ids) kept.delete(deletedId)
+                return kept
+              })
+            }
+            reportWriteError(error, "Couldn't delete set")
+          })
           dbg(`store commit ${Date.now() - c0}ms ids=${ids.join(",")}`)
         })
       })
@@ -1088,7 +1258,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
     // and the shift of every row below it; the note line's own fade-in is
     // NoteReveal's (see NOTE_SHIFT_ANIM on why `create` is left out).
     LayoutAnimation.configureNext(NOTE_SHIFT_ANIM)
-    api.updateSet(id, { note }).catch(() => {})
+    guardWrite(api.updateSet(id, { note }), "Couldn't save note")
   }
 
   // Note about this exercise on this day. Separate from a set's own note and
@@ -1108,7 +1278,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
     if (!we) return
     // Grows the header, which pushes the form and the set list down.
     LayoutAnimation.configureNext(NOTE_SHIFT_ANIM)
-    setExerciseNote(we.id, exNoteDraft)
+    guardWrite(api.setExerciseNote(we.id, exNoteDraft), "Couldn't save note")
   }
 
   // A note needs a real workout_exercise row to hang on. On the pendingCreate
@@ -1146,7 +1316,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
   function onHeaderMenuAction(id: string) {
     if (id === "note") openExerciseNote()
     else if (id === "lastTime") {
-      api.updateSettings({ show_last_time: !showLastTime })
+      guardWrite(api.updateSettings({ show_last_time: !showLastTime }))
     }
   }
 
@@ -1433,9 +1603,12 @@ export function SetLoggerScreen({ route, navigation }: any) {
   }
 
   if (!we || !workout) {
+    // Still reading: the background alone, so nothing claims the exercise
+    // is gone while its workout is on the way.
+    if (workoutLoading) return <View style={styles.flex} />
     // Reached when the route was given a workoutId/weId that no longer
-    // exists in the snapshot. The pendingCreate handoff path always
-    // synthesizes a stub `we`/`workout`, so it never lands here.
+    // exists. The pendingCreate handoff path always synthesizes a stub
+    // `we`/`workout`, so it never lands here.
     return (
       <View style={[styles.flex, { padding: theme.spacing[4] }]}>
         <Text style={{ color: theme.colors.muted }}>Exercise not found.</Text>
@@ -1447,7 +1620,7 @@ export function SetLoggerScreen({ route, navigation }: any) {
   // Island, Android notification). Fire and forget. Only for a set that is
   // logged, not an edit of a logged set or a planned set being authored.
   function startRestTimer(atMs: number) {
-    if (we) restTimer.setLogged(we.exercise.name, atMs)
+    if (we) restTimer.setLogged(we.exercise.name, atMs, workout?.date ?? route.params?.pendingCreate?.date)
   }
 
   // Placeholder keys are tap times, kept unique so two taps in the same
@@ -1474,24 +1647,10 @@ export function SetLoggerScreen({ route, navigation }: any) {
         // Editing requires `resolved` (you can't edit a set that doesn't
         // exist yet). Bail otherwise.
         if (!resolved) return
-        // Flip the form back to add-mode FIRST so the editAnim effect kicks
-        // off the border-color/scale transition, then defer the mutation
-        // past the whole transition — not just one frame. The store update
-        // forces a PR recompute and a full SetList re-render, which blocks
-        // JS for longer than a frame, and the card's collapse is a height
-        // animation, so it runs on the JS driver and stalls with it. One
-        // frame of headroom was enough for the native-driven border but not
-        // for the collapse: Save snapped shut while Cancel (no mutation)
-        // animated. Same trick as the note editor's handleSave.
         const w = isCardio ? weight : toKg(weight, unit)
         const r = reps
         const id = editingSetId
-        // Editing a planned set via "Not Hit" logs it (flips is_planned to
-        // false) with the new values in a single mutation.
         const editingPlanned = sets.find((s) => s.id === id)?.is_planned === true
-        // If the user changed the rest field, recompute this set's
-        // created_at as anchor + restSec. Skipped when there's no anchor or
-        // the value is unchanged.
         const anchor = editingRestAnchorIso
         const restChanged = anchor != null && restSec !== editingOriginalRestSec
         const newCreatedAt = restChanged && anchor
@@ -1504,17 +1663,23 @@ export function SetLoggerScreen({ route, navigation }: any) {
         if (editingPlanned) startRestTimer(loggedAt)
         setTimeout(() => {
           if (editingPlanned) {
-            logPlannedSet(id, { weight: w, reps: r, created_at: new Date(loggedAt).toISOString() })
+            guardWrite(
+              api.logPlannedSet(id, { weight: w, reps: r, created_at: new Date(loggedAt).toISOString() }),
+              "Couldn't save set"
+            )
           } else {
-            api.updateSet(id, {
-              weight: w,
-              reps: r,
-              ...(newCreatedAt ? { created_at: newCreatedAt } : {}),
-            })
+            guardWrite(
+              api.updateSet(id, {
+                weight: w,
+                reps: r,
+                ...(newCreatedAt ? { created_at: newCreatedAt } : {}),
+              }),
+              "Couldn't save set"
+            )
           }
         }, EDIT_MS + ANIM_SLACK_MS)
       } else if (isPlanned) {
-        // isPlanned only true for an existing planned workout — already resolved.
+        // isPlanned only true for an existing planned workout, already resolved.
         if (!resolved) return
         // Same optimistic-placeholder flow for planned-set authoring so the
         // fade starts on click instead of after the mutation commits.
@@ -1532,53 +1697,47 @@ export function SetLoggerScreen({ route, navigation }: any) {
         }
         setPendingAdds((prev) => [...prev, add])
         requestAnimationFrame(() => {
-          api.addPlannedSet(weId, { weight: w, reps: r })
+          api.addPlannedSet(weId, { weight: w, reps: r }).catch((error: unknown) => {
+            if (mountedRef.current) setPendingAdds((prev) => prev.filter((a) => a.key !== add.key))
+            reportWriteError(error, "Couldn't save set")
+          })
         })
       } else {
         const queued = sets.find((s) => s.is_planned)
         if (queued) {
           // Logging against a planned set: same row, fade weight/reps update
-          // would be jarring — skip animation.
+          // would be jarring, so no animation.
           setOptimisticPlannedId(queued.id)
           // One timestamp for the row and the timer outside the app.
           const loggedAt = Date.now()
           startRestTimer(loggedAt)
-          logPlannedSet(queued.id, {
-            weight: isCardio ? weight : toKg(weight, unit),
-            reps,
-            created_at: new Date(loggedAt).toISOString(),
-          })
+          api
+            .logPlannedSet(queued.id, {
+              weight: isCardio ? weight : toKg(weight, unit),
+              reps,
+              created_at: new Date(loggedAt).toISOString(),
+            })
+            .catch((error: unknown) => {
+              if (mountedRef.current) setOptimisticPlannedId(null)
+              reportWriteError(error, "Couldn't save set")
+            })
         } else {
-          // Optimistic placeholder: render an immediate fading-in row so the
-          // user sees the row on the same frame as the click, then defer the
-          // store mutation to the next frame so the heavy commit doesn't
-          // block the fade from starting.
+          // Optimistic placeholder: the row fades in on the click frame. The
+          // write and the PR preview go to the save queue, which runs them
+          // in tap order; the preview patches this row's star when it lands,
+          // counting earlier taps that are not written yet, so a second
+          // 100x5 is no PR after the first.
           const w = isCardio ? weight : toKg(weight, unit)
           const r = reps
-          // Sets from earlier taps that are not in the store yet still count
-          // against this one: a second 100x5 is no PR after the first.
-          const unsaved = matchPendingAdds(sets, pendingAdds).waiting.filter((p) => !p.planned)
-          const pr =
-            resolved && exerciseId != null
-              ? predictPrFlags(exerciseId, resolved.weId, w, r, unsaved)
-              : { isPr: false, isPosPr: false, position: 0 }
           // The record card may change height on this save, and its height
-          // animation runs on the JS driver, so the store commit - PR
-          // recompute, index rebuild, full list re-render - is held back past
+          // animation runs on the JS driver, so the write is held back past
           // it whenever the card is on screen. Nothing visible waits: the
-          // placeholder row is already up from the click frame.
-          //
-          // This used to fire only on the first set, because that was the
-          // card's one height change per session. It no longer is. Since the
-          // rows box sizes itself to the record count, any swap between
-          // positions with different counts moves the card, and the swap into
-          // a position with no record is the biggest of those. Gating on the
-          // first set alone left every later resize to collide with the
-          // commit and snap. A deferral on a save that turns out not to move
-          // the card costs ~190ms of store latency and nothing on screen.
+          // placeholder row is already up from the click frame. A deferral
+          // on a save that turns out not to move the card costs ~190ms of
+          // store latency and nothing on screen.
           const cardMayResize = showLastTime
           // One timestamp for the placeholder row (the in-app ticker's
-          // anchor) and the timer outside the app, so the two agree.
+          // anchor), the saved row and the timer outside the app.
           const savedAt = nextPendingKey()
           startRestTimer(savedAt)
           const add: PendingAdd = {
@@ -1586,68 +1745,28 @@ export function SetLoggerScreen({ route, navigation }: any) {
             reps: r,
             key: savedAt,
             baseIds: new Set(sets.map((s) => s.id)),
-            isPr: pr.isPr,
-            isPosPr: pr.isPosPr,
-            position: pr.position,
+            isPr: false,
+            isPosPr: false,
+            position: 0,
             planned: false,
           }
           setPendingAdds((prev) => [...prev, add])
-          // Capture resolved at click time. If still null, this is the
-          // first save on a brand-new workout/exercise — lazy-create the
-          // workout + WE inside the same rAF as addSet so all three
-          // mutations coalesce into a single index rebuild + subscriber
-          // emit. The user already saw the placeholder fade-in start on
-          // the click frame, so the heavy work landing one frame later is
-          // invisible.
-          const wasResolved = resolved
-          const pending = route.params?.pendingCreate
-          // Without the record card, one frame is enough of a head start.
-          // With it, it is not: the card may be animating its height on the
-          // JS driver, and this commit — PR recompute,
-          // index rebuild, full list re-render — would stall it half way. Hold
-          // it back past the collapse instead. Nothing visible waits on it:
-          // the placeholder row is already on screen from the click frame.
-          // Same trick as the edit-mode save above.
-          // The row keeps the time of the tap, not of this deferred commit:
-          // the in-app ticker counts from it, and so does the timer outside
-          // the app (startRestTimer above).
-          saveQueueRef.current.push({
+          const tapped: TapSet = {
+            key: savedAt,
             weight: w,
             reps: r,
             createdAt: new Date(savedAt).toISOString(),
-          })
+          }
+          saveQueue.tap(tapped)
+          saveQueueRef.current.push(tapped)
           const runMutation = () => {
             cancelSaveRef.current = null
-            const queue = saveQueueRef.current.splice(0)
-            if (queue.length === 0) return
-            const addAll = (weId: number) =>
-              batchMutations(() => {
-                for (const q of queue) {
-                  api.addSet(weId, { weight: q.weight, reps: q.reps, created_at: q.createdAt })
-                }
-              })
-            if (wasResolved) {
-              addAll(wasResolved.weId)
-              return
-            }
-            if (!pending) return
-            const ids = batchMutations(() => {
-              const existing = getWorkoutByDateQ(pending.date)
-              const wid = existing?.id ?? createWorkout(pending.date).row.id
-              const we = addExerciseToWorkout(wid, pending.exerciseId)
-              return { workoutId: wid, weId: we.id }
-            })
-            // This commit is where the exercise-note row first mounts,
-            // which pushes the form and the set list down by a row. Only
-            // `update` is configured: the shift animates natively, while
-            // newly created views (the note row, the new set row) are left
-            // alone so they keep their own fade-ins.
-            LayoutAnimation.configureNext(SHIFT_ANIM)
-            setResolved(ids)
-            addAll(ids.weId)
+            // The first save on a brand-new exercise is one log_set inside
+            // the queue; taps behind it are added to the row it returns.
+            saveQueue.write(saveQueueRef.current.splice(0))
           }
           // A tap while a write is waiting pushes the write back to clear
-          // this tap's card animation too; the queue then lands in one commit.
+          // this tap's card animation too; the queue then lands together.
           cancelSaveRef.current?.()
           if (cardMayResize) {
             const t = setTimeout(runMutation, LAST_TIME_COLLAPSE_MS + ANIM_SLACK_MS)
@@ -1842,7 +1961,10 @@ export function SetLoggerScreen({ route, navigation }: any) {
           const loggedAt = Date.now()
           startRestTimer(loggedAt)
           requestAnimationFrame(() => {
-            logPlannedSet(s.id, { weight: w, reps: r, created_at: new Date(loggedAt).toISOString() })
+            guardWrite(
+              api.logPlannedSet(s.id, { weight: w, reps: r, created_at: new Date(loggedAt).toISOString() }),
+              "Couldn't save set"
+            )
           })
         }}
         onNotHit={(s) => {
@@ -3269,19 +3391,24 @@ export const SummaryPanel = memo(function SummaryPanel({
   const lastDay = useMemo(() => pickLastSession(days, excludeDate), [days, excludeDate])
 
   // The three note kinds that can hang off that date (see CLAUDE.md). They are
-  // independent rows in the snapshot; any of them can be empty. `days` is
-  // rebuilt on every snapshot change, so keying on it keeps these fresh.
+  // independent rows; any of them can be empty. The session and day notes
+  // are read for that date only while this panel shows.
+  const notesDate = lastDay?.date ?? ""
+  const lastWorkoutQuery = useWorkoutByDate(notesDate, { active: lastDay != null })
+  const lastDayNoteQuery = useDayNote(notesDate, { active: lastDay != null })
+  const sessionNote = lastDay ? queryValue(lastWorkoutQuery, null)?.notes ?? "" : ""
+  const dayNoteText = lastDay ? queryValue(lastDayNoteQuery, null) ?? "" : ""
   const lastNotes = useMemo(() => {
     if (!lastDay) return []
     const out: { label: string; text: string }[] = []
     const exercise = lastDay.note.trim()
     if (exercise) out.push({ label: "Exercise", text: exercise })
-    const session = (getWorkoutByDateQ(lastDay.date)?.notes ?? "").trim()
+    const session = sessionNote.trim()
     if (session) out.push({ label: "Session", text: session })
-    const day = getDayNoteQ(lastDay.date).trim()
+    const day = dayNoteText.trim()
     if (day) out.push({ label: "Day", text: day })
     return out
-  }, [days, lastDay])
+  }, [lastDay, sessionNote, dayNoteText])
 
   // Flatten weight×reps sets with their set position (order is 0-based, so the
   // set number shown to the user is order+1) and the date performed.

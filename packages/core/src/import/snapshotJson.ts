@@ -5,7 +5,8 @@
  * JS and apply it in a single applyMutation() call to keep large imports cheap.
  */
 
-import { nextId } from "../store/ids"
+import { nextId, nextIdAtLeast } from "../store/ids"
+import { FIRST_CUSTOM_ID } from "../store/seed"
 import { recomputeAllPrs } from "../store/mutations"
 import { flushNow, runBatched } from "../store/persist"
 import type {
@@ -324,7 +325,7 @@ export async function importSnapshotJson(
     if (exerciseByName.find(name, statedKind(ce.kind))) continue
     const cat = normalizeCategory(ce.category)
     const ex: ExerciseRow = {
-      id: nextId(),
+      id: nextIdAtLeast(FIRST_CUSTOM_ID),
       name,
       category: (DEFAULT_CATEGORIES as string[]).includes(cat)
         ? (cat as Category)

@@ -1,4 +1,3 @@
-import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
   AccessibilityInfo,
@@ -15,14 +14,17 @@ import {
   type VirtualizedListInstance,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
+import type { CalendarMap, Category } from "@lift/core"
 import {
-  getCalendarQ,
-  getDayNoteQ,
-  getPlannedDatesQ,
-  getWorkoutByDateQ,
-  setDayNote,
-} from "@lift/core"
-import type { Category } from "@lift/core"
+  queryValue,
+  useWorkoutByDate,
+  useDayNote,
+  useCalendarMonth,
+  usePlannedDates,
+  useWorkoutApi,
+} from "@lift/engine-client/react"
+import { useScreenQueryOptions } from "../engine/screenQuery"
+import { guardWrite } from "../components/writeError"
 import { MONTH_COUNT, clampMonthIndex, monthAtIndex, monthHeightAtOffset, monthIndex } from "../calendar/monthPaging"
 import { DayWorkoutContent } from "../components/DayWorkoutContent"
 import { NotePreview } from "../components/NotePreview"
@@ -150,24 +152,22 @@ export function CalendarScreen({ navigation, route }: any) {
     navigation.setParams({ date: undefined })
   }, [incomingDate])
 
+  const api = useWorkoutApi()
   const { firstDayOfWeek } = useSettings()
-  const snapshot = useScreenSnapshot(true)
+  const queryOptions = useScreenQueryOptions(true)
+  // Gated on detailReady alongside DayWorkoutContent: the day's workout
+  // carries all its sets, so reading it during the transition would
+  // reintroduce the freeze the deferral is meant to remove.
+  const workoutQuery = useWorkoutByDate(selectedDate, {
+    ...queryOptions,
+    active: queryOptions.active !== false && detailReady,
+  })
+  const noteQuery = useDayNote(selectedDate, queryOptions)
   const weekdayLabels =
     firstDayOfWeek === 1 ? WEEKDAY_LABELS_MONDAY : WEEKDAY_LABELS_SUNDAY
-  // Gated on detailReady alongside DayWorkoutContent: getWorkoutByDateQ fully
-  // materializes the day's sets, so running it during the transition would
-  // reintroduce the freeze the deferral is meant to remove.
-  const selectedGym = useMemo(
-    () =>
-      detailReady
-        ? getWorkoutByDateQ(selectedDate)?.gym?.trim() || null
-        : null,
-    [snapshot, selectedDate, detailReady]
-  )
-  const selectedNote = useMemo(
-    () => getDayNoteQ(selectedDate),
-    [snapshot, selectedDate]
-  )
+  const selectedWorkout = detailReady ? queryValue(workoutQuery, null) : null
+  const selectedGym = selectedWorkout?.gym?.trim() || null
+  const selectedNote = queryValue(noteQuery, null) ?? ""
 
   // Day note popup. Opens read-only — the note is what you came to read — and
   // switches to the input only when you tap Edit.
@@ -176,9 +176,8 @@ export function CalendarScreen({ navigation, route }: any) {
   const [noteDraft, setNoteDraft] = useState("")
   const [noteOriginal, setNoteOriginal] = useState("")
   function openNoteViewer() {
-    const n = getDayNoteQ(selectedDate)
-    setNoteDraft(n)
-    setNoteOriginal(n)
+    setNoteDraft(selectedNote)
+    setNoteOriginal(selectedNote)
     setNoteMode("view")
     setNoteOpen(true)
   }
@@ -275,7 +274,12 @@ export function CalendarScreen({ navigation, route }: any) {
   function openSetLogger(workoutId: number, weId: number) {
     // Preserve the actual calendar instance; the parent's stack state may
     // not contain the nested tab's current state when the logger closes.
-    navigation.navigate("SetLogger", { workoutId, weId, returnRouteKey: route.key })
+    navigation.navigate("SetLogger", {
+      workoutId,
+      weId,
+      date: selectedDate,
+      returnRouteKey: route.key,
+    })
   }
 
   return (
@@ -459,11 +463,16 @@ export function CalendarScreen({ navigation, route }: any) {
         onChangeDraft={setNoteDraft}
         onEdit={() => setNoteMode("edit")}
         onClose={() => setNoteOpen(false)}
-        onSave={() => setDayNote(selectedDate, noteDraft)}
+        onSave={() => {
+          guardWrite(api.setDayNote(selectedDate, noteDraft), "Couldn't save note")
+        }}
       />
     </ScreenWrap>
   )
 }
+
+const EMPTY_CALENDAR: CalendarMap = {}
+const EMPTY_DATES: string[] = []
 
 const MonthPage = memo(function MonthPage({
   index, width, firstDayOfWeek, detailReady, active, selectedDate, todayKey, onOpenDay,
@@ -477,11 +486,19 @@ const MonthPage = memo(function MonthPage({
   todayKey: string
   onOpenDay: (date: string) => void
 }) {
-  const snapshot = useScreenSnapshot(active)
   const { year, month } = monthAtIndex(index)
+  const monthKey = `${year}-${String(month).padStart(2, "0")}`
   const cells = useMemo(() => buildMonthGrid(year, month, firstDayOfWeek), [year, month, firstDayOfWeek])
-  const calendar = useMemo(() => detailReady ? getCalendarQ(year, month) : {}, [snapshot, year, month, detailReady])
-  const plannedDates = useMemo(() => new Set(detailReady ? getPlannedDatesQ(year, month) : []), [snapshot, year, month, detailReady])
+  // Paused while the screen is covered. Only the visible month catches up
+  // before a screen above pops back to it.
+  const pageOptions = useScreenQueryOptions(active)
+  const monthOptions = {
+    ...pageOptions,
+    active: pageOptions.active !== false && detailReady,
+  }
+  const calendar = queryValue(useCalendarMonth(monthKey, monthOptions), EMPTY_CALENDAR)
+  const plannedList = queryValue(usePlannedDates(monthKey, monthOptions), EMPTY_DATES)
+  const plannedDates = useMemo(() => new Set(plannedList), [plannedList])
   return (
     <View
       accessibilityElementsHidden={!active}

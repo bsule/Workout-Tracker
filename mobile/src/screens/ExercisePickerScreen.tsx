@@ -1,4 +1,3 @@
-import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
   FlatList,
@@ -12,10 +11,10 @@ import {
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { SafeAreaView } from "react-native-safe-area-context"
-import {
-  listExercisesQ,
-} from "@lift/core"
-import type { Exercise } from "@lift/core"
+import type { Category, Exercise } from "@lift/core"
+
+import { queryValue, useExercisesQuery } from "@lift/engine-client/react"
+import { todayString } from "../dates"
 import { useActiveDate } from "../state/activeDate"
 import { pressedStyle } from "../theme/pressable"
 import { theme } from "../theme/theme"
@@ -35,6 +34,8 @@ type Mode = "pick" | "new"
  * that handoff. Keeping the picker mounted during the push avoids
  * snapshotting an outgoing replacement.
  */
+const EMPTY_EXERCISES: Exercise[] = []
+
 export function ExercisePickerScreen({ route, navigation }: any) {
   const [mode, setMode] = useState<Mode>("pick")
   const activeDate = useActiveDate()
@@ -133,16 +134,16 @@ function PickView({
   const [search, setSearch] = useState("")
   const [category, setCategory] = useState<string | null>(null)
   const searchRef = useRef<TextInputInstance>(null)
-  const snapshot = useScreenSnapshot()
-  const exercises = useMemo(
-    () =>
-      listExercisesQ({
-        q: search || undefined,
-        category: category ?? undefined,
-        sort: "last_performed",
-      }),
-    [snapshot, search, category]
-  )
+  // Not focus-gated: MainTabs preloads this screen while it is hidden, and
+  // the list must be in hand when it opens. The preloaded picker is replaced
+  // after every pick, so it follows few commits.
+  const exercisesQuery = useExercisesQuery({
+    q: search || undefined,
+    category: (category as Category | null) ?? undefined,
+    sort: "last_performed",
+    today: todayString(),
+  })
+  const exercises = queryValue(exercisesQuery, EMPTY_EXERCISES)
 
   return (
     <Pressable style={{ flex: 1 }} onPress={() => Keyboard.dismiss()}>

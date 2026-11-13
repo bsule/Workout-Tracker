@@ -1,18 +1,17 @@
 import { useEffect, useRef } from "react"
 import { Alert } from "react-native"
 import {
-  autoSync,
   formatLastSynced,
-  getState,
   getSyncClock,
   loadSyncClock,
   markCloudNewerPrompted,
   shouldPromptCloudNewer,
   subscribeSyncClock,
-  type RemotePreview,
-} from "@lift/core"
+} from "@lift/core/sync/syncClock"
 import { useAuth } from "../auth/AuthProvider"
 import { formatTimestamp } from "../format"
+import { mobileSessions } from "../engine/mobileEngine"
+import { mobileSync, type CloudPreview } from "./engineSync"
 
 /**
  * Tells the user, once, that a push was refused because the cloud moved ahead.
@@ -48,7 +47,10 @@ export function CloudConflictPrompt() {
       // Pulls are unrestricted, so this costs no daily sync budget, and the
       // bytes are reused if the user takes the cloud copy. A failure here must
       // not swallow the alert — the user still has to be told.
-      const preview = await autoSync.previewRemote().catch(() => null)
+      const [preview, local] = await Promise.all([
+        mobileSync.previewRemote().catch(() => null),
+        localCounts(),
+      ])
       if (cancelled) {
         openRef.current = false
         return
@@ -56,7 +58,7 @@ export function CloudConflictPrompt() {
 
       Alert.alert(
         "Cloud has newer data",
-        buildMessage(preview),
+        buildMessage(preview, local),
         [
           { text: "Later", style: "cancel", onPress: () => { openRef.current = false } },
           { text: "Get cloud", onPress: () => void resolve("pull", preview) },
@@ -91,16 +93,16 @@ export function CloudConflictPrompt() {
 
     async function resolve(
       choice: "pull" | "push",
-      preview: RemotePreview | null
+      preview: CloudPreview | null
     ) {
       try {
         if (choice === "pull") {
           if (preview) {
             // Already downloaded above; don't fetch the same blob twice.
-            await autoSync.applyRemoteBytes(preview.bytes)
+            await mobileSync.applyRemote(preview)
             Alert.alert("Cloud copy loaded", "This device now matches the cloud.")
           } else {
-            const applied = await autoSync.pullAndReplace()
+            const applied = await mobileSync.pullAndReplace()
             Alert.alert(
               applied ? "Cloud copy loaded" : "No cloud backup found",
               applied
@@ -109,7 +111,7 @@ export function CloudConflictPrompt() {
             )
           }
         } else {
-          await autoSync.forcePush()
+          await mobileSync.forcePush()
           Alert.alert("Cloud overwritten", "The cloud now matches this device.")
         }
       } catch (e) {
@@ -139,13 +141,24 @@ export function CloudConflictPrompt() {
  * back to the bare explanation when the cloud copy could not be read — offline,
  * most likely, in which case neither choice can run anyway.
  */
-function buildMessage(preview: RemotePreview | null): string {
+async function localCounts(): Promise<{ workouts: number; sets: number } | null> {
+  try {
+    return (await mobileSessions.session?.api.counts()) ?? null
+  } catch {
+    return null
+  }
+}
+
+function buildMessage(
+  preview: CloudPreview | null,
+  local: { workouts: number; sets: number } | null
+): string {
   const intro =
     "Another device pushed changes this one hasn't seen, so the sync was refused. Nothing was lost."
-  const local = getState().snapshot
-  const here = `This device: ${formatLastSynced(
-    getSyncClock().lastSyncedAt
-  ).toLowerCase()} · ${counts(local.workouts.length, local.sets.length)}`
+  const synced = formatLastSynced(getSyncClock().lastSyncedAt).toLowerCase()
+  const here = local
+    ? `This device: ${synced} · ${counts(local.workouts, local.sets)}`
+    : `This device: ${synced}`
 
   if (!preview) {
     return `${intro}\n\n${here}\n\nCouldn't read the cloud copy just now. Get the cloud copy, or overwrite it with this device's data?`

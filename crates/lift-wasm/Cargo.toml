@@ -14,3 +14,6 @@ lift-engine = { path = "../lift-engine" }
 lift-codec = { path = "../lift-codec" }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 wasm-bindgen = "=0.2.100"
+
+[dev-dependencies]
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

@@ -1,4 +1,3 @@
-import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import { useState } from "react"
 import {
   ActivityIndicator,
@@ -12,12 +11,9 @@ import {
 import * as DocumentPicker from "expo-document-picker"
 import * as FileSystem from "expo-file-system/legacy"
 import * as Sharing from "expo-sharing"
-import { buildJson, timestampedExportName } from "@lift/core/export"
-import { nativeExports } from "../../modules/lift-engine"
+import { timestampedExportName } from "@lift/core/export"
 import { writeFitnotesDbToCache } from "../exports/fitnotesDb"
 import {
-  importFitnotesCsv,
-  importSnapshotJson,
   previewFitnotesCsv,
   looksLikeJson,
   previewSnapshotJson,
@@ -25,6 +21,7 @@ import {
   type ImportResult,
 } from "@lift/core/import"
 import { useAuth } from "../auth/AuthProvider"
+import { useEngineDataApi } from "@lift/engine-client/react"
 import { Button } from "../components/Button"
 import { theme } from "../theme/theme"
 import { formatTimestamp } from "../format"
@@ -50,7 +47,7 @@ type PendingImport =
 
 export function ImportExportScreen() {
   const { user } = useAuth()
-  const snapshot = useScreenSnapshot()
+  const dataApi = useEngineDataApi()
 
   const [busy, setBusy] = useState<
     null | "json" | "fitnotesdb" | "pick" | "import"
@@ -74,14 +71,20 @@ export function ImportExportScreen() {
     await Sharing.shareAsync(uri, { mimeType: mime, UTI: undefined })
   }
 
+  // The engine always opens with its data API on mobile; say so rather than
+  // let a tap do nothing if it ever does not.
+  const NO_DATA_API = "Your data is not open yet. Close and reopen the app to try again."
+
   async function exportJson() {
+    if (!dataApi) {
+      setError(NO_DATA_API)
+      return
+    }
     setBusy("json")
     setError(null)
     try {
       const filename = timestampedExportName("json")
-      const body = nativeExports.available
-        ? await nativeExports.json(snapshot, user?.username ?? "")
-        : buildJson(snapshot, user?.username ?? "")
+      const body = await dataApi.exportJson(user?.username ?? "")
       await shareFile(filename, body, "application/json")
     } catch (e) {
       setError(e instanceof Error ? e.message : "Export failed.")
@@ -91,10 +94,14 @@ export function ImportExportScreen() {
   }
 
   async function exportFitnotesDb() {
+    if (!dataApi) {
+      setError(NO_DATA_API)
+      return
+    }
     setBusy("fitnotesdb")
     setError(null)
     try {
-      const { uri, filename } = await writeFitnotesDbToCache(snapshot)
+      const { uri, filename } = await writeFitnotesDbToCache(undefined, dataApi)
       const available = await Sharing.isAvailableAsync()
       if (!available) {
         Alert.alert(
@@ -174,6 +181,10 @@ export function ImportExportScreen() {
 
   async function runImport() {
     if (!pending) return
+    if (!dataApi) {
+      setError(NO_DATA_API)
+      return
+    }
     if (mode === "replace") {
       const ok = await new Promise<boolean>((resolve) => {
         Alert.alert(
@@ -195,11 +206,9 @@ export function ImportExportScreen() {
     setBusy("import")
     setError(null)
     try {
-      const res =
-        pending.kind === "snapshot"
-          ? await importSnapshotJson(pending.text, { mode })
-          : await importFitnotesCsv(pending.text, { mode })
-      setResult(res)
+      const format = pending.kind === "snapshot" ? "json" : "csv"
+      const receipt = await dataApi.importFile(format, pending.text, mode === "replace")
+      setResult(receipt.result as ImportResult)
       setPending(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Import failed.")

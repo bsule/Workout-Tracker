@@ -1,6 +1,10 @@
 # Rust workout engine migration plan
 
-Status: implementation in progress on `feat/rust-workout-engine`. Native Rust and Wasm engines compile and pass parity/integration checks. Mobile JSON/FitNotes exports use Rust in builds containing the native module; Expo Go retains the existing read-only exporter. Production workout screens still use the TypeScript store. The complete migration is not finished.
+Status: implementation in progress on `feat/rust-workout-engine`. Not yet verified on a device.
+
+- **Mobile:** the Rust engine is the only owner of workout data. The `@lift/core` store no longer hydrates, flushes or syncs on mobile. The open moves a `users/<username>` store to `accounts/<id>` once, before the engine opens, and a failed move refuses the load. Rust then migrates the legacy files (snapshot candidates, `pending.log`, restore points) and carries the old `lift.sync.etag`. Screens, sync (auto sync, Sync now, pull, force push, conflict prompt), restore points, the rest timer controller, AI apply, imports and exports run through `@lift/engine-client`. The set logger's first save is one `log_set` command. Screens keep their last data while covered and on reopen, and failed reads reach an error boundary instead of rendering as empty.
+- **Web:** unchanged from `main`. The `@lift/core` store is the only owner, and nothing in the running app loads the engine. `frontend/lib/engine/webEngine.ts` is parked behind `NEXT_PUBLIC_LIFT_WEB_ENGINE=1` and refuses to open over legacy browser data until browser migration exists. The worker it would load is bundled from `packages/engine-client/src/browser-worker.ts` by `scripts/engine/web-worker-build.mjs`. Generated Wasm and worker files are gitignored, not committed.
+- **Verification:** Vitest passes, and the TypeScript side is covered by fakes (transports, a Wasm factory, `fake-indexeddb`, mocked Expo modules). Mobile tsc depends on the bridge contract (`openNativeTransport` legacy argument, `engineErrorCode`) that the Rust side is landing. Nothing has run in a real browser or on a phone yet.
 
 ### Verified implementation
 
@@ -15,8 +19,8 @@ Status: implementation in progress on `feat/rust-workout-engine`. Native Rust an
 
 ### Remaining acceptance work
 
-1. Complete the mobile screen/provider/timer cutover to the async API. Remove direct snapshot/index/mutation access and preserve optimistic save/error behavior. Keep one authoritative writer throughout activation.
-2. Wire imports, backups, sync/conflict policy and AI screens to the session data API; preserve legacy backup/clock metadata on first migration. Native exports already run through Rust without opening a second writer.
+1. Verify the mobile cutover on real devices: first launch after upgrade from the TypeScript store (with and without pending crash-log lines and restore points), a phone that already has an `engine.sqlite` from a WIP build, fast taps, edits, deletes, back navigation and interruption during pending commands. Known differences from the TypeScript store: the PR star appears one engine round trip after the tap, the conflict prompt's set count excludes planned sets, and the undo/daily slot rules come from Rust.
+2. Remove the remaining `@lift/core` store code paths that only the web still needs once the web cuts over.
 3. Add real-browser worker loading, verified legacy browser migration, origin-wide lock ownership and complete web screen integration.
 4. Finish typed output DTOs/errors, selective query invalidation, cancellable bulk jobs, row-level storage/index updates and required failure/recovery cases.
 5. Run release/device performance comparisons, Android runtime checks, complete offline end-to-end flows and final implementation review. Do not claim speedups from desktop or bridge tests alone.
@@ -155,7 +159,7 @@ A native SQLite dependency is not required in the shared domain engine. Browser 
 
 ## 6. Implementation sequence and acceptance gates
 
-### Stage 0 — baseline and behavior inventory
+### Stage 0: baseline and behavior inventory
 
 - Run the existing Vitest suite and package typechecks; record pre-existing failures.
 - Map direct store/query imports in both clients, including settings, rest timer and AI flows.
@@ -165,7 +169,7 @@ A native SQLite dependency is not required in the shared domain engine. Browser 
 
 Exit: reproducible baseline and a behavior matrix linked to existing tests. This stage produces measurements, not speedup promises.
 
-### Stage 1 — build and bridge proof
+### Stage 1: build and bridge proof
 
 - Install/pin Rust and required target toolchains. Rust was not available on PATH during the planning inspection.
 - Compile one portable crate for desktop tests, iOS device/simulator, Android device/emulator and Wasm.
@@ -176,7 +180,7 @@ Exit: reproducible baseline and a behavior matrix linked to existing tests. This
 
 Exit: installable development builds on both mobile platforms, working worker integration, and measured bridge overhead. Validate UniFFI before committing the full API; use a narrower native binding approach if the spike reveals compatibility issues.
 
-### Stage 2 — portable domain and compatibility codecs
+### Stage 2: portable domain and compatibility codecs
 
 - Port schema, seeds, IDs, normalization, units, validation, date rules and snapshot migrations.
 - Port PR calculation and prediction, records, history, statistics, search and calendar queries.
@@ -186,7 +190,7 @@ Exit: installable development builds on both mobile platforms, working worker in
 
 Exit: semantic parity on existing fixtures and randomized operation sequences across native Rust and Wasm. Keep the current TypeScript engine as a test oracle during migration. Explicitly review genuine existing bugs instead of silently changing behavior under the port.
 
-### Stage 3 — native persistence and engine ownership
+### Stage 3: native persistence and engine ownership
 
 - Implement native account sessions, transactions, indexes, query invalidation and retry handling.
 - Add staging migration, recovery, previous/daily/undo copies and account teardown.
@@ -195,7 +199,7 @@ Exit: semantic parity on existing fixtures and randomized operation sequences ac
 
 Exit: durable set commands survive process termination, migrations are repeatable, and no account can receive another account's results or writes.
 
-### Stage 4 — mobile application cutover
+### Stage 4: mobile application cutover
 
 - Introduce `engine-client` and typed React query hooks.
 - Migrate bootstrap, StoreProvider, settings and account lifecycle.
@@ -210,7 +214,7 @@ Exit: a complete offline workout flow uses Rust as the only writer and data owne
 
 During implementation, select one whole engine per account session in development builds. Do not split production mutation ownership across TypeScript and Rust or dual-write two live stores.
 
-### Stage 5 — complete data workflows
+### Stage 5: complete data workflows
 
 - Wire CSV/JSON import preview and commit to Rust jobs with progress and cancellation before commit.
 - Implement native FitNotes database export, preserving the skeleton's schema and ID conventions.
@@ -222,7 +226,7 @@ During implementation, select one whole engine per account session in developmen
 
 Exit: all current user data workflows work through Rust. A failed/cancelled bulk operation has a defined transaction boundary, and sync replacement cannot overwrite newer local work unnoticed.
 
-### Stage 6 — connect the web app
+### Stage 6: connect the web app
 
 - Load Wasm only in the browser worker; keep it out of server-render execution.
 - Implement the storage/effect adapter and account session coordination.
@@ -233,7 +237,7 @@ Exit: all current user data workflows work through Rust. A failed/cancelled bulk
 
 Exit: browser and mobile produce equivalent results and exchange compatible snapshots. Web limitations remain in web adapters, with native facilities available to mobile.
 
-### Stage 7 — optimization, rollout and retirement
+### Stage 7: optimization, rollout and retirement
 
 - Compare against Stage 0 on the same devices and fixtures.
 - Optimize measured hot paths: index updates, PR caches, date parsing, query materialization and bridge transfer sizes.

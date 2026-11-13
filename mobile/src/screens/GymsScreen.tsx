@@ -12,9 +12,10 @@ import {
   View,
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
-import { localApi as api, useStore } from "@lift/core"
 import type { Gym } from "@lift/core"
 import { gymAddError, gymRenameError } from "@lift/core/workouts"
+import { queryValue, useGyms, useWorkoutApi } from "@lift/engine-client/react"
+import { reportWriteError } from "../components/writeError"
 import { Button } from "../components/Button"
 import { EASE, LIST_ANIM } from "../anim"
 import { theme, tint } from "../theme/theme"
@@ -24,8 +25,12 @@ function animateGyms() {
   LayoutAnimation.configureNext(LIST_ANIM)
 }
 
+const EMPTY_GYMS: Gym[] = []
+
 export function GymsScreen() {
-  const gyms = useStore((s) => s.snapshot.gyms) as Gym[]
+  const api = useWorkoutApi()
+  const gymsQuery = useGyms()
+  const gyms = queryValue(gymsQuery, EMPTY_GYMS)
   const [draft, setDraft] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -61,7 +66,10 @@ export function GymsScreen() {
       // The first gym swaps the "No gyms yet" line for the list card. Later
       // ones animate their own row instead (GymRowTransition).
       if (gyms.length === 0) animateGyms()
-      api.createGym(trimmed)
+      api.createGym(trimmed).catch((e: unknown) => {
+        animateGyms()
+        setError(e instanceof Error ? e.message : "Failed to add gym.")
+      })
       setDraft("")
       Keyboard.dismiss()
     } catch (e) {
@@ -101,7 +109,7 @@ export function GymsScreen() {
     }
     Keyboard.dismiss()
     animateGyms()
-    api.renameGym(editingId, trimmed)
+    api.renameGym(editingId, trimmed).catch((e: unknown) => reportWriteError(e, "Couldn't rename gym"))
     setEditingId(null)
     setEditDraft("")
     setEditError(null)
@@ -131,7 +139,7 @@ export function GymsScreen() {
   function finishRemove(id: number) {
     // The last gym leaving swaps the list card for the "No gyms yet" line.
     if (gyms.length === 1) animateGyms()
-    api.deleteGym(id)
+    api.deleteGym(id).catch((e: unknown) => reportWriteError(e, "Couldn't remove gym"))
     setRemovingIds((prev) => {
       const next = new Set(prev)
       next.delete(id)

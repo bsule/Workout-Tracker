@@ -13,8 +13,10 @@ const EPOCH: i64 = 978307200000;
 fn apple(iso: &str) -> Option<f64> {
     timestamp_checked(iso).map(|t| (t - EPOCH) as f64 / 1000.0)
 }
-fn midnight(date: &str) -> Result<f64, String> {
-    apple(&format!("{date}T00:00:00Z")).ok_or_else(|| "Invalid workout date".into())
+/// `midnightUtcTs`: an unreadable date is NaN there, which SQLite stores as
+/// NULL, so one bad row no longer fails the whole export.
+fn midnight(date: &str) -> Option<f64> {
+    lift_domain::prs::utc_midnight_ms(date).map(|t| (t - EPOCH) as f64 / 1000.0)
 }
 fn int(n: i64) -> Value {
     Value::Integer(n)
@@ -153,7 +155,7 @@ fn populate(db: &Connection, s: &Snapshot, now: &str) -> Result<(), String> {
         }
         let wo = next(&mut counters, "Workout");
         let (hi, lo) = uuid();
-        let date = midnight(&w.date)?;
+        let date = midnight(&w.date);
         let day = s
             .day_notes
             .iter()
@@ -168,7 +170,7 @@ fn populate(db: &Connection, s: &Snapshot, now: &str) -> Result<(), String> {
         } else {
             session.into()
         };
-        insert(db,"ZWORKOUT","Z_PK,Z_ENT,Z_OPT,ZHKUPDATECOUNTER,ZHKWORKOUTACTIVITYTYPERAW,ZUUID1,ZUUID2,ZIMPORTEDDATE,ZDATE,ZSTARTTIME,ZSTARTEDWATCHWORKOUTATTIMESTAMP,ZSTOPTIME,ZNOTES,ZHKUUID",vec![int(wo),int(23),int(1),int(0),int(-1),int(hi),int(lo),Value::Null,float(date),optional(w.started_at.as_deref().and_then(apple)),Value::Null,optional(w.finished_at.as_deref().and_then(apple)),note(&combined),Value::Null])?;
+        insert(db,"ZWORKOUT","Z_PK,Z_ENT,Z_OPT,ZHKUPDATECOUNTER,ZHKWORKOUTACTIVITYTYPERAW,ZUUID1,ZUUID2,ZIMPORTEDDATE,ZDATE,ZSTARTTIME,ZSTARTEDWATCHWORKOUTATTIMESTAMP,ZSTOPTIME,ZNOTES,ZHKUUID",vec![int(wo),int(23),int(1),int(0),int(-1),int(hi),int(lo),Value::Null,optional(date),optional(w.started_at.as_deref().and_then(apple)),Value::Null,optional(w.finished_at.as_deref().and_then(apple)),note(&combined),Value::Null])?;
         for we in wes {
             let Some(ex) = exercises.get(&we.exercise_id) else {
                 continue;
@@ -193,7 +195,7 @@ fn populate(db: &Connection, s: &Snapshot, now: &str) -> Result<(), String> {
             let index = we_index;
             we_index = we_index.checked_add(step).ok_or("Export index overflow")?;
             let (hi, lo) = uuid();
-            insert(db,"ZWORKOUTEXERCISE","Z_PK,Z_ENT,Z_OPT,ZINDEX,ZRESTTIME,ZUNITINT,ZUUID1,ZUUID2,ZWEIGHTINCREMENTKG,ZWEIGHTINCREMENTLBS,ZEXERCISE,ZSUPERSET,ZWORKOUT,ZDATE",vec![int(we_pk),int(24),int(1),int(index),int(-1),int(0),int(hi),int(lo),int(0),int(0),int(ex_pk),Value::Null,int(wo),float(date)])?;
+            insert(db,"ZWORKOUTEXERCISE","Z_PK,Z_ENT,Z_OPT,ZINDEX,ZRESTTIME,ZUNITINT,ZUUID1,ZUUID2,ZWEIGHTINCREMENTKG,ZWEIGHTINCREMENTLBS,ZEXERCISE,ZSUPERSET,ZWORKOUT,ZDATE",vec![int(we_pk),int(24),int(1),int(index),int(-1),int(0),int(hi),int(lo),int(0),int(0),int(ex_pk),Value::Null,int(wo),optional(date)])?;
             let mut sets = by_we.get(&we.id).cloned().unwrap_or_default();
             sets.sort_by_key(|s| (s.order, s.id));
             let mut set_index = index + 1;
@@ -211,7 +213,7 @@ fn populate(db: &Connection, s: &Snapshot, now: &str) -> Result<(), String> {
                 } else {
                     (0, 0)
                 };
-                insert(db,"ZWORKOUTSET","Z_PK,Z_ENT,Z_OPT,ZDISTANCEAMOUNT,ZDISTANCEUNITINT,ZINDEX,ZISALLTIMERECORD,ZISCOMPLETED,ZISWORKSET,ZREPS,ZRESTTIME,ZTIME,ZUUID1,ZUUID2,ZWEIGHTKG,ZWEIGHTLBS,ZWORKOUTEXERCISEINDEX,ZEXERCISE,ZWORKOUT,ZWORKOUTEXERCISE,ZCOMPLETEDAT,ZDATE,ZRIR,ZRPE,ZNOTES",vec![int(pk),int(26),int(1),int(amount),int(unit),int(set_index),int(i64::from(set.is_pr)),int(1),int(1),float(set.reps.unwrap_or(0.0)),int(-1),float(set.time_seconds.unwrap_or(0.0)),int(hi),int(lo),int(weight_key(set.weight) as i64),int(weight_key(set.weight.map(|w|w*2.20462262)) as i64),int(index),int(ex_pk),int(wo),int(we_pk),float(apple(&set.created_at).unwrap_or(date)),float(date),float(-999999.0),float(-1.0),note(&set.note)])?;
+                insert(db,"ZWORKOUTSET","Z_PK,Z_ENT,Z_OPT,ZDISTANCEAMOUNT,ZDISTANCEUNITINT,ZINDEX,ZISALLTIMERECORD,ZISCOMPLETED,ZISWORKSET,ZREPS,ZRESTTIME,ZTIME,ZUUID1,ZUUID2,ZWEIGHTKG,ZWEIGHTLBS,ZWORKOUTEXERCISEINDEX,ZEXERCISE,ZWORKOUT,ZWORKOUTEXERCISE,ZCOMPLETEDAT,ZDATE,ZRIR,ZRPE,ZNOTES",vec![int(pk),int(26),int(1),int(amount),int(unit),int(set_index),int(i64::from(set.is_pr)),int(1),int(1),float(set.reps.unwrap_or(0.0)),int(-1),float(set.time_seconds.unwrap_or(0.0)),int(hi),int(lo),int(weight_key(set.weight) as i64),int(weight_key(set.weight.map(|w|w*2.20462262)) as i64),int(index),int(ex_pk),int(wo),int(we_pk),optional(apple(&set.created_at).or(date)),optional(date),float(-999999.0),float(-1.0),note(&set.note)])?;
                 set_index = set_index
                     .checked_add(step)
                     .ok_or("Export set index overflow")?;
@@ -242,6 +244,28 @@ mod tests {
         std::fs::write(file.path(), data).unwrap();
         let db = Connection::open(file.path()).unwrap();
         (file, db)
+    }
+    #[test]
+    fn a_malformed_workout_date_exports_as_null_instead_of_failing() {
+        let f: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/engine-parity/fitnotes-export.json"
+        ))
+        .unwrap();
+        let mut snapshot: Snapshot = serde_json::from_value(f["snapshot"].clone()).unwrap();
+        snapshot.workouts[0].date = "garbage".into();
+        let skeleton = include_bytes!("../../../mobile/assets/fitnotes_skeleton.fitnotesdb");
+        let bytes = build(&snapshot, skeleton, f["now"].as_str().unwrap()).unwrap();
+        let (_file, db) = open_zip(&bytes);
+        let nulls: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM ZWORKOUT WHERE ZDATE IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(nulls, 1);
+        // Date.UTC rolls the day over.
+        assert_eq!(midnight("2024-02-30"), midnight("2024-03-01"));
     }
     #[test]
     fn matches_existing_export_and_preserves_core_data_blobs() {

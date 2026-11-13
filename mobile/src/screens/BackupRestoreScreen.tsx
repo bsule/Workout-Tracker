@@ -1,4 +1,3 @@
-import { useScreenSnapshot } from "../store/useScreenSnapshot"
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
   ActivityIndicator,
@@ -11,25 +10,29 @@ import {
 } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import {
-  addFlushListener,
-  autoSync,
   formatLastSynced,
   getSyncClock,
   loadSyncClock,
   requestCloudNewerPrompt,
   subscribeSyncClock,
-  SyncQuotaExceededError,
-  type Quota,
-  type RemotePreview,
   type SyncClockSnapshot,
-} from "@lift/core"
+} from "@lift/core/sync/syncClock"
+import { useCountsQuery } from "@lift/engine-client/react"
 import { useAuth } from "../auth/AuthProvider"
 import {
+  addRestorePointListener,
   listRestorePoints,
   restoreFromSlot,
   type RestorableSlot,
+  type RestoreMeta,
+  type SlotInfo,
 } from "../store/restorePoints"
-import type { RestoreMeta, SlotInfo } from "../store/storage"
+import {
+  mobileSync,
+  SyncQuotaError as SyncQuotaExceededError,
+  type CloudPreview as RemotePreview,
+  type SyncQuota as Quota,
+} from "../sync/engineSync"
 import { Button } from "../components/Button"
 import { theme } from "../theme/theme"
 import { formatTimestamp } from "../format"
@@ -80,7 +83,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
 
   useEffect(() => {
     if (!user) return
-    autoSync.fetchQuota().then(setQuota).catch(() => {})
+    mobileSync.fetchQuota().then(setQuota).catch(() => {})
   }, [user])
 
   // One clock for every sync path: the button below, and the daily check that
@@ -106,10 +109,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
     setStatus(null)
     onError(null)
     try {
-      // Yield so React commits the busy state before serialize() blocks
-      // the JS thread (gzipSync + JSON.stringify).
-      await new Promise((r) => setTimeout(r, 0))
-      const result = await autoSync.syncNow()
+      const result = await mobileSync.syncNow()
       if (result.kind === "stale") {
         // syncNow() recorded the conflict. CloudConflictPrompt owns the alert,
         // so this screen opens none of its own — two alerts raced before. The
@@ -121,11 +121,11 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
         return
       }
       setStatus({ kind: "ok", msg: "Synced." })
-      const q = await autoSync.fetchQuota().catch(() => null)
+      const q = await mobileSync.fetchQuota().catch(() => null)
       if (q) setQuota(q)
     } catch (e) {
       if (e instanceof SyncQuotaExceededError) {
-        setQuota(e.quota)
+        if (e.quota) setQuota(e.quota)
         onError(e.message)
       } else {
         onError(e instanceof Error ? e.message : "Sync failed.")
@@ -139,7 +139,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
     setBusy("pull-stale")
     onError(null)
     try {
-      const applied = await autoSync.pullAndReplace()
+      const applied = await mobileSync.pullAndReplace()
       setStatus({
         kind: "info",
         msg: applied
@@ -173,14 +173,13 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
     setBusy("force-push")
     onError(null)
     try {
-      await new Promise((r) => setTimeout(r, 0))
-      await autoSync.forcePush()
+      await mobileSync.forcePush()
       setStatus({ kind: "ok", msg: "Overwrote cloud with this device's data." })
-      const q = await autoSync.fetchQuota().catch(() => null)
+      const q = await mobileSync.fetchQuota().catch(() => null)
       if (q) setQuota(q)
     } catch (e) {
       if (e instanceof SyncQuotaExceededError) {
-        setQuota(e.quota)
+        if (e.quota) setQuota(e.quota)
         onError(e.message)
       } else {
         onError(e instanceof Error ? e.message : "Couldn't overwrite cloud.")
@@ -195,7 +194,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
     setStatus(null)
     onError(null)
     try {
-      const p = await autoSync.previewRemote()
+      const p = await mobileSync.previewRemote()
       if (!p) {
         onError("No cloud backup yet. Sync now to upload your first snapshot.")
         return
@@ -228,7 +227,7 @@ function CloudSyncCard({ onError }: { onError: (msg: string | null) => void }) {
     if (!ok) return
     setBusy("apply")
     try {
-      await autoSync.applyRemoteBytes(preview.bytes)
+      await mobileSync.applyRemote(preview)
       setPreview(null)
       setStatus({ kind: "ok", msg: "Loaded cloud copy." })
     } catch (e) {
@@ -361,7 +360,7 @@ const RESTORE_SLOTS: { slot: RestorableSlot; title: string; help: string }[] = [
 ]
 
 function RestorePointsCard({ onError }: { onError: (msg: string | null) => void }) {
-  const current = useScreenSnapshot()
+  const current = useCountsQuery()
   const [meta, setMeta] = useState<RestoreMeta | null>(null)
   const [busy, setBusy] = useState<RestorableSlot | null>(null)
   const [info, setInfo] = useState<string | null>(null)
@@ -376,11 +375,11 @@ function RestorePointsCard({ onError }: { onError: (msg: string | null) => void 
   }, [onError])
 
   // Saves happen while the user is elsewhere; refresh on every visit. A save
-  // also rotates the files while this screen is open (every flush, and
-  // flushOnHide when the app goes to the background), so refresh on those too.
+  // also moves the copies while this screen is open (30 seconds after an
+  // edit, and when the app goes to the background), so refresh on those too.
   useFocusEffect(reload)
   useEffect(() => {
-    const offFlush = addFlushListener(reload)
+    const offFlush = addRestorePointListener(reload)
     const sub = AppState.addEventListener("change", (s) => {
       if (s === "active") reload()
     })
@@ -442,14 +441,15 @@ function RestorePointsCard({ onError }: { onError: (msg: string | null) => void 
   }
 
   const available = RESTORE_SLOTS.filter((r) => meta[r.slot])
-  const liveSets = current.sets.reduce((n, row) => (row.is_planned ? n : n + 1), 0)
 
   return (
     <Card>
       <View style={{ gap: theme.spacing[2] }}>
         <Text style={styles.rowTitle}>Current data</Text>
         <Text style={styles.help}>
-          {countsLine(current.workouts.length, liveSets)}
+          {current.status === "ready"
+            ? countsLine(current.value.workouts, current.value.sets)
+            : "Counts unknown"}
         </Text>
         <Text style={styles.help}>
           The app keeps older copies of your data on this phone. Restore one

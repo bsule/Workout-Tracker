@@ -13,7 +13,7 @@ print("Swift → UniFFI → Rust compatibility smoke passed")
 let database = FileManager.default.temporaryDirectory
   .appendingPathComponent("lift-smoke-\(UUID().uuidString).sqlite").path
 do {
-let engine = try NativeEngine.open(path: database, deviceId: "swift-smoke", now: "2026-01-01T12:00:00.000Z")
+let engine = try NativeEngine.open(path: database, deviceId: "swift-smoke", now: "2026-01-01T12:00:00.000Z", legacyJson: "{\"etag\":null}")
 let command = "{\"op\":\"set_day_note\",\"date\":\"2026-01-01\",\"text\":\"from Swift\"}"
 let receipt = try engine.execute(commandId: "swift-one", generation: 1, commandJson: command,
   now: "2026-01-01T12:00:00.000Z", today: "2026-01-01")
@@ -23,6 +23,12 @@ precondition(result.contains("from Swift"))
 let retried = try engine.execute(commandId: "swift-one", generation: 1, commandJson: command,
   now: "2026-01-01T12:00:00.000Z", today: "2026-01-01")
 precondition(receipt == retried)
+do {
+  _ = try engine.execute(commandId: "swift-stale", generation: 9, commandJson: command,
+    now: "2026-01-01T12:00:00.000Z", today: "2026-01-01")
+  preconditionFailure("stale generation was accepted")
+} catch EngineError.Stale {
+}
 try engine.shutdown()
 }
 try FileManager.default.removeItem(atPath: database)
@@ -30,7 +36,7 @@ print("Swift → Rust → SQLite durable command/query smoke passed")
 
 do {
   let database = FileManager.default.temporaryDirectory.appendingPathComponent("lift-replace-\(UUID().uuidString).sqlite").path
-  let engine = try NativeEngine.open(path: database, deviceId: "swift-replace", now: "2026-01-01T12:00:00.000Z")
+  let engine = try NativeEngine.open(path: database, deviceId: "swift-replace", now: "2026-01-01T12:00:00.000Z", legacyJson: "{\"etag\":null}")
   let command = "{\"op\":\"set_day_note\",\"date\":\"2026-01-01\",\"text\":\"before restore\"}"
   _ = try engine.execute(commandId: "initial", generation: 1, commandJson: command, now: "now", today: "2026-01-01")
   let bytes = try engine.snapshotBytes(now: "2026-01-01T12:00:00.000Z")

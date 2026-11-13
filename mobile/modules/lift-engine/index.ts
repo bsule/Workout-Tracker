@@ -1,7 +1,30 @@
 import { requireOptionalNativeModule } from 'expo-modules-core'
-import type { DataTransport } from '../../../packages/engine-client/src/data-api'
-import type { UploadSnapshot } from '../../../packages/engine-client/src/sync-client'
-import type { EngineTransport, QueryReply, Receipt } from '../../../packages/engine-client/src/index'
+import type { DataTransport } from '@lift/engine-client/data-api'
+import type { UploadSnapshot } from '@lift/engine-client/sync-client'
+import type { EngineTransport, QueryReply, Receipt } from '@lift/engine-client'
+
+/**
+ * Stable codes on native rejections, read as `error.code`.
+ * - TOO_NEW: data or a database from a newer app; nothing was written.
+ * - CORRUPT: no readable copy of the data (damaged files were left in place).
+ * - STALE: the request was based on an older generation or revision.
+ * - CLOSED: the session is closed.
+ * - FAILED: anything else.
+ */
+export const EngineErrorCode = {
+  TOO_NEW: 'ERR_ENGINE_TOO_NEW',
+  CORRUPT: 'ERR_ENGINE_CORRUPT',
+  STALE: 'ERR_ENGINE_STALE',
+  CLOSED: 'ERR_ENGINE_CLOSED',
+  FAILED: 'ERR_ENGINE',
+} as const
+export type EngineErrorCode = (typeof EngineErrorCode)[keyof typeof EngineErrorCode]
+const ENGINE_CODES: ReadonlySet<string> = new Set(Object.values(EngineErrorCode))
+/** The engine code on a rejection, or null when it did not come from the engine. */
+export function engineErrorCode(e: unknown): string | null {
+  const code = e && typeof e === 'object' ? (e as { code?: unknown }).code : undefined
+  return typeof code === 'string' && ENGINE_CODES.has(code) ? code : null
+}
 
 export interface ImportRequest {
   command_id: string; generation: number; revision: number
@@ -35,7 +58,7 @@ interface NativeModule {
   saveRestorePoint(session: string, now: string): Promise<void>
   restorePoints(session: string): Promise<string>
   syncState(session: string): Promise<string>
-  open(session: string, path: string, deviceId: string, now: string): Promise<string>
+  open(session: string, path: string, deviceId: string, now: string, legacyJson: string): Promise<string>
   execute(session: string, commandId: string, generation: number, command: string, now: string, today: string): Promise<string>
   query(session: string, query: string): Promise<string>
   close(session: string): Promise<void>
@@ -47,11 +70,16 @@ function encode(value:unknown):string {
     return value
   })
 }
-export async function openNativeTransport(session:string,path:string,deviceId:string,now:string):Promise<{transport:EngineTransport;data:NativeDataApi;generation:number;revision:number}> {
+/**
+ * `legacy.etag` is the cloud version the old TypeScript store last agreed
+ * with. The engine adopts it only when this open migrates that store into a
+ * new database; an etag the engine already holds is never replaced.
+ */
+export async function openNativeTransport(session:string,path:string,deviceId:string,now:string,legacy:{etag:string|null}):Promise<{transport:EngineTransport;data:NativeDataApi;generation:number;revision:number}> {
   if(!native)throw new Error('Rust engine requires a development build with lift-engine included.')
   const info=await native.info()
   if(info.protocolVersion!==1)throw new Error('Unsupported Rust engine protocol. Rebuild the app.')
-  const opened:QueryReply<unknown>=JSON.parse(await native.open(session,path,deviceId,now))
+  const opened:QueryReply<unknown>=JSON.parse(await native.open(session,path,deviceId,now,JSON.stringify({etag:legacy?.etag??null})))
   const transport:EngineTransport={
     query:async(query)=>JSON.parse(await native.query(session,encode(query))),
     execute:async(id,generation,command,now,today):Promise<Receipt>=>JSON.parse(await native.execute(session,id,generation,encode(command),now,today)),

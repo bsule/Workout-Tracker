@@ -1,3 +1,7 @@
+/**
+ * @deprecated Legacy TypeScript store export surface.
+ * Workouts, sets, exercises, and sync are now driven by the Rust engine (@lift/engine-client).
+ */
 import type {
   CalendarMap,
   Category,

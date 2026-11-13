@@ -1,11 +1,8 @@
-import { useScreenSnapshot } from "../store/useScreenSnapshot"
-import { useMemo } from "react"
 import { Pressable, StyleSheet, Text, View } from "react-native"
-import {
-  getWorkoutByDateQ,
-  startPlannedWorkout,
-} from "@lift/core"
 import type { WorkoutExercise } from "@lift/core"
+import { queryValue, useWorkoutByDate, useWorkoutApi } from "@lift/engine-client/react"
+import { useScreenQueryOptions } from "../engine/screenQuery"
+import { guardWrite } from "./writeError"
 import { Button } from "./Button"
 import { CategoryPill } from "./CategoryPill"
 import { NotePreview } from "./NotePreview"
@@ -20,8 +17,9 @@ interface Props {
 }
 
 export function DayWorkoutContent({ date, onPressExercise }: Props) {
-  const snapshot = useScreenSnapshot(true)
-  const workout = useMemo(() => getWorkoutByDateQ(date), [snapshot, date])
+  const api = useWorkoutApi()
+  // Prepared before a screen above pops back, like the old snapshot read.
+  const workout = queryValue(useWorkoutByDate(date, useScreenQueryOptions(true)), null)
 
   if (!workout) {
     return (
@@ -48,7 +46,12 @@ export function DayWorkoutContent({ date, onPressExercise }: Props) {
             </Text>
           </View>
           {!isFuture && (
-            <Button label="Start" onPress={() => startPlannedWorkout(workout.id)} />
+            <Button
+              label="Start"
+              onPress={() => {
+                guardWrite(api.startPlannedWorkout(workout.id), "Couldn't start workout")
+              }}
+            />
           )}
         </View>
       )}

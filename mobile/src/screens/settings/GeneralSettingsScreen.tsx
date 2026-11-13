@@ -1,12 +1,14 @@
 import { useState } from "react"
 import { Alert, ScrollView, StyleSheet, Text } from "react-native"
-import { localApi as api } from "@lift/core"
+import { useWorkoutApi } from "@lift/engine-client/react"
+import { guardWrite } from "../../components/writeError"
 import { SegmentRow, SettingsFooter, SettingsGroup } from "../../components/SettingRows"
 import { useSettings, useWeightUnit } from "../../settings/SettingsProvider"
 import { theme } from "../../theme/theme"
 import { currentMode, setStoredMode, type ThemeMode } from "../../theme/themeMode"
 
 export function GeneralSettingsScreen() {
+  const api = useWorkoutApi()
   const unit = useWeightUnit()
   const { firstDayOfWeek } = useSettings()
   // Read once on mount; a change prompts for a restart, so nothing else
@@ -35,12 +37,16 @@ export function GeneralSettingsScreen() {
             {
               label: "kg",
               active: unit === "kg",
-              onPress: () => api.updateSettings({ weight_unit: "kg" }),
+              onPress: () => {
+                guardWrite(api.updateSettings({ weight_unit: "kg" }), "Couldn't save setting")
+              },
             },
             {
               label: "lb",
               active: unit === "lb",
-              onPress: () => api.updateSettings({ weight_unit: "lb" }),
+              onPress: () => {
+                guardWrite(api.updateSettings({ weight_unit: "lb" }), "Couldn't save setting")
+              },
             },
           ]}
         />
@@ -50,12 +56,16 @@ export function GeneralSettingsScreen() {
             {
               label: "Sun",
               active: firstDayOfWeek === 0,
-              onPress: () => api.updateSettings({ first_day_of_week: 0 }),
+              onPress: () => {
+                guardWrite(api.updateSettings({ first_day_of_week: 0 }), "Couldn't save setting")
+              },
             },
             {
               label: "Mon",
               active: firstDayOfWeek === 1,
-              onPress: () => api.updateSettings({ first_day_of_week: 1 }),
+              onPress: () => {
+                guardWrite(api.updateSettings({ first_day_of_week: 1 }), "Couldn't save setting")
+              },
             },
           ]}
         />

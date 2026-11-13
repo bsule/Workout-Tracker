@@ -1,9 +1,11 @@
 //! AI context selection and plan rules. Provider HTTP and credentials stay in
 //! the host. Each accepted day is prepared atomically in Rust.
 use crate::{
-    commands::{apply_command, seeds, Command, Context},
+    commands::{apply_command_indexed, next_available_id, seeds, Command, Context},
+    lookup::Lookup,
     model::Snapshot,
     queries::fuzzy_match,
+    queries::Indexes,
     units::{to_kg, WeightUnit},
 };
 use serde_json::{json, Value};
@@ -97,6 +99,19 @@ pub fn apply(
     unit: WeightUnit,
     ctx: &mut Context,
 ) -> Result<Value, String> {
+    let ix = Indexes::build(snapshot);
+    let look = Lookup::new(&ix, snapshot);
+    ctx.next_id = ctx.next_id.max(next_available_id(snapshot));
+    apply_indexed(snapshot, plan, unit, ctx, &look)
+}
+/// `look` indexes the snapshot `snapshot` was cloned from.
+pub fn apply_indexed(
+    snapshot: &mut Snapshot,
+    plan: &Value,
+    unit: WeightUnit,
+    ctx: &mut Context,
+    look: &Lookup,
+) -> Result<Value, String> {
     let days = plan["days"].as_array().ok_or("Plan is missing days")?;
     let mut applied = vec![];
     let mut errors = vec![];
@@ -112,10 +127,11 @@ pub fn apply(
         let mut staged = snapshot.clone();
         let mut day_ctx = ctx.clone();
         let result = (|| -> Result<(), String> {
-            let workout = apply_command(
+            let workout = apply_command_indexed(
                 &mut staged,
                 Command::CreateWorkout { date: date.into() },
                 &mut day_ctx,
+                look,
             )?;
             let wid = workout["row"]["id"]
                 .as_u64()
@@ -170,7 +186,7 @@ pub fn apply(
                             .contains(k)
                         })
                         .unwrap_or("weight_reps");
-                    apply_command(
+                    apply_command_indexed(
                         &mut staged,
                         Command::CreateExercise {
                             name: name.into(),
@@ -178,28 +194,31 @@ pub fn apply(
                             kind: Some(kind.into()),
                         },
                         &mut day_ctx,
+                        look,
                     )?["id"]
                         .as_u64()
                         .ok_or("Exercise creation failed")?
                 };
-                let we = apply_command(
+                let we = apply_command_indexed(
                     &mut staged,
                     Command::AddExercise {
                         workout_id: wid,
                         exercise_id: eid,
                     },
                     &mut day_ctx,
+                    look,
                 )?["id"]
                     .as_u64()
                     .ok_or("Workout exercise creation failed")?;
                 for set in ex["sets"].as_array().into_iter().flatten() {
-                    apply_command(
+                    apply_command_indexed(
                         &mut staged,
                         Command::AddSet {
                             we_id: we,
                             input: json!({"weight":set["weight"].as_f64().map(|w|to_kg(w,unit)),"reps":set["reps"],"distance_m":set["distance_m"],"time_seconds":set["time_seconds"],"note":set["note"].as_str().unwrap_or(""),"is_planned":true}),
                         },
                         &mut day_ctx,
+                        look,
                     )?;
                 }
             }

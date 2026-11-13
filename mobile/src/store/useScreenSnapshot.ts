@@ -1,24 +1,9 @@
-import { useCallback, useContext, useMemo, useSyncExternalStore } from "react"
+import { useCallback, useContext } from "react"
 import { NavigationContainerRefContext, useNavigation, useRoute } from "@react-navigation/native"
-import { getState, subscribe } from "@lift/core/store/store"
-import { createFocusedStore, getReturnRouteKey, prepareScreenReturn, subscribeScreenReturn } from "./focusedStore"
+import { getReturnRouteKey, prepareScreenReturn } from "./focusedStore"
 
-const source = { getSnapshot: () => getState().snapshot, subscribe }
-
-/** Screen-local data; app-level saving, sync and settings stay subscribed. */
-export function useScreenSnapshot(prepareOnReturn = false) {
-  const navigation = useNavigation()
-  const route = useRoute()
-  const store = useMemo(
-    () => createFocusedStore(
-      navigation,
-      source,
-      prepareOnReturn ? (listener) => subscribeScreenReturn(route.key, listener) : undefined
-    ),
-    [navigation, route.key, prepareOnReturn]
-  )
-  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
-}
+// Screens read engine queries through useScreenQueryOptions
+// (../engine/screenQuery.ts), which keeps covered screens off the refetch.
 
 /** Call after saving/cleanup and before goBack; also safe at pop transition start. */
 export function usePrepareScreenReturn(returnRouteKey?: string) {

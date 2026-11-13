@@ -55,7 +55,8 @@ pub fn import(
         .flexible(true)
         .from_reader(text.trim_start_matches('\u{feff}').as_bytes());
     let headers = reader.headers().map_err(invalid)?.clone();
-    let mut lookup = ExerciseLookup::new(if replace { &[] } else { &snap.exercises });
+    let empty = lift_domain::table::Table::default();
+    let mut lookup = ExerciseLookup::new(if replace { &empty } else { &snap.exercises });
     let mut result = snap.clone();
     if replace {
         result.exercises.clear();
@@ -63,23 +64,7 @@ pub fn import(
         result.workout_exercises.clear();
         result.sets.clear();
     }
-    let mut next = ctx.next_id.max(
-        snap.exercises
-            .iter()
-            .map(|r| r.id)
-            .chain(snap.workouts.iter().map(|r| r.id))
-            .chain(snap.workout_exercises.iter().map(|r| r.id))
-            .chain(snap.sets.iter().map(|r| r.id))
-            .chain(snap.gyms.iter().map(|r| r.id))
-            .max()
-            .unwrap_or(0)
-            + 1,
-    );
-    let mut alloc = || {
-        let n = next;
-        next += 1;
-        n
-    };
+    let mut ids = crate::Ids::new(snap, ctx);
     let mut dates: HashMap<_, _> = result
         .workouts
         .iter()
@@ -103,8 +88,10 @@ pub fn import(
     let mut imported = 0;
     let mut errors = vec![];
     let mut created = std::collections::BTreeSet::new();
+    let mut rows = 0;
     for (i, record) in reader.records().enumerate() {
         let record = record.map_err(invalid)?;
+        rows += 1;
         let get = |key: &str| {
             headers
                 .iter()
@@ -175,7 +162,7 @@ pub fn import(
         } else {
             let category = get("Category").trim().to_lowercase();
             let row = ExerciseRow {
-                id: alloc(),
+                id: ids.exercise(),
                 name: name.clone(),
                 category: if category.is_empty() {
                     "chest".into()
@@ -194,7 +181,7 @@ pub fn import(
         let workout = if let Some(id) = dates.get(date) {
             *id
         } else {
-            let id = alloc();
+            let id = ids.next();
             let active = date == ctx.today;
             result.workouts.push(WorkoutRow {
                 id,
@@ -212,7 +199,7 @@ pub fn import(
         let we = if let Some(id) = pairs.get(&(workout, exercise.id)) {
             *id
         } else {
-            let id = alloc();
+            let id = ids.next();
             let order = siblings.entry(workout).or_default();
             result.workout_exercises.push(WorkoutExerciseRow {
                 id,
@@ -227,7 +214,7 @@ pub fn import(
         };
         let order = counts.entry(we).or_default();
         result.sets.push(SetRow {
-            id: alloc(),
+            id: ids.next(),
             workout_exercise_id: we,
             weight,
             reps,
@@ -250,11 +237,20 @@ pub fn import(
         *order += 1;
         imported += 1;
     }
+    if replace && rows > 0 && imported == 0 {
+        // Every row was rejected: most likely the wrong file. TypeScript
+        // would have cleared the account here; nothing is replaced instead.
+        // An empty file still clears it, as before.
+        return Err(invalid(
+            "No row in this file could be imported, so nothing was replaced.",
+        ));
+    }
     if imported > 0 {
         prs::recompute(&mut result, None);
     }
+    lift_domain::model::repair(&mut result);
     lift_domain::model::validate(&result).map_err(invalid)?;
     *snap = result;
-    ctx.next_id = next;
+    ctx.next_id = ids.end();
     Ok(json!({"imported":imported,"exercisesCreated":created,"errors":errors}))
 }

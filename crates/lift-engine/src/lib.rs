@@ -1,8 +1,9 @@
 //! Portable prepare/persist/publish coordinator. A host must persist a prepared
 //! change before publishing it. No filesystem or platform dependencies.
-use lift_domain::table::Table;
 use lift_domain::{
-    commands::{apply_command_trusted, next_available_id, Command, Context},
+    commands::{apply_command_indexed, next_available_id, Command, Context},
+    diff::{diff, validate_changes, Changes},
+    lookup::Lookup,
     model::Snapshot,
     queries::{Indexes, Query},
 };
@@ -23,6 +24,9 @@ pub struct Prepared {
     pub snapshot: Snapshot,
     pub next_id: u64,
     pub receipt: Receipt,
+    /// Rows that differ from the committed snapshot the change was prepared
+    /// against. Computed by `Engine::finish`.
+    pub changes: Changes,
 }
 pub struct Engine {
     snapshot: Snapshot,
@@ -52,6 +56,28 @@ impl Engine {
             indexes,
         })
     }
+    /// Diffs a prepared snapshot against the committed one. `validated`
+    /// skips the row checks for a snapshot already validated in full.
+    fn finish(
+        &self,
+        snapshot: Snapshot,
+        next_id: u64,
+        receipt: Receipt,
+        validated: bool,
+    ) -> Result<Prepared, String> {
+        let changes = diff(&self.snapshot, &snapshot)?;
+        if !validated {
+            validate_changes(&self.snapshot, &self.indexes, &snapshot, &changes)?;
+        }
+        Ok(Prepared {
+            base_revision: self.revision,
+            base_generation: self.generation,
+            snapshot,
+            next_id,
+            receipt,
+            changes,
+        })
+    }
     pub fn prepare(
         &self,
         command_id: String,
@@ -69,21 +95,16 @@ impl Engine {
             today,
             next_id: self.next_id,
         };
-        let result = apply_command_trusted(&mut snapshot, command, &mut ctx)?;
-        lift_domain::model::validate_changed(&snapshot, &self.snapshot)?;
-        Ok(Prepared {
-            base_revision: self.revision,
-            base_generation: self.generation,
-            snapshot,
-            next_id: ctx.next_id,
-            receipt: Receipt {
-                command_id,
-                payload,
-                generation: self.generation,
-                revision: self.revision + 1,
-                result,
-            },
-        })
+        let look = Lookup::new(&self.indexes, &self.snapshot);
+        let result = apply_command_indexed(&mut snapshot, command, &mut ctx, &look)?;
+        let receipt = Receipt {
+            command_id,
+            payload,
+            generation: self.generation,
+            revision: self.revision + 1,
+            result,
+        };
+        self.finish(snapshot, ctx.next_id, receipt, false)
     }
     pub fn prepare_import(
         &self,
@@ -103,7 +124,6 @@ impl Engine {
             _ => return Err("Unsupported import format".into()),
         }
         .map_err(|e| e.to_string())?;
-        lift_domain::model::validate_changed(&snapshot, &self.snapshot)?;
         let generation = if replace {
             self.generation
                 .checked_add(1)
@@ -111,65 +131,81 @@ impl Engine {
         } else {
             self.generation
         };
-        Ok(Prepared {
-            base_revision: self.revision,
-            base_generation: self.generation,
-            snapshot,
-            next_id: ctx.next_id,
-            receipt: Receipt {
-                command_id: id,
-                payload: import_identity(format, input, replace),
-                generation,
-                revision: self.revision.checked_add(1).ok_or("Revision overflow")?,
-                result,
-            },
-        })
+        let receipt = Receipt {
+            command_id: id,
+            payload: import_identity(format, input, replace),
+            generation,
+            revision: self.revision.checked_add(1).ok_or("Revision overflow")?,
+            result,
+        };
+        // The importers validate the whole result.
+        self.finish(snapshot, ctx.next_id, receipt, true)
     }
     pub fn prepare_replacement(
         &self,
         id: String,
-        snapshot: Snapshot,
+        mut snapshot: Snapshot,
         payload: Value,
     ) -> Result<Prepared, String> {
+        lift_domain::model::repair(&mut snapshot);
         lift_domain::model::validate(&snapshot)?;
         if id.is_empty() || id.len() > 256 {
             return Err("Invalid replacement ID".into());
         }
-        let next_id = snapshot
-            .exercises
-            .iter()
-            .map(|r| r.id)
-            .chain(snapshot.workouts.iter().map(|r| r.id))
-            .chain(snapshot.workout_exercises.iter().map(|r| r.id))
-            .chain(snapshot.sets.iter().map(|r| r.id))
-            .chain(snapshot.gyms.iter().map(|r| r.id))
-            .max()
-            .unwrap_or(0)
-            + 1;
+        let next_id = next_available_id(&snapshot);
         let generation = self
             .generation
             .checked_add(1)
             .ok_or("Generation overflow")?;
         let revision = self.revision.checked_add(1).ok_or("Revision overflow")?;
-        Ok(Prepared {
-            base_revision: self.revision,
-            base_generation: self.generation,
-            snapshot,
-            next_id,
-            receipt: Receipt {
-                command_id: id,
-                payload,
-                generation,
-                revision,
-                result: Value::Null,
-            },
-        })
+        let receipt = Receipt {
+            command_id: id,
+            payload,
+            generation,
+            revision,
+            result: Value::Null,
+        };
+        self.finish(snapshot, next_id, receipt, true)
+    }
+    /// The first dataset of a new store, in the same generation.
+    pub fn prepare_initial(
+        &self,
+        id: String,
+        mut snapshot: Snapshot,
+        payload: Value,
+    ) -> Result<Prepared, String> {
+        lift_domain::model::repair(&mut snapshot);
+        lift_domain::model::validate(&snapshot)?;
+        let next_id = self.next_id.max(next_available_id(&snapshot));
+        let receipt = Receipt {
+            command_id: id,
+            payload,
+            generation: self.generation,
+            revision: self.revision.checked_add(1).ok_or("Revision overflow")?,
+            result: Value::Null,
+        };
+        self.finish(snapshot, next_id, receipt, true)
+    }
+    /// A repaired copy of the committed data, adopted without a revision:
+    /// the host persists the dropped rows and publishes it on open.
+    pub fn prepare_repair(&self, snapshot: Snapshot) -> Result<Prepared, String> {
+        lift_domain::model::validate(&snapshot)?;
+        let receipt = Receipt {
+            command_id: "__repair".into(),
+            payload: Value::Null,
+            generation: self.generation,
+            revision: self.revision,
+            result: Value::Null,
+        };
+        let next_id = self.next_id.max(next_available_id(&snapshot));
+        self.finish(snapshot, next_id, receipt, true)
     }
     pub fn publish(&mut self, prepared: Prepared) -> Result<Receipt, String> {
         if prepared.base_revision != self.revision || prepared.base_generation != self.generation {
             return Err("Stale prepared change".into());
         }
-        self.indexes.update(&self.snapshot, &prepared.snapshot);
+        self.indexes
+            .apply(&self.snapshot, &prepared.snapshot, &prepared.changes);
         self.generation = prepared.receipt.generation;
         self.snapshot = prepared.snapshot;
         self.revision = prepared.receipt.revision;
@@ -263,12 +299,14 @@ mod tests {
 
 /// Cross-platform storage protocol. Only changed rows cross into the browser
 /// adapter; ordinary mutations never transfer the entire snapshot to React.
+/// `ordinal` orders rows within a table on reload; it grows along the table
+/// and is kept by surviving rows, so a delete rewrites no other row.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RowWrite {
     pub table: String,
     pub key: String,
     pub value: Option<Value>,
-    pub ordinal: usize,
+    pub ordinal: i64,
 }
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WriteSet {
@@ -281,86 +319,102 @@ pub struct WriteSet {
     pub rows: Vec<RowWrite>,
     pub receipt: Receipt,
 }
-pub fn write_set(engine: &Engine, pending: &Prepared) -> Result<WriteSet, String> {
-    fn diff<T: Serialize + PartialEq, K: std::hash::Hash + Eq + ToString>(
-        table: &str,
-        old: &Table<T>,
-        new: &Table<T>,
-        key_of: impl Fn(&T) -> K,
-        rows: &mut Vec<RowWrite>,
-    ) -> Result<(), String> {
-        if old.shares_storage_with(new) {
-            return Ok(());
-        }
-        let mut keys = std::collections::HashSet::new();
-        for (i, row) in new.iter().enumerate() {
-            let key = key_of(row);
-            if old.get(i) != Some(row) {
-                rows.push(RowWrite {
-                    table: table.into(),
-                    key: key.to_string(),
-                    value: Some(serde_json::to_value(row).map_err(|e| e.to_string())?),
-                    ordinal: i,
-                });
-            }
-            if !keys.insert(key) {
-                return Err("Duplicate row key".into());
-            }
-        }
-        for (i, row) in old.iter().enumerate() {
-            let key = key_of(row);
-            if !keys.contains(&key) {
-                rows.push(RowWrite {
-                    table: table.into(),
-                    key: key.to_string(),
-                    value: None,
-                    ordinal: i,
-                });
-            }
-        }
-        Ok(())
+/// One durable row change: `value` is None for a delete.
+pub struct RowChange<'a> {
+    pub table: &'static str,
+    pub key: String,
+    pub value: Option<Box<dyn erased::Row + 'a>>,
+    pub ordinal: i64,
+}
+pub mod erased {
+    /// A row that serializes either to a JSON value or straight to text.
+    pub trait Row {
+        fn to_value(&self) -> serde_json::Result<serde_json::Value>;
+        fn to_text(&self) -> serde_json::Result<String>;
     }
-    let old = &engine.snapshot;
-    let new = &pending.snapshot;
-    let mut rows = vec![];
-    diff(
-        "exercises",
-        &old.exercises,
-        &new.exercises,
-        |r| r.id,
-        &mut rows,
-    )?;
-    diff(
-        "workouts",
-        &old.workouts,
-        &new.workouts,
-        |r| r.id,
-        &mut rows,
-    )?;
-    diff(
+    impl<T: serde::Serialize> Row for &T {
+        fn to_value(&self) -> serde_json::Result<serde_json::Value> {
+            serde_json::to_value(self)
+        }
+        fn to_text(&self) -> serde_json::Result<String> {
+            serde_json::to_string(self)
+        }
+    }
+}
+/// Every durable row change in a prepared commit.
+pub fn row_changes(pending: &Prepared) -> Vec<RowChange<'_>> {
+    fn table<'a, T: Serialize + 'a>(
+        out: &mut Vec<RowChange<'a>>,
+        name: &'static str,
+        rows: &'a lift_domain::table::Table<T>,
+        d: &lift_domain::diff::TableDiff,
+        key_of: impl Fn(&T) -> String,
+    ) {
+        for &p in &d.upserts {
+            let row = &rows[p];
+            out.push(RowChange {
+                table: name,
+                key: key_of(row),
+                value: Some(Box::new(row)),
+                ordinal: rows.ordinal(p).unwrap_or(0),
+            });
+        }
+        for key in &d.deletes {
+            out.push(RowChange {
+                table: name,
+                key: key.clone(),
+                value: None,
+                ordinal: 0,
+            });
+        }
+    }
+    let s = &pending.snapshot;
+    let c = &pending.changes;
+    let mut out = vec![];
+    table(&mut out, "exercises", &s.exercises, &c.exercises, |r| {
+        r.id.to_string()
+    });
+    table(&mut out, "workouts", &s.workouts, &c.workouts, |r| {
+        r.id.to_string()
+    });
+    table(
+        &mut out,
         "workout_exercises",
-        &old.workout_exercises,
-        &new.workout_exercises,
-        |r| r.id,
-        &mut rows,
-    )?;
-    diff("sets", &old.sets, &new.sets, |r| r.id, &mut rows)?;
-    diff("gyms", &old.gyms, &new.gyms, |r| r.id, &mut rows)?;
-    diff(
-        "day_notes",
-        &old.day_notes,
-        &new.day_notes,
-        |r| r.date.clone(),
-        &mut rows,
-    )?;
-    let header = json!({"schema_version":new.schema_version,"exported_at":new.exported_at,"device_id":new.device_id,"settings":new.settings});
+        &s.workout_exercises,
+        &c.workout_exercises,
+        |r| r.id.to_string(),
+    );
+    table(&mut out, "sets", &s.sets, &c.sets, |r| r.id.to_string());
+    table(&mut out, "gyms", &s.gyms, &c.gyms, |r| r.id.to_string());
+    table(&mut out, "day_notes", &s.day_notes, &c.day_notes, |r| {
+        r.date.clone()
+    });
+    out
+}
+pub fn header(s: &Snapshot) -> Value {
+    json!({"schema_version":s.schema_version,"exported_at":s.exported_at,"device_id":s.device_id,"settings":s.settings})
+}
+pub fn write_set(_engine: &Engine, pending: &Prepared) -> Result<WriteSet, String> {
+    let mut rows = vec![];
+    for change in row_changes(pending) {
+        rows.push(RowWrite {
+            table: change.table.into(),
+            key: change.key,
+            value: change
+                .value
+                .map(|v| v.to_value())
+                .transpose()
+                .map_err(|e| e.to_string())?,
+            ordinal: change.ordinal,
+        });
+    }
     Ok(WriteSet {
         base_revision: pending.base_revision,
         base_generation: pending.base_generation,
         revision: pending.receipt.revision,
         generation: pending.receipt.generation,
         next_id: pending.next_id,
-        header,
+        header: header(&pending.snapshot),
         rows,
         receipt: pending.receipt.clone(),
     })
@@ -371,4 +425,9 @@ pub mod sync;
 pub fn import_identity(format: &str, input: &str, replace: bool) -> Value {
     use sha2::{Digest, Sha256};
     json!({"op":"import_file","format":format,"replace":replace,"sha256":format!("{:x}",Sha256::digest(input.as_bytes()))})
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
 }

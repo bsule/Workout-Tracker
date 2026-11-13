@@ -13,11 +13,10 @@ import { Ionicons } from "@expo/vector-icons"
 import {
   hasCloudConflict,
   loadSyncClock,
-  localApi as api,
   subscribeSyncClock,
-  useStore,
-} from "@lift/core"
+} from "@lift/core/sync/syncClock"
 import type { AIProviderId } from "@lift/core"
+import { useSettingsQuery, useWorkoutApi } from "@lift/engine-client/react"
 import { useAuth } from "../auth/AuthProvider"
 import { ApiError } from "../auth/api"
 import { AI_PROVIDERS } from "../ai"
@@ -36,6 +35,7 @@ type ProfileField = "username" | "email"
 
 export function SettingsScreen({ navigation }: any) {
   const { user, logout, updateProfile } = useAuth()
+  const api = useWorkoutApi()
   const unit = useWeightUnit()
   const { firstDayOfWeek, restTimerEnabled, restTimerCutoffS } = useSettings()
 
@@ -99,8 +99,9 @@ export function SettingsScreen({ navigation }: any) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const settingsState = useSettingsQuery()
   const storedProvider: AIProviderId =
-    useStore((s) => s.snapshot.settings.ai_provider) ?? "openai"
+    (settingsState.status === "ready" ? settingsState.value.ai_provider : undefined) ?? "openai"
   const [pendingProvider, setPendingProvider] = useState<AIProviderId | null>(null)
   const aiProvider: AIProviderId = pendingProvider ?? storedProvider
   useEffect(() => {
@@ -111,13 +112,10 @@ export function SettingsScreen({ navigation }: any) {
   function selectProvider(id: AIProviderId) {
     if (id === aiProvider) return
     setPendingProvider(id)
-    // applyMutation rebuilds snapshot indexes and re-renders every
-    // SettingsProvider descendant; double-RAF lets the optimistic button
-    // re-render paint before the JS thread blocks on that work.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        api.updateSettings({ ai_provider: id })
-      })
+    // The optimistic button paints first; the saved value replaces it.
+    api.updateSettings({ ai_provider: id }).catch((e) => {
+      setPendingProvider(null)
+      Alert.alert("Couldn't save", e instanceof Error ? e.message : "Try again.")
     })
   }
   const [keyPresence, setKeyPresence] = useState<Record<AIProviderId, boolean>>(

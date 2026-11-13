@@ -13,6 +13,13 @@ export function nextId(): number {
   return counter++
 }
 
+/** The next id, at least `min`, and the counter moves past it, so two calls in
+ * a row never return the same id (custom exercises floor above the seeds). */
+export function nextIdAtLeast(min: number): number {
+  counter = Math.max(counter, min)
+  return counter++
+}
+
 export function newDeviceId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID()

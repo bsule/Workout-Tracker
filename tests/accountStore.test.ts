@@ -1,8 +1,9 @@
 /**
  * The local store is keyed by user id, not username (@lift/core/store/paths),
  * so renaming the account keeps its data. A store an older build kept under
- * the username moves over once, the first time the account loads on mobile
- * (mobile/src/store/bootstrap.ts, adoptLegacyStore in storage.ts).
+ * the username moves over once, before the account's engine opens on mobile
+ * (mobile/src/engine/openEngine.ts, adoptLegacyStore in storage.ts). The
+ * engine then reads that folder's snapshot files once, to migrate them.
  *
  * expo-file-system is an in-memory disk whose moveAsync renames a whole
  * directory, and, like the real one, refuses to move onto an existing path.
@@ -15,15 +16,6 @@ const disk = vi.hoisted(() => ({
   failMoves: false,
 }))
 
-// bootstrap.ts schedules auto-sync with this React Native global; never run it.
-vi.stubGlobal("requestIdleCallback", () => 0)
-
-vi.mock("react-native", () => ({
-  AppState: { addEventListener: () => ({ remove() {} }) },
-}))
-vi.mock("../mobile/src/restTimer", () => ({
-  restTimer: { disable() {}, clearMark() {}, reconcile() {} },
-}))
 vi.mock("expo-file-system/legacy", () => {
   const under = (p: string) => (p.endsWith("/") ? p : p + "/")
   const exists = (p: string) =>
@@ -80,14 +72,12 @@ vi.mock("expo-file-system/legacy", () => {
   }
 })
 
-import { flushNow, snapshotStats } from "@lift/core/store/persist"
-import { serialize } from "@lift/core/store/blob"
-import { getState } from "@lift/core/store/store"
+import { snapshotStats } from "@lift/core/store/persist"
+import { serialize, parse } from "@lift/core/store/blob"
 import { accountStorePath, legacyStorePath } from "@lift/core/store/paths"
-import { bootstrapForUser, unloadForSignOut } from "../mobile/src/store/bootstrap"
-import { adoptLegacyStore, RnFsStorage } from "../mobile/src/store/storage"
+import { accountDirUri, adoptLegacyStore, RnFsStorage } from "../mobile/src/store/storage"
+import { createEngineOpener } from "../mobile/src/engine/openEngine"
 import { blankSnapshot, workout } from "./helpers/build"
-import { resetStore } from "./helpers/store"
 
 const ROOT = "file:///docs/lift/"
 
@@ -104,12 +94,40 @@ function filesUnder(dir: string): string[] {
   return [...disk.files.keys()].filter((k) => k.startsWith(ROOT + dir + "/")).sort()
 }
 
-beforeEach(async () => {
-  await unloadForSignOut()
+/** What the native open sees: the path, and the workouts the engine would
+ *  migrate from the snapshot next to it (null when there is none). */
+let opened: { path: string; workouts: number | null }[] = []
+
+const open = createEngineOpener({
+  adoptLegacyStore,
+  accountDirUri,
+  deviceId: async () => "install-1234",
+  legacyEtag: async () => null,
+  async open(_session, path) {
+    const dir = path.slice(0, path.lastIndexOf("/") + 1)
+    const file = disk.files.get(dir + "snapshot.bin")
+    const workouts = file
+      ? (await parse(Uint8Array.from(atob(file.data), (c) => c.charCodeAt(0)))).snapshot.workouts.length
+      : null
+    opened.push({ path, workouts })
+    return {
+      transport: { query: async () => ({ generation: 1, revision: 0, data: null }), execute: async () => { throw Error("unused") }, close: async () => {} },
+      generation: 1,
+      revision: 0,
+    }
+  },
+  now: () => "2026-09-21T08:00:00.000Z",
+})
+
+function bootstrapForUser(user: { id: number; username: string }) {
+  return open(String(user.id), "test", { username: user.username })
+}
+
+beforeEach(() => {
   disk.files.clear()
   disk.dirs.clear()
   disk.failMoves = false
-  resetStore()
+  opened = []
 })
 
 describe("store paths", () => {
@@ -120,12 +138,11 @@ describe("store paths", () => {
 })
 
 describe("mobile account store", () => {
-  it("moves a username-keyed store to the id key on first load", async () => {
+  it("moves a username-keyed store to the id key before the engine opens", async () => {
     await seedStore(legacyStorePath("bob"), 3)
     await bootstrapForUser({ id: 7, username: "bob" })
 
-    expect(getState().hydrated).toBe(true)
-    expect(getState().snapshot.workouts).toHaveLength(3)
+    expect(opened).toEqual([{ path: ROOT + "accounts_7/engine.sqlite", workouts: 3 }])
     expect(filesUnder("users_bob")).toEqual([])
     expect(filesUnder("accounts_7")).toContain(ROOT + "accounts_7/snapshot.bin")
   })
@@ -133,11 +150,14 @@ describe("mobile account store", () => {
   it("keeps the same store after the username changes", async () => {
     await seedStore(legacyStorePath("bob"), 2)
     await bootstrapForUser({ id: 7, username: "bob" })
-    await unloadForSignOut()
 
     // Renamed to "rob": same id, same data. Nothing is looked up under users/rob.
     await bootstrapForUser({ id: 7, username: "rob" })
-    expect(getState().snapshot.workouts).toHaveLength(2)
+    expect(opened.map((o) => o.path)).toEqual([
+      ROOT + "accounts_7/engine.sqlite",
+      ROOT + "accounts_7/engine.sqlite",
+    ])
+    expect(opened[1].workouts).toBe(2)
   })
 
   it("never overwrites an account store that already exists", async () => {
@@ -146,15 +166,18 @@ describe("mobile account store", () => {
 
     expect(await adoptLegacyStore(legacyStorePath("bob"), accountStorePath(7))).toBe(false)
     await bootstrapForUser({ id: 7, username: "bob" })
-    expect(getState().snapshot.workouts).toHaveLength(5)
+    expect(opened[0].workouts).toBe(5)
     // The old folder is left alone, not merged or deleted.
     expect(filesUnder("users_bob")).toContain(ROOT + "users_bob/snapshot.bin")
   })
 
-  it("starts empty when there is no old store", async () => {
+  it("opens an empty account when there is no old store, creating no folder first", async () => {
     expect(await adoptLegacyStore(legacyStorePath("new-user"), accountStorePath(9))).toBe(false)
     await bootstrapForUser({ id: 9, username: "new-user" })
-    expect(getState().snapshot.workouts).toHaveLength(0)
+    expect(opened).toEqual([{ path: ROOT + "accounts_9/engine.sqlite", workouts: null }])
+    // The engine creates the folder itself; nothing here made one that a
+    // later move would mistake for an existing account store.
+    expect(disk.dirs.size).toBe(0)
   })
 
   it("refuses to load when the move fails, instead of showing an empty store", async () => {
@@ -163,15 +186,9 @@ describe("mobile account store", () => {
 
     // The rejection is what makes StoreProvider show its load error.
     await expect(bootstrapForUser({ id: 7, username: "bob" })).rejects.toThrow("disk full")
+    expect(opened).toEqual([])
     expect(filesUnder("accounts_7")).toEqual([])
     // The data is still where it was, for the next launch to move.
     expect(filesUnder("users_bob")).toContain(ROOT + "users_bob/snapshot.bin")
-  })
-
-  it("saves new edits under the id key", async () => {
-    await bootstrapForUser({ id: 11, username: "carol" })
-    expect(filesUnder("users_carol")).toEqual([])
-    await flushNow()
-    expect(filesUnder("accounts_11").length).toBeGreaterThan(0)
   })
 })

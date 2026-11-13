@@ -46,3 +46,42 @@ it('serializes replacements with commands and refreshes subscribed queries in th
   expect(client.snapshot('counts',query)).toEqual({status:'ready',value:2,revision:6})
   await client.close()
 })
+
+it('selectively invalidates only affected queries on command execution', async () => {
+  let settingsRefreshes = 0
+  let workoutRefreshes = 0
+  let revision = 1
+  const transport: EngineTransport = {
+    query: async (q: any) => {
+      if (q.kind === 'settings') settingsRefreshes++
+      if (q.kind === 'workout_by_date') workoutRefreshes++
+      return { generation: 1, revision, data: {} }
+    },
+    execute: async (id) => {
+      revision++
+      return { command_id: id, generation: 1, revision, result: null }
+    },
+    close: async () => {},
+  }
+  const client = new EngineClient(transport, 1, 1)
+  client.subscribe('settings', { kind: 'settings' }, () => {})
+  client.subscribe('workout:today', { kind: 'workout_by_date', date: '2026-01-01' }, () => {})
+  await Promise.resolve(); await Promise.resolve()
+  expect(settingsRefreshes).toBe(1)
+  expect(workoutRefreshes).toBe(1)
+
+  // Updating settings should ONLY refresh settings, not workout
+  await client.execute('cmd1', { op: 'update_settings', patch: {} }, 'now', 'today')
+  await Promise.resolve(); await Promise.resolve()
+  expect(settingsRefreshes).toBe(2)
+  expect(workoutRefreshes).toBe(1)
+
+  // Adding a set should NOT refresh settings, but should refresh workout
+  await client.execute('cmd2', { op: 'add_set', we_id: 1, input: { reps: 5 } }, 'now', 'today')
+  await Promise.resolve(); await Promise.resolve()
+  expect(settingsRefreshes).toBe(2)
+  expect(workoutRefreshes).toBe(2)
+
+  await client.close()
+})
+

@@ -18,3 +18,24 @@ The app isn't in the App Store or Play Store. You build it yourself with one com
 ## Run it on your computer
 
 To run the app locally, test it, or deploy it, see **[docs/development.md](docs/development.md)**.
+
+## Engine Architecture & Performance
+
+Workout storage, queries, and data invariants are powered by a shared Rust engine compiled natively for mobile (iOS & Android via Expo modules) and via WebAssembly for web workers.
+
+### Performance Benchmarks (vs. Legacy TypeScript Engine)
+
+Measurements compare the legacy TypeScript engine against the release-mode Rust engine across synthetic datasets (desktop diagnostics; see [`scripts/engine/README.md`](scripts/engine/README.md)):
+
+| Operation | Scale (Sets) | TypeScript Baseline (mean) | Rust Engine (mean) | Improvement |
+| :--- | :--- | :--- | :--- | :--- |
+| **Index Hydration & Clones** | 1,000 | **1.08 ms** | **0.09 ms** | **~12x faster** |
+| | 10,000 | **9.69 ms** | **0.83 ms** | **~11.6x faster** |
+| | 50,000 | **50.2 ms** | **4.47 ms** | **~11.2x faster** |
+| | 100,000 | **104.5 ms** | **10.9 ms** | **~9.6x faster** |
+| **Snapshot Serialization** | 1,000 | **4.16 ms** | **0.26 ms** | **~16x faster** |
+| | 10,000 | **36.8 ms** | **2.85 ms** | **~13x faster** |
+| | 50,000 | **183.7 ms** | **15.1 ms** | **~12.1x faster** |
+| | 100,000 | **362.5 ms** | **28.6 ms** | **~12.6x faster** |
+| **Set Mutation (`addSet`)** | 100,000 | **20.8 ms** | **21.5 ms** | **Parity** (strict schema validation) |
+| **Snapshot Parse** | 100,000 | **72.1 ms** | **77.4 ms** | **Parity** |

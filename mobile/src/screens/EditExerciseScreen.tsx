@@ -1,5 +1,5 @@
-import { useScreenSnapshot, usePrepareScreenReturn } from "../store/useScreenSnapshot"
-import { useMemo, useState } from "react"
+import { usePrepareScreenReturn } from "../store/useScreenSnapshot"
+import { useState } from "react"
 import {
   Pressable,
   ScrollView,
@@ -9,37 +9,39 @@ import {
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { SafeAreaView } from "react-native-safe-area-context"
-import {
-  listExercisesQ,
-  localApi as api,
-} from "@lift/core"
+import type { Exercise } from "@lift/core"
+import { queryValue, useExerciseQuery, useWorkoutApi } from "@lift/engine-client/react"
+import { useScreenQueryOptions } from "../engine/screenQuery"
 import { Button } from "../components/Button"
 import { theme } from "../theme/theme"
 import { CategoryChips } from "../components/CategoryChips"
 import { Input } from "../components/Input"
 
 export function EditExerciseScreen({ navigation, route }: any) {
-  const prepareReturn = usePrepareScreenReturn()
   const { exerciseId } = route.params
-  const snapshot = useScreenSnapshot()
-
-  const exercise = useMemo(
-    () => listExercisesQ({ sort: "name" }).find((e) => e.id === exerciseId) ?? null,
-    [snapshot, exerciseId]
-  )
-
-  const [name, setName] = useState(exercise?.name ?? "")
-  const [category, setCategory] = useState<string>(exercise?.category ?? "chest")
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const exerciseQuery = useExerciseQuery(exerciseId, useScreenQueryOptions())
+  const exercise = queryValue(exerciseQuery, null)
 
   if (!exercise) {
+    // Still reading: the background alone, not a claim that it is gone.
+    if (exerciseQuery.status === "loading") return <View style={styles.flex} />
     return (
       <View style={[styles.flex, { padding: theme.spacing[4] }]}>
         <Text style={{ color: theme.colors.muted }}>Exercise not found.</Text>
       </View>
     )
   }
+  // The form seeds its fields from the exercise once it is read.
+  return <EditExerciseForm navigation={navigation} exercise={exercise} />
+}
+
+function EditExerciseForm({ navigation, exercise }: { navigation: any; exercise: Exercise }) {
+  const api = useWorkoutApi()
+  const prepareReturn = usePrepareScreenReturn()
+  const [name, setName] = useState(exercise.name)
+  const [category, setCategory] = useState<string>(exercise.category)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   async function onSave() {
     const trimmed = name.trim()
@@ -47,7 +49,7 @@ export function EditExerciseScreen({ navigation, route }: any) {
     setSubmitting(true)
     setError(null)
     try {
-      await api.patchExercise(exercise!.id, { name: trimmed, category })
+      await api.patchExercise(exercise.id, { name: trimmed, category })
       prepareReturn()
       navigation.goBack()
     } catch (e: any) {

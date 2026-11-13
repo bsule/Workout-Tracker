@@ -1,7 +1,7 @@
 /** App-facing asynchronous API. All workout decisions execute in Rust. */
 import type {Command} from './generated/commands'
 import type {Query} from './generated/Query'
-import type {Workout,WorkoutExercise,WorkoutSet,Exercise,ExerciseHistoryDay,UserSettings,Category,Gym,CalendarMap} from '../../core/src/types'
+import type {Workout,WorkoutExercise,WorkoutSet,Exercise,ExerciseHistoryDay,UserSettings,Category,Gym,CalendarMap} from '@lift/core'
 import {EngineClient} from './index'
 export class WorkoutApi {
   private sequence=0
@@ -24,6 +24,8 @@ export class WorkoutApi {
   async getWorkout(id:number){const value=await this.query<Workout|null>({kind:'workout',id});if(!value)throw new Error('Workout not found');return value}
   getWorkoutByDate(date:string){return this.query<Workout|null>({kind:'workout_by_date',date})}
   async patchWorkout(id:number,patch:Partial<Pick<Workout,'notes'|'started_at'|'finished_at'|'gym'|'status'>>){await this.command({op:'patch_workout',id,patch});return this.getWorkout(id)}
+  async startPlannedWorkout(id:number){const now=this.clock().toISOString();return this.patchWorkout(id,{status:'active',started_at:now})}
+  async finishWorkout(id:number){const now=this.clock().toISOString();return this.patchWorkout(id,{status:'done',finished_at:now})}
   async deleteWorkout(id:number){await this.command({op:'delete_workout',id})}
   async addExerciseToWorkout(workoutId:number,exerciseId:number){const row=await this.command<{id:number}>({op:'add_exercise',workout_id:workoutId,exercise_id:exerciseId});const workout=await this.getWorkout(workoutId);const we=workout.exercises.find(e=>e.id===row.id);if(!we)throw new Error('Workout exercise not found');return we}
   async removeExerciseFromWorkout(_workoutId:number,weId:number){await this.command({op:'remove_exercise',we_id:weId})}
@@ -51,4 +53,23 @@ export class WorkoutApi {
   getPlannedDates(year:number,month:number){return this.query<string[]>({kind:'planned_dates',month:`${year}-${String(month).padStart(2,'0')}`})}
   exerciseHistoryPage(id:number,offset=0,limit=30){return this.query<{total:number;items:ExerciseHistoryDay[]}>({kind:'history',exercise_id:id,offset,limit})}
   recomputePrs(){return this.command<{recomputed:number}>({op:'recompute_prs'})}
+  predictPr(exerciseId:number,weId:number,weight:number,reps:number,queued:readonly {weight:number;reps:number}[]=[]){
+    return this.query<{isPr:boolean;isPosPr:boolean;position:number}>({
+      kind:'predict_pr',
+      exercise_id:exerciseId,
+      we_id:weId,
+      weight,
+      reps,
+      queued:Array.from(queued),
+    })
+  }
+  replaceSnapshot(snapshot: unknown) {
+    return this.client.replaceSnapshot(snapshot)
+  }
+  /** Applies each accepted day atomically; a day that fails changes nothing. */
+  applyAiPlan(plan:unknown,unit:'kg'|'lb'){return this.command<{appliedDates:string[];errors:{date:string;message:string}[]}>({op:'apply_ai_plan',plan:plan as never,unit})}
+  /** Past sessions for the AI prompt, newest first, in the display unit. */
+  aiHistory(from:string,to:string,unit:'kg'|'lb',exerciseIds:number[]){return this.query<unknown[]>({kind:'ai_history',from,to,unit,exercise_ids:exerciseIds})}
+  counts(){return this.query<{workouts:number;sets:number;exercises:number}>({kind:'counts'})}
+  getSettings(){return this.query<UserSettings>({kind:'settings'})}
 }

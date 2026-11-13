@@ -1,116 +1,290 @@
 //! Transactional native record storage. Derived in-memory state is published
 //! only after SQLite commits records, revision, allocator and receipt together.
-use lift_domain::{commands::Command, model::Snapshot};
-use lift_engine::{Engine, Prepared, Receipt};
-use rusqlite::{Connection, OptionalExtension};
+//!
+//! Restore points live in a second database file beside the live one
+//! (`<db>.backups`), so damage to one cannot take both. A restore's undo copy
+//! is written there before the replacement commits, as the TypeScript store
+//! wrote its undo file first.
+use crate::error::{Fail, Result};
+use lift_domain::{
+    commands::Command,
+    model::{
+        DayNoteRow, ExerciseRow, GymRow, SetRow, Snapshot, WorkoutExerciseRow, WorkoutRow,
+        SCHEMA_VERSION,
+    },
+    table::Table,
+};
+use lift_engine::{row_changes, Engine, Prepared, Receipt};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
+
+/// Native database format. 3: restore points moved to `<db>.backups`;
+/// ordinals no longer equal positions.
+pub const DB_VERSION: i64 = 3;
+const RECEIPTS_KEPT: i64 = 2000;
+const PRUNE_EVERY: u64 = 64;
+
+pub fn backups_path(path: &str) -> String {
+    if path.is_empty() || path == ":memory:" {
+        ":memory:".into()
+    } else {
+        format!("{path}.backups")
+    }
+}
+fn configure(db: &Connection) -> Result<()> {
+    db.busy_timeout(std::time::Duration::from_secs(5))?;
+    db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")?;
+    Ok(())
+}
+pub fn open_backups(path: &str) -> Result<Connection> {
+    let db = Connection::open(path)?;
+    configure(&db)?;
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS backups (slot TEXT PRIMARY KEY, bytes BLOB NOT NULL, metadata TEXT NOT NULL);",
+    )?;
+    Ok(db)
+}
+pub fn write_backup(db: &Connection, slot: &str, bytes: &[u8], metadata: &Value) -> Result<()> {
+    db.execute(
+        "INSERT INTO backups(slot,bytes,metadata) VALUES(?,?,?) ON CONFLICT(slot) DO UPDATE SET bytes=excluded.bytes,metadata=excluded.metadata",
+        rusqlite::params![slot, bytes, metadata.to_string()],
+    )?;
+    Ok(())
+}
+fn corrupt(e: impl std::fmt::Display) -> Fail {
+    Fail::corrupt(format!("Damaged local database: {e}"))
+}
+fn load_table<T: serde::de::DeserializeOwned>(db: &Connection, kind: &str) -> Result<Table<T>> {
+    let mut stmt =
+        db.prepare("SELECT value, ordinal FROM records WHERE kind=? ORDER BY ordinal")?;
+    let mut rows = stmt.query([kind])?;
+    let mut out = vec![];
+    while let Some(row) = rows.next()? {
+        let text = row.get_ref(0)?.as_str().map_err(corrupt)?;
+        let ordinal: i64 = row.get(1)?;
+        out.push((ordinal, serde_json::from_str::<T>(text).map_err(corrupt)?));
+    }
+    Ok(Table::from_ordered(out))
+}
+
+/// Everything a restore-point or upload encoder needs, captured under the
+/// engine lock so the gzip work can run without it.
+pub struct Capture {
+    pub snapshot: Snapshot,
+    pub generation: u64,
+    pub revision: u64,
+}
+impl Capture {
+    pub fn metadata(&self, now: &str) -> Value {
+        json!({"savedAt":now,"workouts":self.snapshot.workouts.len(),"sets":self.snapshot.sets.iter().filter(|s|!s.is_planned).count(),"revision":self.revision,"generation":self.generation})
+    }
+    pub fn encode(&self, now: &str) -> Result<Vec<u8>> {
+        Ok(lift_codec::encode_snapshot(&self.snapshot, now)?)
+    }
+}
+
+/// A replacement checked against the current dataset, waiting for its bytes
+/// to be decoded and the outgoing data encoded as undo.
+pub struct ReplaceStart {
+    pub id: String,
+    pub payload: Value,
+    pub generation: u64,
+    pub revision: u64,
+    pub remote_etag: Option<String>,
+    /// Data to keep in the undo slot; None keeps the current undo copy.
+    pub undo: Option<Capture>,
+}
+pub struct ReplaceReady {
+    start: ReplaceStart,
+    snapshot: Snapshot,
+    undo: Option<(Vec<u8>, Value)>,
+}
+impl ReplaceStart {
+    /// Decodes the incoming bytes and encodes the undo copy. Runs unlocked.
+    pub fn decode(self, bytes: &[u8], now: &str) -> Result<ReplaceReady> {
+        let (mut snapshot, migrated) = lift_codec::decode_snapshot(bytes, 128 * 1024 * 1024)?;
+        if migrated {
+            lift_domain::prs::recompute(&mut snapshot, None);
+        }
+        let undo = match &self.undo {
+            Some(c) => Some((c.encode(now)?, c.metadata(now))),
+            None => None,
+        };
+        Ok(ReplaceReady {
+            start: self,
+            snapshot,
+            undo,
+        })
+    }
+}
 
 pub struct Store {
     db: Connection,
+    backups: Connection,
     pub engine: Engine,
     pub sync_state: Value,
     pub installation_device_id: String,
-}
-fn error(e: impl std::fmt::Display) -> String {
-    e.to_string()
+    commits: u64,
 }
 impl Store {
-    pub fn open(path: &str, device_id: String, now: String) -> Result<Self, String> {
-        let db = Connection::open(path).map_err(error)?;
-        let version: i64 = db
-            .query_row("PRAGMA user_version", [], |r| r.get(0))
-            .map_err(error)?;
-        if version > 2 {
-            return Err("Unsupported native database version".into());
+    pub fn open(path: &str, device_id: String, now: String) -> Result<Self> {
+        Self::open_at(path, &backups_path(path), device_id, now)
+    }
+    pub fn open_at(path: &str, backups: &str, device_id: String, now: String) -> Result<Self> {
+        let db = Connection::open(path)?;
+        configure(&db)?;
+        let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version > DB_VERSION {
+            return Err(Fail::too_new("Local database is from a newer app"));
         }
-        db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")
-            .map_err(error)?;
-        db.execute_batch("BEGIN; CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, ordinal INTEGER NOT NULL, PRIMARY KEY(kind,key)); CREATE TABLE IF NOT EXISTS meta (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS receipts (generation INTEGER NOT NULL, command_id TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(generation,command_id)); CREATE TABLE IF NOT EXISTS backups (slot TEXT PRIMARY KEY, bytes BLOB NOT NULL, metadata TEXT NOT NULL); PRAGMA user_version=2; COMMIT;").map_err(error)?;
+        db.execute_batch(&format!("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, ordinal INTEGER NOT NULL, PRIMARY KEY(kind,key)); CREATE TABLE IF NOT EXISTS meta (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS receipts (generation INTEGER NOT NULL, command_id TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(generation,command_id)); CREATE INDEX IF NOT EXISTS receipts_command ON receipts(command_id); CREATE INDEX IF NOT EXISTS records_order ON records(kind, ordinal); PRAGMA user_version={DB_VERSION}; COMMIT;"))?;
+        let backups = open_backups(backups)?;
+        Self::move_backups_out(&db, &backups)?;
         let meta: Option<String> = db
             .query_row("SELECT value FROM meta WHERE id=1", [], |r| r.get(0))
-            .optional()
-            .map_err(error)?;
+            .optional()?;
         let uninitialized = meta.is_none();
         let mut sync_state =
             json!({"dirty":false,"etag":null,"synced_revision":null,"last_synced_at":null});
+        let mut repaired: Option<Prepared> = None;
         let engine = if let Some(meta) = meta {
-            let meta: Value = serde_json::from_str(&meta).map_err(error)?;
+            let meta: Value = serde_json::from_str(&meta).map_err(corrupt)?;
             if meta["sync"].is_object() {
                 sync_state = meta["sync"].clone();
             } else {
                 // Earlier experimental databases have no proof of upload.
                 sync_state["dirty"] = json!(true);
             }
-            let mut snap = meta["header"].clone();
-            for name in [
-                "exercises",
-                "workouts",
-                "workout_exercises",
-                "sets",
-                "gyms",
-                "day_notes",
-            ] {
-                let mut stmt = db
-                    .prepare("SELECT value FROM records WHERE kind=? ORDER BY ordinal")
-                    .map_err(error)?;
-                let values = stmt
-                    .query_map([name], |r| r.get::<_, String>(0))
-                    .map_err(error)?;
-                let mut rows = vec![];
-                for v in values {
-                    rows.push(serde_json::from_str::<Value>(&v.map_err(error)?).map_err(error)?);
-                }
-                snap[name] = Value::Array(rows);
+            let mut snapshot =
+                serde_json::from_value::<lift_domain::model::Header>(meta["header"].clone())
+                    .map_err(corrupt)?
+                    .into_snapshot();
+            if snapshot.schema_version > SCHEMA_VERSION {
+                return Err(Fail::too_new("Local data is from a newer app"));
             }
-            let snapshot: Snapshot = serde_json::from_value(snap).map_err(error)?;
-            lift_domain::model::validate(&snapshot)?;
-            if snapshot.schema_version > lift_domain::model::SCHEMA_VERSION {
-                return Err("Unsupported export schema".into());
+            snapshot.exercises = load_table::<ExerciseRow>(&db, "exercises")?;
+            snapshot.workouts = load_table::<WorkoutRow>(&db, "workouts")?;
+            snapshot.workout_exercises =
+                load_table::<WorkoutExerciseRow>(&db, "workout_exercises")?;
+            snapshot.sets = load_table::<SetRow>(&db, "sets")?;
+            snapshot.gyms = load_table::<GymRow>(&db, "gyms")?;
+            snapshot.day_notes = load_table::<DayNoteRow>(&db, "day_notes")?;
+            let mut fixed = snapshot.clone();
+            let changed = lift_domain::model::repair(&mut fixed);
+            let revision = meta["revision"]
+                .as_u64()
+                .ok_or_else(|| corrupt("invalid revision"))?;
+            let generation = meta["generation"]
+                .as_u64()
+                .ok_or_else(|| corrupt("invalid generation"))?;
+            let next_id = meta["next_id"]
+                .as_u64()
+                .ok_or_else(|| corrupt("invalid allocator"))?;
+            let engine = Engine::new(snapshot, revision, generation, next_id).map_err(corrupt)?;
+            if changed {
+                repaired = Some(engine.prepare_repair(fixed)?);
             }
-            Engine::new(
-                snapshot,
-                meta["revision"].as_u64().ok_or("Invalid revision")?,
-                meta["generation"].as_u64().ok_or("Invalid generation")?,
-                meta["next_id"].as_u64().ok_or("Invalid allocator")?,
-            )?
+            engine
         } else {
             Engine::new(Snapshot::empty(device_id.clone(), now), 0, 1, 1)?
         };
         if uninitialized {
-            let rows: i64 = db
-                .query_row(
-                    "SELECT (SELECT COUNT(*) FROM records)+(SELECT COUNT(*) FROM receipts)",
-                    [],
-                    |r| r.get(0),
-                )
-                .map_err(error)?;
+            let rows: i64 = db.query_row(
+                "SELECT (SELECT COUNT(*) FROM records)+(SELECT COUNT(*) FROM receipts)",
+                [],
+                |r| r.get(0),
+            )?;
             if rows != 0 {
-                return Err("Missing metadata in a nonempty database; recovery required".into());
+                return Err(corrupt("missing metadata in a nonempty database"));
             }
-            let s = &engine.snapshot();
-            let meta = json!({"header":{"schema_version":s.schema_version,"exported_at":s.exported_at,"device_id":s.device_id,"settings":s.settings},"revision":0,"generation":1,"next_id":1,"sync":sync_state});
-            db.execute("INSERT INTO meta(id,value) VALUES(1,?)", [meta.to_string()])
-                .map_err(error)?;
+            let meta = json!({"header":lift_engine::header(engine.snapshot()),"revision":0,"generation":1,"next_id":1,"sync":sync_state});
+            db.execute("INSERT INTO meta(id,value) VALUES(1,?)", [meta.to_string()])?;
         }
-        Ok(Self {
+        let mut store = Self {
             db,
+            backups,
             engine,
             sync_state,
             installation_device_id: device_id,
-        })
+            commits: 0,
+        };
+        if let Some(pending) = repaired {
+            store.write_repair(pending)?;
+        }
+        Ok(store)
     }
-    pub fn receipt(&self, id: &str) -> Result<Option<Receipt>, String> {
+    /// Databases before version 3 kept restore points in the live file.
+    fn move_backups_out(db: &Connection, backups: &Connection) -> Result<()> {
+        let has: i64 = db.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='backups'",
+            [],
+            |r| r.get(0),
+        )?;
+        if has == 0 {
+            return Ok(());
+        }
+        let rows: Vec<(String, Vec<u8>, String)> = {
+            let mut stmt = db.prepare("SELECT slot,bytes,metadata FROM backups")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let tx = backups.unchecked_transaction()?;
+        for (slot, bytes, metadata) in rows {
+            tx.execute(
+                "INSERT OR REPLACE INTO backups(slot,bytes,metadata) VALUES(?,?,?)",
+                rusqlite::params![slot, bytes, metadata],
+            )?;
+        }
+        tx.commit()?;
+        db.execute_batch("DROP TABLE backups;")?;
+        Ok(())
+    }
+    /// Persists rows `repair` dropped on load, without a new revision: the
+    /// data is the same, minus duplicates nothing could tell apart.
+    fn write_repair(&mut self, pending: Prepared) -> Result<()> {
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        Self::write_rows(&tx, &pending)?;
+        tx.commit()?;
+        self.engine.publish(pending)?;
+        Ok(())
+    }
+    fn write_rows(tx: &rusqlite::Transaction, pending: &Prepared) -> Result<()> {
+        let mut upsert = tx.prepare_cached("INSERT INTO records(kind,key,value,ordinal) VALUES(?,?,?,?) ON CONFLICT(kind,key) DO UPDATE SET value=excluded.value,ordinal=excluded.ordinal")?;
+        let mut delete = tx.prepare_cached("DELETE FROM records WHERE kind=? AND key=?")?;
+        for change in row_changes(pending) {
+            match change.value {
+                Some(row) => {
+                    let text = row.to_text().map_err(|e| e.to_string())?;
+                    upsert.execute(rusqlite::params![
+                        change.table,
+                        change.key,
+                        text,
+                        change.ordinal
+                    ])?;
+                }
+                None => {
+                    delete.execute(rusqlite::params![change.table, change.key])?;
+                }
+            }
+        }
+        Ok(())
+    }
+    /// The newest receipt for a command id, whatever its generation, so a
+    /// retry after a lost acknowledgement finds a commit that replaced the
+    /// dataset too.
+    pub fn receipt(&self, id: &str) -> Result<Option<Receipt>> {
         let value: Option<String> = self
             .db
             .query_row(
-                "SELECT value FROM receipts WHERE generation=? AND command_id=?",
-                rusqlite::params![self.engine.generation, id],
+                "SELECT value FROM receipts WHERE command_id=? ORDER BY generation DESC LIMIT 1",
+                [id],
                 |r| r.get(0),
             )
-            .optional()
-            .map_err(error)?;
+            .optional()?;
         value
-            .map(|s| serde_json::from_str(&s).map_err(error))
+            .map(|s| serde_json::from_str(&s).map_err(corrupt))
             .transpose()
     }
     pub fn execute(
@@ -120,91 +294,97 @@ impl Store {
         command: Command,
         now: String,
         today: String,
-    ) -> Result<Receipt, String> {
-        if generation != self.engine.generation {
-            return Err("Stale dataset generation".into());
-        }
+    ) -> Result<Receipt> {
         if let Some(receipt) = self.receipt(&id)? {
-            if receipt.payload != serde_json::to_value(&command).map_err(error)? {
+            if receipt.payload != serde_json::to_value(&command).map_err(|e| e.to_string())? {
                 return Err("Command ID reused with different payload".into());
             }
             return Ok(receipt);
         }
+        if generation != self.engine.generation {
+            return Err(Fail::stale("Stale dataset generation"));
+        }
         let pending = self.engine.prepare(id, command, now, today)?;
         self.commit(pending)
     }
-    fn commit(&mut self, pending: Prepared) -> Result<Receipt, String> {
+    fn commit(&mut self, pending: Prepared) -> Result<Receipt> {
         let mut sync = self.sync_state.clone();
         sync["dirty"] = json!(true);
-        self.commit_with(pending, sync, None)
+        self.commit_with(pending, sync)
     }
-    fn commit_with(
-        &mut self,
-        pending: Prepared,
-        sync: Value,
-        undo: Option<(Vec<u8>, Value)>,
-    ) -> Result<Receipt, String> {
-        let writes = lift_engine::write_set(&self.engine, &pending)?;
-        let tx = self.db.transaction().map_err(error)?;
+    fn commit_with(&mut self, pending: Prepared, sync: Value) -> Result<Receipt> {
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let stored: Option<String> = tx
             .query_row("SELECT value FROM meta WHERE id=1", [], |r| r.get(0))
-            .optional()
-            .map_err(error)?;
+            .optional()?;
         let stored = stored
-            .map(|s| serde_json::from_str::<Value>(&s).map_err(error))
+            .map(|s| serde_json::from_str::<Value>(&s).map_err(corrupt))
             .transpose()?;
         if stored
             .as_ref()
             .is_some_and(|v| v["sync"].is_object() && v["sync"] != self.sync_state)
         {
-            return Err("Concurrent sync metadata update; reopen required".into());
+            return Err(Fail::stale(
+                "Concurrent sync metadata update; reopen required",
+            ));
         }
         let stored_generation = stored
             .as_ref()
             .and_then(|v| v["generation"].as_u64())
             .unwrap_or(1);
         if stored_generation != pending.base_generation {
-            return Err("Concurrent dataset replacement; reopen required".into());
+            return Err(Fail::stale(
+                "Concurrent dataset replacement; reopen required",
+            ));
         }
         let current = stored
             .map(|v| v["revision"].as_u64().unwrap_or(u64::MAX))
             .unwrap_or(0);
         if current != pending.base_revision {
-            return Err("Concurrent writer changed revision; reopen required".into());
+            return Err(Fail::stale(
+                "Concurrent writer changed revision; reopen required",
+            ));
         }
-        for row in &writes.rows {
-            if let Some(value) = &row.value {
-                tx.execute("INSERT INTO records(kind,key,value,ordinal) VALUES(?,?,?,?) ON CONFLICT(kind,key) DO UPDATE SET value=excluded.value,ordinal=excluded.ordinal",rusqlite::params![row.table,row.key,value.to_string(),row.ordinal]).map_err(error)?;
-            } else {
-                tx.execute(
-                    "DELETE FROM records WHERE kind=? AND key=?",
-                    rusqlite::params![row.table, row.key],
-                )
-                .map_err(error)?;
-            }
-        }
-        let meta = json!({"header":writes.header,"revision":writes.revision,"generation":writes.generation,"next_id":writes.next_id,"sync":sync});
-        tx.execute("INSERT INTO meta(id,value) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value",[meta.to_string()]).map_err(error)?;
+        Self::write_rows(&tx, &pending)?;
+        let meta = json!({"header":lift_engine::header(&pending.snapshot),"revision":pending.receipt.revision,"generation":pending.receipt.generation,"next_id":pending.next_id,"sync":sync});
+        tx.execute("INSERT INTO meta(id,value) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value",[meta.to_string()])?;
         tx.execute(
-            "INSERT INTO receipts(generation,command_id,value) VALUES(?,?,?)",
+            "INSERT OR REPLACE INTO receipts(generation,command_id,value) VALUES(?,?,?)",
             rusqlite::params![
                 pending.receipt.generation,
                 pending.receipt.command_id,
-                serde_json::to_string(&pending.receipt).map_err(error)?
+                serde_json::to_string(&pending.receipt).map_err(|e| e.to_string())?
             ],
-        )
-        .map_err(error)?;
-        if let Some((bytes, metadata)) = undo {
-            tx.execute("INSERT INTO backups(slot,bytes,metadata) VALUES('undo',?,?) ON CONFLICT(slot) DO UPDATE SET bytes=excluded.bytes,metadata=excluded.metadata",rusqlite::params![bytes,metadata.to_string()]).map_err(error)?;
+        )?;
+        if (self.commits + 1) % PRUNE_EVERY == 0 {
+            // A retry follows its lost acknowledgement within seconds; the
+            // newest receipts are all a retry can still need.
+            tx.execute(
+                "DELETE FROM receipts WHERE rowid <= (SELECT MAX(rowid) FROM receipts) - ?",
+                [RECEIPTS_KEPT],
+            )?;
         }
-        tx.commit().map_err(error)?;
+        tx.commit()?;
+        self.commits += 1;
         self.sync_state = sync;
-        self.engine.publish(pending)
+        Ok(self.engine.publish(pending)?)
     }
-    pub fn import_file(&mut self, request: &crate::ImportRequest) -> Result<Receipt, String> {
-        if self.engine.generation != request.generation {
-            return Err("Stale dataset generation".into());
+    pub fn capture(&self) -> Capture {
+        Capture {
+            snapshot: self.engine.snapshot().clone(),
+            generation: self.engine.generation,
+            revision: self.engine.revision,
         }
+    }
+    /// An import. A replacing import needs `undo`, the encoded data it
+    /// replaces, captured at the current revision.
+    pub fn import_file(
+        &mut self,
+        request: &crate::ImportRequest,
+        undo: Option<(Vec<u8>, Value, u64, u64)>,
+    ) -> Result<Receipt> {
         if let Some(receipt) = self.receipt(&request.command_id)? {
             if receipt.payload
                 != lift_engine::import_identity(&request.format, &request.text, request.replace)
@@ -213,8 +393,11 @@ impl Store {
             }
             return Ok(receipt);
         }
+        if self.engine.generation != request.generation {
+            return Err(Fail::stale("Stale dataset generation"));
+        }
         if self.engine.revision != request.revision {
-            return Err("Dataset changed since import preview".into());
+            return Err(Fail::stale("Dataset changed since import preview"));
         }
         let pending = self.engine.prepare_import(
             request.command_id.clone(),
@@ -228,12 +411,26 @@ impl Store {
             },
         )?;
         if request.replace {
-            let undo = self.snapshot_bytes(&request.now)?;
-            let meta = json!({"savedAt":request.now,"generation":self.engine.generation,"revision":self.engine.revision});
+            let (bytes, metadata, generation, revision) = match undo {
+                Some(u) => u,
+                None => {
+                    let c = self.capture();
+                    (
+                        c.encode(&request.now)?,
+                        c.metadata(&request.now),
+                        c.generation,
+                        c.revision,
+                    )
+                }
+            };
+            if generation != self.engine.generation || revision != self.engine.revision {
+                return Err(Fail::stale("Dataset changed since import preview"));
+            }
+            write_backup(&self.backups, "undo", &bytes, &metadata)?;
             let mut sync = self.sync_state.clone();
             sync["dirty"] = json!(true);
             sync["last_restore_revision"] = Value::Null;
-            self.commit_with(pending, sync, Some((undo, meta)))
+            self.commit_with(pending, sync)
         } else {
             self.commit(pending)
         }
@@ -245,7 +442,10 @@ impl Store {
         expected_etag: Option<&str>,
         etag: &str,
         now: &str,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
+        if etag.is_empty() {
+            return Err("Missing upload ETag".into());
+        }
         let sync = lift_engine::sync::acknowledge_push(
             &self.sync_state,
             (self.engine.generation, self.engine.revision),
@@ -253,69 +453,93 @@ impl Store {
             expected_etag,
             etag,
             now,
-        )?;
-        let tx = self.db.transaction().map_err(error)?;
-        let original: String = tx
-            .query_row("SELECT value FROM meta WHERE id=1", [], |r| r.get(0))
-            .map_err(error)?;
-        let mut meta: Value = serde_json::from_str(&original).map_err(error)?;
+        )
+        .map_err(Fail::stale)?;
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let original: String =
+            tx.query_row("SELECT value FROM meta WHERE id=1", [], |r| r.get(0))?;
+        let mut meta: Value = serde_json::from_str(&original).map_err(corrupt)?;
         if meta["generation"].as_u64() != Some(self.engine.generation)
             || meta["revision"].as_u64() != Some(self.engine.revision)
             || (meta["sync"].is_object() && meta["sync"] != self.sync_state)
         {
-            return Err("Stored sync state changed; reopen required".into());
+            return Err(Fail::stale("Stored sync state changed; reopen required"));
         }
         meta["sync"] = sync.clone();
-        tx.execute("UPDATE meta SET value=? WHERE id=1", [meta.to_string()])
-            .map_err(error)?;
-        tx.commit().map_err(error)?;
+        tx.execute("UPDATE meta SET value=? WHERE id=1", [meta.to_string()])?;
+        tx.commit()?;
         self.sync_state = sync;
         Ok(())
     }
-    pub fn snapshot_bytes(&self, now: &str) -> Result<Vec<u8>, String> {
-        lift_codec::encode(
-            &serde_json::to_value(self.engine.snapshot()).map_err(error)?,
-            now,
-        )
-        .map_err(error)
+    #[cfg(test)]
+    pub fn snapshot_bytes(&self, now: &str) -> Result<Vec<u8>> {
+        Ok(lift_codec::encode_snapshot(self.engine.snapshot(), now)?)
     }
-    pub fn replace_snapshot(
-        &mut self,
+    /// The checks a replacement makes before any work: a retry of a
+    /// replacement that already committed returns its receipt.
+    pub fn begin_replace(
+        &self,
         bytes: &[u8],
         expected_generation: u64,
         expected_revision: u64,
         remote_etag: Option<String>,
-        now: &str,
-    ) -> Result<Receipt, String> {
+    ) -> Result<std::result::Result<Receipt, ReplaceStart>> {
+        let id = format!("replace-{expected_generation}-{expected_revision}");
+        let payload = json!({"op":"replace_snapshot","source":if remote_etag.is_some(){"remote"}else{"local"},"sha256":lift_engine::sha256_hex(bytes)});
+        if let Some(receipt) = self.receipt(&id)? {
+            if receipt.payload == payload {
+                return Ok(Ok(receipt));
+            }
+            return Err(Fail::stale(
+                "Dataset changed since replacement was requested",
+            ));
+        }
         if self.engine.generation != expected_generation
             || self.engine.revision != expected_revision
         {
-            return Err("Dataset changed since replacement was requested".into());
+            return Err(Fail::stale(
+                "Dataset changed since replacement was requested",
+            ));
         }
         if remote_etag.as_deref().is_some_and(str::is_empty) {
             return Err("Missing remote ETag".into());
         }
-        let (value, migrated) = lift_codec::decode(bytes, 128 * 1024 * 1024).map_err(error)?;
-        let mut snapshot: Snapshot = serde_json::from_value(value).map_err(error)?;
-        if migrated {
-            lift_domain::prs::recompute(&mut snapshot, None);
-        }
-        let payload = json!({"op":"replace_snapshot","source":if remote_etag.is_some(){"remote"}else{"local"}});
-        let pending = self.engine.prepare_replacement(
-            format!("replace-{}-{}", expected_generation, expected_revision),
-            snapshot,
-            payload,
-        )?;
-        let is_remote = remote_etag.is_some();
-        let keep_undo = !is_remote
+        // A second local restore with no edits in between keeps the undo
+        // copy from before the first one.
+        let keep_undo = remote_etag.is_none()
             && self.sync_state["last_restore_revision"].as_u64() == Some(self.engine.revision);
+        Ok(Err(ReplaceStart {
+            id,
+            payload,
+            generation: expected_generation,
+            revision: expected_revision,
+            remote_etag,
+            undo: (!keep_undo).then(|| self.capture()),
+        }))
+    }
+    pub fn finish_replace(&mut self, ready: ReplaceReady, now: &str) -> Result<Receipt> {
+        let ReplaceReady {
+            start,
+            snapshot,
+            undo,
+        } = ready;
+        if self.engine.generation != start.generation || self.engine.revision != start.revision {
+            return Err(Fail::stale(
+                "Dataset changed since replacement was requested",
+            ));
+        }
+        let pending = self
+            .engine
+            .prepare_replacement(start.id, snapshot, start.payload)?;
         let mut sync = self.sync_state.clone();
-        sync["last_restore_revision"] = if is_remote {
+        sync["last_restore_revision"] = if start.remote_etag.is_some() {
             Value::Null
         } else {
             json!(pending.receipt.revision)
         };
-        if let Some(etag) = remote_etag {
+        if let Some(etag) = start.remote_etag {
             sync["etag"] = json!(etag);
             sync["dirty"] = json!(false);
             sync["synced_revision"] = json!(pending.receipt.revision);
@@ -323,43 +547,53 @@ impl Store {
         } else {
             sync["dirty"] = json!(true);
         }
-        let undo = self.snapshot_bytes(now)?;
-        let metadata = json!({"savedAt":now,"generation":self.engine.generation,"revision":self.engine.revision,"workouts":self.engine.snapshot().workouts.len(),"sets":self.engine.snapshot().sets.iter().filter(|s|!s.is_planned).count()});
-        self.commit_with(
-            pending,
-            sync,
-            if keep_undo {
-                None
-            } else {
-                Some((undo, metadata))
-            },
-        )
+        if let Some((bytes, metadata)) = undo {
+            write_backup(&self.backups, "undo", &bytes, &metadata)?;
+        }
+        self.commit_with(pending, sync)
     }
-    pub fn save_restore_point(&mut self, now: &str) -> Result<(), String> {
-        let time = lift_domain::prs::timestamp_checked(now).ok_or("Invalid restore point time")?;
-        let bytes = self.snapshot_bytes(now)?;
-        let meta = json!({"savedAt":now,"workouts":self.engine.snapshot().workouts.len(),"sets":self.engine.snapshot().sets.iter().filter(|s|!s.is_planned).count(),"revision":self.engine.revision,"generation":self.engine.generation});
-        let tx = self.db.transaction().map_err(error)?;
-        let stored: Option<String> = tx
-            .query_row("SELECT value FROM meta WHERE id=1", [], |r| r.get(0))
-            .optional()
-            .map_err(error)?;
-        if let Some(stored) = stored {
-            let stored: Value = serde_json::from_str(&stored).map_err(error)?;
-            if stored["revision"].as_u64() != Some(self.engine.revision)
-                || stored["generation"].as_u64() != Some(self.engine.generation)
-            {
-                return Err("Dataset changed before restore point capture".into());
+    #[cfg(test)]
+    pub fn replace_snapshot(
+        &mut self,
+        bytes: &[u8],
+        expected_generation: u64,
+        expected_revision: u64,
+        remote_etag: Option<String>,
+        now: &str,
+    ) -> Result<Receipt> {
+        match self.begin_replace(bytes, expected_generation, expected_revision, remote_etag)? {
+            Ok(receipt) => Ok(receipt),
+            Err(start) => {
+                let ready = start.decode(bytes, now)?;
+                self.finish_replace(ready, now)
             }
         }
-        let read = |slot: &str| -> Result<Option<(Vec<u8>, String)>, String> {
-            tx.query_row(
-                "SELECT bytes,metadata FROM backups WHERE slot=?",
-                [slot],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()
-            .map_err(error)
+    }
+    #[cfg(test)]
+    pub fn save_restore_point(&mut self, now: &str) -> Result<()> {
+        let capture = self.capture();
+        let bytes = capture.encode(now)?;
+        self.write_restore_point(&bytes, capture.metadata(now), now)
+    }
+    /// Rotates the restore points: current moves to the previous slot, and
+    /// the previous one to the daily slot once that is a day old. Right after
+    /// a restore the daily slot is held, so the restore's own copy cannot
+    /// push a fresh file into it.
+    pub fn write_restore_point(&mut self, bytes: &[u8], meta: Value, now: &str) -> Result<()> {
+        let time = lift_domain::prs::timestamp_checked(now).ok_or("Invalid restore point time")?;
+        let hold_daily =
+            self.sync_state["last_restore_revision"].as_u64() == Some(self.engine.revision);
+        let tx = self
+            .backups
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let read = |slot: &str| -> Result<Option<(Vec<u8>, String)>> {
+            Ok(tx
+                .query_row(
+                    "SELECT bytes,metadata FROM backups WHERE slot=?",
+                    [slot],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?)
         };
         let current = read("current")?;
         let previous = read("bak")?;
@@ -373,11 +607,11 @@ impl Store {
                     .and_then(lift_domain::prs::timestamp_checked)
             })
             .is_none_or(|t| time.saturating_sub(t) >= 86_400_000);
-        let write = |slot: &str, bytes: &[u8], metadata: &str| -> Result<(), String> {
-            tx.execute("INSERT INTO backups(slot,bytes,metadata) VALUES(?,?,?) ON CONFLICT(slot) DO UPDATE SET bytes=excluded.bytes,metadata=excluded.metadata",rusqlite::params![slot,bytes,metadata]).map_err(error)?;
+        let write = |slot: &str, bytes: &[u8], metadata: &str| -> Result<()> {
+            tx.execute("INSERT INTO backups(slot,bytes,metadata) VALUES(?,?,?) ON CONFLICT(slot) DO UPDATE SET bytes=excluded.bytes,metadata=excluded.metadata",rusqlite::params![slot,bytes,metadata])?;
             Ok(())
         };
-        if current.is_some() && daily_old {
+        if !hold_daily && current.is_some() && daily_old {
             if let Some((bytes, meta)) = &previous {
                 write("bak2", bytes, meta)?;
             }
@@ -385,301 +619,76 @@ impl Store {
         if let Some((bytes, meta)) = &current {
             write("bak", bytes, meta)?;
         }
-        write("current", &bytes, &meta.to_string())?;
-        tx.commit().map_err(error)?;
+        write("current", bytes, &meta.to_string())?;
+        tx.commit()?;
         Ok(())
     }
-    pub fn restore_points(&self) -> Result<Value, String> {
-        let mut stmt = self
-            .db
-            .prepare("SELECT slot,metadata FROM backups")
-            .map_err(error)?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-            .map_err(error)?;
+    pub fn restore_points(&self) -> Result<Value> {
+        let mut stmt = self.backups.prepare("SELECT slot,metadata FROM backups")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
         let mut out = serde_json::Map::new();
         for row in rows {
-            let (slot, meta) = row.map_err(error)?;
-            out.insert(slot, serde_json::from_str(&meta).map_err(error)?);
+            let (slot, meta) = row?;
+            out.insert(
+                slot,
+                serde_json::from_str(&meta).map_err(|e| e.to_string())?,
+            );
         }
         Ok(Value::Object(out))
     }
-    pub fn backup_bytes(&self, slot: &str) -> Result<Option<Vec<u8>>, String> {
-        self.db
+    pub fn backup_bytes(&self, slot: &str) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .backups
             .query_row("SELECT bytes FROM backups WHERE slot=?", [slot], |r| {
                 r.get(0)
             })
-            .optional()
-            .map_err(error)
+            .optional()?)
     }
-    pub(crate) fn checkpoint(&self) -> Result<(), String> {
-        let (busy, log, remaining): (i64, i64, i64) = self
-            .db
-            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-            })
-            .map_err(error)?;
+    pub(crate) fn checkpoint(&self) -> Result<()> {
+        let (busy, log, remaining): (i64, i64, i64) =
+            self.db
+                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })?;
         if busy != 0 || log != remaining {
             return Err("Database checkpoint incomplete".into());
         }
         Ok(())
     }
-    pub(crate) fn install_snapshot(&mut self, snapshot: Snapshot) -> Result<(), String> {
+    /// Installs the first dataset of a new database: a migrated legacy store
+    /// or a recovered restore point. `etag` is the cloud version that data
+    /// was last in agreement with, if known.
+    pub(crate) fn install_snapshot(
+        &mut self,
+        snapshot: Snapshot,
+        etag: Option<String>,
+        last_synced_at: Option<String>,
+    ) -> Result<()> {
         if self.engine.revision != 0 {
             return Err("Store already initialized".into());
         }
-        lift_domain::model::validate(&snapshot)?;
-        let next_id = snapshot
-            .exercises
-            .iter()
-            .map(|r| r.id)
-            .chain(snapshot.workouts.iter().map(|r| r.id))
-            .chain(snapshot.workout_exercises.iter().map(|r| r.id))
-            .chain(snapshot.sets.iter().map(|r| r.id))
-            .chain(snapshot.gyms.iter().map(|r| r.id))
-            .max()
-            .unwrap_or(0)
-            + 1;
-        let receipt = Receipt {
-            command_id: "__legacy_migration_v1".into(),
-            payload: json!({"op":"legacy_migration"}),
-            generation: 1,
-            revision: 1,
-            result: Value::Null,
-        };
-        self.commit(Prepared {
-            base_revision: 0,
-            base_generation: 1,
+        let pending = self.engine.prepare_initial(
+            "__legacy_migration_v1".into(),
             snapshot,
-            next_id,
-            receipt,
-        })?;
+            json!({"op":"legacy_migration"}),
+        )?;
+        let mut sync = self.sync_state.clone();
+        sync["dirty"] = json!(true);
+        sync["etag"] = json!(etag);
+        if let Some(at) = last_synced_at {
+            sync["last_synced_at"] = json!(at);
+        }
+        self.commit_with(pending, sync)?;
         Ok(())
     }
+    #[cfg(test)]
+    pub(crate) fn db(&self) -> &Connection {
+        &self.db
+    }
+    #[cfg(test)]
+    pub(crate) fn backups_db(&self) -> &Connection {
+        &self.backups
+    }
 }
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn durable_receipt_and_payload_guard() {
-        let path = std::env::temp_dir().join(format!(
-            "lift-engine-{}-{}.sqlite",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let command = Command::SetDayNote {
-            date: "2026-01-01".into(),
-            text: "keep me".into(),
-        };
-        let mut store = Store::open(path.to_str().unwrap(), "device".into(), "now".into()).unwrap();
-        let receipt = store
-            .execute(
-                "one".into(),
-                1,
-                command.clone(),
-                "now".into(),
-                "2026-01-01".into(),
-            )
-            .unwrap();
-        assert_eq!(receipt.revision, 1);
-        drop(store);
-        let mut store = Store::open(path.to_str().unwrap(), "device".into(), "now".into()).unwrap();
-        assert_eq!(store.engine.snapshot().day_notes[0].text, "keep me");
-        assert_eq!(
-            store
-                .execute("one".into(), 1, command, "now".into(), "2026-01-01".into())
-                .unwrap()
-                .revision,
-            1
-        );
-        assert!(store
-            .execute(
-                "one".into(),
-                1,
-                Command::DeleteGym { id: 1 },
-                "now".into(),
-                "2026-01-01".into()
-            )
-            .is_err());
-        assert_eq!(store.engine.revision, 1);
-        drop(store);
-        std::fs::remove_file(path).unwrap();
-    }
-}
-
-#[cfg(test)]
-mod replacement_tests {
-    use super::*;
-    fn note(text: &str) -> Command {
-        Command::SetDayNote {
-            date: "2026-01-01".into(),
-            text: text.into(),
-        }
-    }
-    #[test]
-    fn remote_adoption_local_restore_undo_and_stale_retries() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("store.sqlite");
-        let mut store = Store::open(path.to_str().unwrap(), "device".into(), "now".into()).unwrap();
-        store
-            .execute(
-                "a".into(),
-                1,
-                note("original"),
-                "now".into(),
-                "2026-01-01".into(),
-            )
-            .unwrap();
-        let original = store.snapshot_bytes("now").unwrap();
-        store
-            .execute(
-                "b".into(),
-                1,
-                note("new"),
-                "now".into(),
-                "2026-01-01".into(),
-            )
-            .unwrap();
-        store
-            .replace_snapshot(&original, 1, 2, Some("etag-1".into()), "sync-time")
-            .unwrap();
-        assert_eq!(store.engine.generation, 2);
-        assert_eq!(store.sync_state["dirty"], false);
-        assert_eq!(store.sync_state["etag"], "etag-1");
-        let undo = store.backup_bytes("undo").unwrap().unwrap();
-        let undo_value = lift_codec::decode(&undo, 1024 * 1024).unwrap().0;
-        assert_eq!(undo_value["day_notes"][0]["text"], "new");
-        store
-            .replace_snapshot(&undo, 2, 3, None, "restore-time")
-            .unwrap();
-        assert_eq!(store.sync_state["dirty"], true);
-        assert_eq!(store.sync_state["etag"], "etag-1");
-        assert_eq!(store.engine.snapshot().day_notes[0].text, "new");
-        let stable_undo = store.backup_bytes("undo").unwrap().unwrap();
-        store
-            .replace_snapshot(&undo, 3, 4, None, "restore-again")
-            .unwrap();
-        assert_eq!(store.backup_bytes("undo").unwrap().unwrap(), stable_undo);
-        assert!(store
-            .execute(
-                "a".into(),
-                1,
-                note("original"),
-                "now".into(),
-                "2026-01-01".into()
-            )
-            .is_err());
-        assert!(store
-            .replace_snapshot(&original, 4, 999, Some("bad".into()), "now")
-            .is_err());
-        assert!(store
-            .replace_snapshot(b"corrupt", 4, 5, Some("bad".into()), "now")
-            .is_err());
-        drop(store);
-        let store = Store::open(path.to_str().unwrap(), "device".into(), "now".into()).unwrap();
-        assert_eq!(store.engine.generation, 4);
-        assert_eq!(store.engine.revision, 5);
-        assert_eq!(store.sync_state["etag"], "etag-1");
-        assert_eq!(store.sync_state["dirty"], true);
-    }
-}
-
-#[cfg(test)]
-mod import_tests {
-    use super::*;
-    #[test]
-    fn import_is_atomic_and_retryable() {
-        let mut store = Store::open(":memory:", "device".into(), "now".into()).unwrap();
-        let fixture: Value = serde_json::from_str(include_str!(
-            "../../../tests/engine-parity/json-import.json"
-        ))
-        .unwrap();
-        let mut request = crate::ImportRequest {
-            command_id: "import-one".into(),
-            generation: 1,
-            revision: 0,
-            format: "json".into(),
-            text: fixture["traces"][0]["data"].to_string(),
-            replace: false,
-            now: fixture["now"].as_str().unwrap().into(),
-            today: fixture["today"].as_str().unwrap().into(),
-        };
-        store.db.execute_batch("CREATE TRIGGER fail_commit BEFORE INSERT ON receipts BEGIN SELECT RAISE(ABORT,'injected failure'); END;").unwrap();
-        assert!(store.import_file(&request).is_err());
-        assert_eq!(store.engine.revision, 0);
-        assert!(store.engine.snapshot().sets.is_empty());
-        assert!(store.receipt("import-one").unwrap().is_none());
-        store.db.execute_batch("DROP TRIGGER fail_commit;").unwrap();
-        let first = store.import_file(&request).unwrap();
-        assert_eq!(store.engine.revision, 1);
-        assert!(!store.engine.snapshot().sets.is_empty());
-        assert_eq!(
-            store.import_file(&request).unwrap().revision,
-            first.revision
-        );
-        request.text = "invalid json".into();
-        assert!(store.import_file(&request).is_err());
-        assert_eq!(store.engine.revision, 1);
-        request.command_id = "replacement".into();
-        request.revision = 1;
-        request.replace = true;
-        assert!(store.import_file(&request).is_err());
-        assert_eq!(store.engine.generation, 1);
-        assert!(store.backup_bytes("undo").unwrap().is_none());
-    }
-    #[test]
-    fn late_push_and_failed_replace_preserve_data_and_metadata() {
-        let mut store = Store::open(":memory:", "device".into(), "now".into()).unwrap();
-        let note = |s: &str| Command::SetDayNote {
-            date: "2026-01-01".into(),
-            text: s.into(),
-        };
-        store
-            .execute("a".into(), 1, note("a"), "now".into(), "today".into())
-            .unwrap();
-        let old = store.snapshot_bytes("now").unwrap();
-        store
-            .execute("b".into(), 1, note("b"), "now".into(), "today".into())
-            .unwrap();
-        store.acknowledge_push(1, 1, None, "etag-a", "now").unwrap();
-        assert_eq!(store.sync_state["dirty"], true);
-        let sync = store.sync_state.clone();
-        store.db.execute_batch("CREATE TRIGGER fail_backup BEFORE INSERT ON backups BEGIN SELECT RAISE(ABORT,'backup failure'); END;").unwrap();
-        assert!(store
-            .replace_snapshot(&old, 1, 2, Some("etag-remote".into()), "now")
-            .is_err());
-        assert_eq!(store.sync_state, sync);
-        assert_eq!(store.engine.generation, 1);
-        assert_eq!(store.engine.snapshot().day_notes[0].text, "b");
-        assert!(store.backup_bytes("undo").unwrap().is_none());
-    }
-}
-
-#[cfg(test)]
-mod rotation_tests {
-    use super::*;
-    #[test]
-    fn daily_copy_keeps_its_age_while_previous_moves() {
-        let mut store = Store::open(":memory:", "device".into(), "now".into()).unwrap();
-        store.save_restore_point("2026-01-01T00:00:00Z").unwrap();
-        store.save_restore_point("2026-01-01T01:00:00Z").unwrap();
-        store.save_restore_point("2026-01-01T02:00:00Z").unwrap();
-        assert_eq!(
-            store.restore_points().unwrap()["bak2"]["savedAt"],
-            "2026-01-01T00:00:00Z"
-        );
-        store.save_restore_point("2026-01-01T03:00:00Z").unwrap();
-        let meta = store.restore_points().unwrap();
-        assert_eq!(meta["bak"]["savedAt"], "2026-01-01T02:00:00Z");
-        assert_eq!(meta["bak2"]["savedAt"], "2026-01-01T00:00:00Z");
-        store.save_restore_point("2026-01-02T00:00:00Z").unwrap();
-        assert_eq!(
-            store.restore_points().unwrap()["bak2"]["savedAt"],
-            "2026-01-01T02:00:00Z"
-        );
-        assert!(store.save_restore_point("invalid").is_err());
-    }
-}
+mod tests;

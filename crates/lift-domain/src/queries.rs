@@ -9,12 +9,17 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Default)]
 pub struct Indexes {
-    workouts: HashMap<u64, usize>,
-    dates: HashMap<String, usize>,
-    exercises: HashMap<u64, usize>,
-    wes: HashMap<u64, Vec<usize>>,
-    by_exercise: HashMap<u64, Vec<usize>>,
-    sets: HashMap<u64, Vec<usize>>,
+    pub(crate) workouts: HashMap<u64, usize>,
+    /// Last workout per date, as the TypeScript date index.
+    pub(crate) dates: HashMap<String, usize>,
+    /// First workout per date, as `workouts.find(...)` in the mutations.
+    pub(crate) first_dates: HashMap<String, usize>,
+    pub(crate) exercises: HashMap<u64, usize>,
+    pub(crate) wes: HashMap<u64, Vec<usize>>,
+    pub(crate) by_exercise: HashMap<u64, Vec<usize>>,
+    pub(crate) we_by_id: HashMap<u64, usize>,
+    pub(crate) sets: HashMap<u64, Vec<usize>>,
+    pub(crate) set_by_id: HashMap<u64, usize>,
 }
 impl Indexes {
     pub fn build(s: &Snapshot) -> Self {
@@ -32,13 +37,106 @@ impl Indexes {
             !old.sets.shares_storage_with(&new.sets),
         );
     }
+    /// Maintains the indexes for a committed change. Appended rows and
+    /// in-place edits are applied row by row; a table that lost rows is
+    /// rebuilt, since its positions moved.
+    pub fn apply(&mut self, old: &Snapshot, new: &Snapshot, changes: &crate::diff::Changes) {
+        let d = &changes.workouts;
+        let mut rebuild_workouts = !d.positional;
+        if d.positional {
+            for &p in &d.upserts {
+                if p < old.workouts.len() {
+                    if old.workouts[p].date != new.workouts[p].date {
+                        rebuild_workouts = true;
+                        break;
+                    }
+                } else {
+                    let w = &new.workouts[p];
+                    self.workouts.insert(w.id, p);
+                    self.dates.insert(w.date.clone(), p);
+                    self.first_dates.entry(w.date.clone()).or_insert(p);
+                }
+            }
+        }
+        let d = &changes.exercises;
+        let rebuild_exercises = !d.positional;
+        if d.positional {
+            for &p in &d.upserts {
+                if p >= old.exercises.len() {
+                    self.exercises.insert(new.exercises[p].id, p);
+                }
+            }
+        }
+        let d = &changes.workout_exercises;
+        let mut rebuild_wes = !d.positional;
+        if d.positional {
+            for &p in &d.upserts {
+                if p < old.workout_exercises.len() {
+                    let (a, b) = (&old.workout_exercises[p], &new.workout_exercises[p]);
+                    if (a.workout_id, a.exercise_id, a.order)
+                        != (b.workout_id, b.exercise_id, b.order)
+                    {
+                        rebuild_wes = true;
+                        break;
+                    }
+                }
+            }
+            if !rebuild_wes {
+                for &p in &d.upserts {
+                    if p >= old.workout_exercises.len() {
+                        let we = &new.workout_exercises[p];
+                        let list = self.wes.entry(we.workout_id).or_default();
+                        list.push(p);
+                        list.sort_by_key(|i| (new.workout_exercises[*i].order, *i));
+                        self.by_exercise.entry(we.exercise_id).or_default().push(p);
+                        self.we_by_id.insert(we.id, p);
+                    }
+                }
+            }
+        }
+        let d = &changes.sets;
+        let mut rebuild_sets = !d.positional;
+        if d.positional {
+            for &p in &d.upserts {
+                if p < old.sets.len() {
+                    let (a, b) = (&old.sets[p], &new.sets[p]);
+                    if (a.workout_exercise_id, a.order) != (b.workout_exercise_id, b.order) {
+                        rebuild_sets = true;
+                        break;
+                    }
+                }
+            }
+            if !rebuild_sets {
+                for &p in &d.upserts {
+                    if p >= old.sets.len() {
+                        let set = &new.sets[p];
+                        let list = self.sets.entry(set.workout_exercise_id).or_default();
+                        list.push(p);
+                        list.sort_by_key(|i| (new.sets[*i].order, *i));
+                        self.set_by_id.insert(set.id, p);
+                    }
+                }
+            }
+        }
+        if rebuild_workouts || rebuild_exercises || rebuild_wes || rebuild_sets {
+            self.rebuild(
+                new,
+                rebuild_workouts,
+                rebuild_exercises,
+                rebuild_wes,
+                rebuild_sets,
+            );
+        }
+    }
     fn rebuild(&mut self, s: &Snapshot, workouts: bool, exercises: bool, wes: bool, sets: bool) {
         if workouts {
             self.workouts.clear();
             self.dates.clear();
+            self.first_dates.clear();
             for (i, w) in s.workouts.iter().enumerate() {
                 self.workouts.insert(w.id, i);
                 self.dates.insert(w.date.clone(), i);
+                self.first_dates.entry(w.date.clone()).or_insert(i);
             }
         }
         if exercises {
@@ -50,9 +148,11 @@ impl Indexes {
         if wes {
             self.wes.clear();
             self.by_exercise.clear();
+            self.we_by_id.clear();
             for (i, we) in s.workout_exercises.iter().enumerate() {
                 self.wes.entry(we.workout_id).or_default().push(i);
                 self.by_exercise.entry(we.exercise_id).or_default().push(i);
+                self.we_by_id.insert(we.id, i);
             }
             for rows in self.wes.values_mut() {
                 rows.sort_by_key(|i| s.workout_exercises[*i].order);
@@ -60,11 +160,13 @@ impl Indexes {
         }
         if sets {
             self.sets.clear();
+            self.set_by_id.clear();
             for (i, set) in s.sets.iter().enumerate() {
                 self.sets
                     .entry(set.workout_exercise_id)
                     .or_default()
                     .push(i);
+                self.set_by_id.insert(set.id, i);
             }
             for rows in self.sets.values_mut() {
                 rows.sort_by_key(|i| s.sets[*i].order);
@@ -336,7 +438,11 @@ pub enum Query {
         sort: Option<String>,
         q: Option<String>,
         category: Option<String>,
-        limit: usize,
+        /// Ignored: every matching exercise is returned, as listExercisesQ
+        /// did. Kept so existing callers still parse.
+        #[serde(default)]
+        #[cfg_attr(feature = "typescript", ts(optional))]
+        limit: Option<usize>,
         today: String,
     },
     Chart {
@@ -568,7 +674,7 @@ pub fn query(s: &Snapshot, ix: &Indexes, q: Query) -> Value {
                     }
                 });
             }
-            result.truncate(limit.min(500));
+            let _ = limit;
             json!(result)
         }
     }
