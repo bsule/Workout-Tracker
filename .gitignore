@@ -40,3 +40,7 @@ frontend/build/
 
 # Local FitNotes sample DBs / exports (not tracked; synthetic CSV lives in tests/fixtures/)
 test_dbs/
+
+# Rust build outputs and local performance reports
+/target/
+/benchmarks/local/

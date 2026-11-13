@@ -1,0 +1,9 @@
+[package]
+name = "lift-domain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dev-dependencies]
+serde_json = { version = "1", features = ["float_roundtrip"] }

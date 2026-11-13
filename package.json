@@ -15,7 +15,9 @@
     "dev": "concurrently -n web,mobile -c cyan,magenta --kill-others --kill-signal SIGINT \"npm:dev:web\" \"npm:dev:mobile\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:ui": "vitest --ui"
+    "test:ui": "vitest --ui",
+    "engine:baseline": "vitest run --config scripts/engine/vitest.config.mts",
+    "engine:oracle": "node scripts/engine/units-oracle.ts"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
