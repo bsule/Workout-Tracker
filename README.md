@@ -28,26 +28,37 @@ cases and worker-encoding results are in [docs/benchmarks.md](docs/benchmarks.md
 
 ### TypeScript vs. Rust engine
 
-Desktop measurements on one Apple Silicon Mac with synthetic data (10 exercises, 10 sets per workout, one workout per day). Phones are slower in absolute terms. Details and every size are in [`scripts/engine/README.md`](scripts/engine/README.md).
+Desktop medians at **100,000 sets**, measured on the development Apple Silicon
+Mac with the same verified synthetic snapshot (10 exercises, 10 sets per workout).
+These are desktop measurements; they exclude React rendering and the mobile bridge.
 
-| Operation | Sets | TypeScript | Rust | Result |
-| :--- | :--- | :--- | :--- | :--- |
-| Log a set | 10,000 | 1.6 ms | 0.3 ms | 4.6x faster |
-|  | 100,000 | 22.6 ms | 3.5 ms | 6.4x faster |
-| Load data and build indexes | 10,000 | 10.5 ms | 1.3 ms | 7.9x faster |
-|  | 100,000 | 107.8 ms | 16.7 ms | 6.5x faster |
-| Recompute PRs for one exercise | 10,000 | 1.6 ms | 0.6 ms | 2.5x faster |
-|  | 100,000 | 15.1 ms | 6.5 ms | 2.3x faster |
-| Save the whole snapshot (JSON + gzip) | 10,000 | 37.8 ms | 11.3 ms | 3.3x faster |
-|  | 100,000 | 378.2 ms | 129.8 ms | 2.9x faster |
-| Read a whole snapshot (gunzip + JSON) | 10,000 | 8.6 ms | 5.8 ms | 1.5x faster |
-|  | 100,000 | 81.4 ms | 59.7 ms | 1.4x faster |
+| Operation | TypeScript, in memory | Rust, in memory | Rust native, including commit/encoding |
+| :--- | ---: | ---: | ---: |
+| Add set | 22.955 ms | 0.513 ms | 1.060 ms |
+| Edit set | 19.455 ms | 3.014 ms | 3.415 ms |
+| Delete set | 19.572 ms | 3.092 ms | 3.289 ms |
+| Predict PR | 0.968 ms | 0.435 ms | 0.294 ms |
+| Recompute all PRs | 157.882 ms | 33.685 ms | 34.792 ms |
+| Load workout day | 0.012 ms | 0.038 ms | 0.053 ms |
 
-What that means on the phone path, at 100,000 sets:
+Rust native mutations include SQLite commit and receipt encoding. TypeScript's
+in-memory timings exclude its periodic snapshot save. Query timings include
+Rust DTO/JSON encoding, while TypeScript returns store objects. Opening persisted
+data with a warm OS file cache took **99.278 ms** for the TypeScript snapshot and
+**41.457 ms** for Rust SQLite, including indexes in both cases.
 
-| | TypeScript store | Rust engine |
-| :--- | :--- | :--- |
-| Log a set and make it durable | 22.6 ms in memory, plus a 378 ms full-snapshot save every 30 s of activity | 4.1 ms including the SQLite commit, no periodic full save |
-| Open the app | 189 ms (read snapshot + build indexes) | 95 ms (open from SQLite) |
-| First launch after updating | n/a | 825 ms once, to migrate the old store |
+### Deletion optimization
 
+| Total sets | Previous Rust, durable | Optimized Rust, durable | Speedup |
+| :--- | ---: | ---: | ---: |
+| 100,000 | 24.492 ms | 3.289 ms | 7.4× |
+| 250,000 | 67.842 ms | 9.649 ms | 7.0× |
+
+These delete the most recently appended logged set. Additional benchmarks cover
+middle deletions, record promotion and planned sets; regression tests check PR
+flags, indexes, SQLite reopen behavior and survivor ordering. See
+[the complete results and reproduction commands](docs/benchmarks.md).
+
+Worker encoding reduced the measured 100,000-set main-thread stall from
+**374.64 ms to 38.45 ms**, with longer total encoding time. This diagnostic runs
+the browser worker source in a Node worker thread; browser and phone timings vary.

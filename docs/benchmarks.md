@@ -191,7 +191,9 @@ may differ. This is not a browser animation or physical-device frame-rate test.
 Run from the repository root without other heavy compilation workloads:
 
 ```bash
+npm run engine:operations
 cargo bench -p lift-native --bench operations_bench
+cargo bench -p lift-engine --bench deletion_bench
 cargo bench -p lift-native --bench stress_bench
 npm run engine:encoding-bench
 # Existing TypeScript vs. portable Rust comparisons, including PRs:
@@ -200,6 +202,8 @@ cargo bench -p lift-engine --bench engine_bench
 ```
 
 Raw samples live in gitignored `benchmarks/local/`: `rust-operations-results.json`,
+`rust-memory-operations-results.json`, `typescript-operations-results.json`,
+`rust-deletion-cases.json`, `rust-operations-before-deletion.json`,
 `rust-stress-results.json`, `web-encoding-results.json`, `typescript-baseline.json`
 and `rust-results.json`. Dataset builders and measurement code are committed so
 these results can be reproduced. See [engine tools](../scripts/engine/README.md)
