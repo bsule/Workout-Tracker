@@ -1,7 +1,9 @@
+import 'fake-indexeddb/auto'
 import { expect, it, vi } from 'vitest'
 import { serialize } from '@lift/core/store/blob'
 import { emptySnapshot, SCHEMA_VERSION } from '@lift/core/store/schema'
 import type { BlobStorage } from '@lift/core/store/storage'
+import { BrowserStorage } from '../packages/engine-client/src/browser-storage'
 import { openWorkerTransport } from '../packages/engine-client/src/worker-transport'
 import {
   createWebSessions,
@@ -123,3 +125,34 @@ it('terminates a failed worker, rejects its pending requests and never reuses it
   await reopened.transport.close()
   expect(next.terminated).toBe(true)
 })
+
+it('migrates legacy store data when migrateLegacy is enabled', async () => {
+  const snapshot = emptySnapshot('d')
+  snapshot.day_notes.push({ date: '2026-01-01', text: 'migrated day note' })
+  const bytes = await serialize(snapshot)
+  const workers: FakeWorker[] = []
+  const sessions = createWebSessions({
+    createWorker: () => { const w = new FakeWorker(); workers.push(w); return w as unknown as Worker },
+    legacyStorage: () => memoryStorage(bytes),
+    getDeviceId: async () => 'd',
+    migrateLegacy: true,
+  })
+  const state = await settle(sessions, '42')
+  expect(state.status).toBe('ready')
+  expect(workers).toHaveLength(1)
+  const storage = await BrowserStorage.open('lift-rust-engine:42')
+  const loaded = await storage.load()
+  expect(loaded?.snapshot.day_notes).toEqual([{ date: '2026-01-01', text: 'migrated day note' }])
+  storage.close()
+  await settle(sessions, null)
+})
+
+it('localApi delegates to engine or core store depending on active session', async () => {
+  const store = await import('../frontend/lib/store')
+  expect(typeof store.localApi.updateSettings).toBe('function')
+  expect(typeof store.localApi.createWorkout).toBe('function')
+  expect(typeof store.localApi.removeExerciseFromWorkout).toBe('function')
+  expect(typeof store.deleteWorkoutExercise).toBe('function')
+  expect(typeof store.deleteSets).toBe('function')
+})
+

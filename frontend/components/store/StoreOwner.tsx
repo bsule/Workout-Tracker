@@ -7,6 +7,7 @@ import { FullPageLoader } from "@/components/ui/Spinner"
 import { useIsClient } from "@/lib/useIsClient"
 import { unloadWebStore } from "@/lib/store/session"
 import { getToken } from "@/lib/api"
+import { WEB_ENGINE_ENABLED, unloadWebSessions } from "@/lib/engine/webEngine"
 
 /** A lifetime lock, acquired before hydration and released after the final save.
  * Waiting tabs never load stale snapshots or start sync. The browser releases
@@ -36,6 +37,7 @@ export function StoreOwner({ children }: { children: ReactNode }) {
       setOwnedKey(key)
       await new Promise<void>((resolve) => { release = resolve })
       await unloadWebStore()
+      if (WEB_ENGINE_ENABLED) await unloadWebSessions()
     }).catch((e: unknown) => {
       if (!controller.signal.aborted) setError(e instanceof Error ? e.message : "Could not open browser storage.")
     })

@@ -155,6 +155,7 @@ export function ExerciseLoggerView({
       {/* Kept mounted on the other tabs, so the form keeps what was typed. */}
       <div className={cn(tab !== "track" && "hidden")}>
         <SetLogger
+          exerciseId={exercise.id}
           workoutExerciseId={weId}
           sets={sets}
           isCardio={isCardio}

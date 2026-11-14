@@ -423,7 +423,7 @@ function prAffectedExercises(snap: Snapshot, op: OpEnvelope): number[] {
   }
 }
 
-function applyPendingOps(snap: Snapshot, lines: string[]): Snapshot {
+export function applyPendingOps(snap: Snapshot, lines: string[]): Snapshot {
   let out = snap
   for (const line of lines) {
     let parsed: OpEnvelope

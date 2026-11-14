@@ -16,6 +16,17 @@ import { useIsClient } from "@/lib/useIsClient"
 import { adoptLegacyWebStore } from "@/lib/store/storage"
 import { accountStorePath, legacyStorePath } from "@lift/core/store/paths"
 import { autoSync, SnapshotTooNewError } from "@lift/core"
+import {
+  WEB_ENGINE_ENABLED,
+  getWebSessions,
+  unloadWebSessions,
+  webEngineErrorMessage,
+} from "@/lib/engine/webEngine"
+import {
+  EngineProvider,
+  type EngineContextValue,
+} from "@lift/engine-client/react"
+import type { AccountEngineSession } from "@lift/engine-client/session"
 
 interface Props {
   children: React.ReactNode
@@ -41,6 +52,7 @@ export function StoreProvider({ children }: Props) {
   const storeEmpty = useStore((s) => isStoreEmpty(s.snapshot))
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [engineSession, setEngineSession] = useState<AccountEngineSession | null>(null)
   // "Start fresh" on the restore prompt holds for this account until the page
   // reloads, like mobile holds it until the app restarts.
   const [restoreDismissedFor, setRestoreDismissedFor] = useState<string | null>(null)
@@ -52,7 +64,10 @@ export function StoreProvider({ children }: Props) {
   if (keyFor !== userKey) {
     setKeyFor(userKey)
     setLoadError(null)
-    if (userKey == null) setActiveKey(null)
+    if (userKey == null) {
+      setActiveKey(null)
+      setEngineSession(null)
+    }
   }
 
   useEffect(() => {
@@ -62,13 +77,42 @@ export function StoreProvider({ children }: Props) {
       // Signed out: keep nothing in memory for the next user to see, or for
       // a flush or auto sync to write under their account.
       loadedKey.current = null
-      void unloadWebStore()
+      setEngineSession(null)
+      if (WEB_ENGINE_ENABLED) void unloadWebSessions()
+      else void unloadWebStore()
       return
     }
     let cancelled = false
 
     async function init(key: string) {
       try {
+        if (WEB_ENGINE_ENABLED) {
+          if (loadedKey.current && loadedKey.current !== key) {
+            loadedKey.current = null
+            setEngineSession(null)
+            await unloadWebSessions()
+          }
+          if (cancelled) return
+          const subPath = accountStorePath(Number(key))
+          const name = username.current
+          if (name) await adoptLegacyWebStore(legacyStorePath(name), subPath)
+          if (cancelled) return
+
+          const sessions = getWebSessions()
+          await sessions.switchAccount(key)
+          const state = sessions.getSnapshot()
+          if (state.status === "error") {
+            throw state.error
+          }
+          if (state.status !== "ready") return
+          if (cancelled) return
+          loadedKey.current = key
+          setEngineSession(state.session)
+          setActiveKey(key)
+          scheduleAutoSync()
+          return
+        }
+
         // Save and drop the outgoing user before the incoming one loads.
         if (loadedKey.current && loadedKey.current !== key) {
           loadedKey.current = null
@@ -91,9 +135,11 @@ export function StoreProvider({ children }: Props) {
         console.error("Local store bootstrap failed:", e)
         if (cancelled) return
         setLoadError(
-          e instanceof SnapshotTooNewError
-            ? "Your data was saved by a newer version of Lift. Reload the page to get the latest version and open it. Nothing was changed."
-            : "Your data could not be loaded. Reload the page to try again."
+          WEB_ENGINE_ENABLED
+            ? (webEngineErrorMessage({ status: "error", accountKey: key, error: e as Error }) ?? "Your data could not be loaded. Reload the page to try again.")
+            : e instanceof SnapshotTooNewError
+              ? "Your data was saved by a newer version of Lift. Reload the page to get the latest version and open it. Nothing was changed."
+              : "Your data could not be loaded. Reload the page to try again."
         )
       }
     }
@@ -127,22 +173,36 @@ export function StoreProvider({ children }: Props) {
     )
   }
 
-  if (loading || !hydrated || activeKey !== userKey) {
+  const isReady = WEB_ENGINE_ENABLED
+    ? engineSession != null && activeKey === userKey
+    : hydrated && activeKey === userKey
+
+  if (loading || !isReady) {
     return <FullPageLoader />
   }
 
   // Empty store and not dismissed: offer to pull from cloud sync.
-  if (restoreDismissedFor !== userKey && storeEmpty) {
-    return (
-      <div key={activeKey}>
+  const content = (
+    <div key={activeKey}>
+      {restoreDismissedFor !== userKey && storeEmpty ? (
         <RestoreBackupScreen onDismiss={() => setRestoreDismissedFor(userKey)} />
-      </div>
-    )
+      ) : (
+        children
+      )}
+    </div>
+  )
+
+  if (WEB_ENGINE_ENABLED && engineSession) {
+    const value: EngineContextValue = {
+      session: engineSession,
+      client: engineSession.client,
+      api: engineSession.api,
+      data: engineSession.data,
+    }
+    return <EngineProvider value={value}>{content}</EngineProvider>
   }
 
-  // Remount children whenever the active user changes so per-page effects
-  // re-fetch against the freshly hydrated snapshot.
-  return <div key={activeKey}>{children}</div>
+  return content
 }
 
 function isStoreEmpty(snapshot: {

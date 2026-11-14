@@ -9,12 +9,14 @@ import {
   Palette,
   Pencil,
   SlidersHorizontal,
+  Timer,
 } from "lucide-react"
 import {
   hasCloudConflict,
   loadSyncClock,
   subscribeSyncClock,
 } from "@lift/core"
+import { formatCutoff } from "@lift/core/restTimer"
 import { useAuth } from "@/components/auth/AuthProvider"
 import { useConfirmLogout } from "@/components/auth/useConfirmLogout"
 import { PopupModal, modalInputClass } from "@/components/settings/PopupModal"
@@ -26,7 +28,11 @@ import {
   SettingsHeading,
   SettingsPage,
 } from "@/components/settings/SettingRows"
-import { useSettings } from "@/components/settings/SettingsProvider"
+import {
+  useRestTimerCutoffS,
+  useRestTimerEnabled,
+  useSettings,
+} from "@/components/settings/SettingsProvider"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { api as netApi, ApiError } from "@/lib/api"
@@ -82,6 +88,8 @@ export default function SettingsHubPage() {
 
   const unit = settings.weight_unit
   const weekStart = settings.first_day_of_week === 1 ? "Monday" : "Sunday"
+  const restTimerEnabled = useRestTimerEnabled()
+  const restTimerCutoffS = useRestTimerCutoffS()
   const canSave = draft.trim().length > 0 && !busy
 
   return (
@@ -115,6 +123,12 @@ export default function SettingsHubPage() {
           title="Set logger"
           subtitle="PRs, rest times, and timers in the set list"
           href="/settings/set-logger"
+        />
+        <NavRow
+          icon={Timer}
+          title="Rest timer"
+          subtitle={restTimerEnabled ? `Hide after ${formatCutoff(restTimerCutoffS)}` : "Off"}
+          href="/settings/rest-timer"
         />
       </SettingsGroup>
 

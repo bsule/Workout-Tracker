@@ -181,6 +181,27 @@ export function SegmentRow({
   )
 }
 
+/** Label on the left, value and chevron on the right; a click opens an editor. */
+export function ValueRow({
+  label,
+  value,
+  onPress,
+}: {
+  label: string
+  value: string
+  onPress: () => void
+}) {
+  return (
+    <button type="button" onClick={onPress} className={cn(rowBase, "justify-between")}>
+      <span className="text-[15px] font-semibold text-foreground">{label}</span>
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className="text-sm text-muted-foreground">{value}</span>
+        <ChevronRight className="size-[18px] shrink-0 text-muted-foreground" />
+      </span>
+    </button>
+  )
+}
+
 /** Label on the left, value and pencil on the right; a click edits it. */
 export function EditableRow({
   label,

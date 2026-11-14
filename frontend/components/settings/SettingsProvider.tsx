@@ -1,9 +1,10 @@
 "use client"
 
-import { createContext, useCallback, useContext } from "react"
+import { createContext, useCallback, useContext, useEffect, useState } from "react"
 import { localApi, useStore } from "@/lib/store"
 import type { UserSettings } from "@/types"
 import { readSettings } from "@lift/core/settings"
+import { EngineContext } from "@lift/engine-client/react"
 
 const DEFAULTS: UserSettings = {
   weight_unit: "lb",
@@ -18,11 +19,35 @@ interface SettingsState {
 const SettingsContext = createContext<SettingsState | null>(null)
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
-  const settings = useStore((s) => s.snapshot.settings) ?? DEFAULTS
+  const engineCtx = useContext(EngineContext)
+  const storeSettings = useStore((s) => s.snapshot.settings) ?? DEFAULTS
+  const [engineSettings, setEngineSettings] = useState<UserSettings | null>(null)
+
+  useEffect(() => {
+    if (!engineCtx) return
+    let live = true
+    const query = { kind: "settings" }
+    const read = () => {
+      const snap = engineCtx.client.snapshot<UserSettings>("settings", query)
+      if (live && snap.status === "ready") setEngineSettings(snap.value)
+    }
+    const unsub = engineCtx.client.subscribe("settings", query, read)
+    read()
+    return () => {
+      live = false
+      unsub()
+    }
+  }, [engineCtx])
+
+  const settings = (engineCtx && engineSettings) ? engineSettings : storeSettings
 
   const update = useCallback(async (patch: Partial<UserSettings>) => {
-    await localApi.updateSettings(patch)
-  }, [])
+    if (engineCtx) {
+      await engineCtx.api.updateSettings(patch)
+    } else {
+      await localApi.updateSettings(patch)
+    }
+  }, [engineCtx])
 
   return (
     <SettingsContext value={{ settings, update }}>
@@ -66,4 +91,14 @@ export function useShowTimeSinceLastSet(): boolean {
  *  the set list. Defaults to true. */
 export function useShowLastTime(): boolean {
   return readSettings(useSettings().settings).showLastTime
+}
+
+/** Whether the rest timer outside the app / in background is enabled. */
+export function useRestTimerEnabled(): boolean {
+  return readSettings(useSettings().settings).restTimerEnabled
+}
+
+/** Seconds after the last set when that timer goes away. */
+export function useRestTimerCutoffS(): number {
+  return readSettings(useSettings().settings).restTimerCutoffS
 }

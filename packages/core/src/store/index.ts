@@ -20,6 +20,7 @@ import { getState } from "./store"
 
 export {
   addFlushListener,
+  applyPendingOps,
   configure as configureStore,
   flushNow,
   hydrate as hydrateStore,

@@ -8,11 +8,12 @@ import {
   Minus,
   Pencil,
   Plus,
+  Star,
   StickyNote,
   Trash2,
   X,
 } from "lucide-react"
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { PrIcon } from "@/components/workouts/PrIcon"
 import { RestTicker } from "@/components/workouts/RestTicker"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
@@ -23,7 +24,9 @@ import {
   batchMutations,
   deleteSets,
   logPlannedSet,
+  useStore,
 } from "@/lib/store"
+import { predictPrFlags } from "@lift/core/store/prs"
 import { cn } from "@/lib/utils"
 import { defaultStep, formatWeight, fromKg, roundForDisplay, toKg } from "@/lib/units"
 import {
@@ -58,6 +61,8 @@ const HOLD_SLOP_PX = 8
 const PR_TEXT = "text-[#e0c050] [.light_&]:text-[#a16207]"
 
 interface Props {
+  /** The exercise id, used to predict PR records for the current inputs. */
+  exerciseId?: number
   /** The workout_exercise row, or null on the pending route before the
    *  first save has created it. */
   workoutExerciseId: number | null
@@ -83,6 +88,7 @@ interface Props {
 }
 
 export function SetLogger({
+  exerciseId,
   workoutExerciseId,
   sets,
   isCardio,
@@ -96,6 +102,7 @@ export function SetLogger({
 }: Props) {
   const unit = useWeightUnit()
   const confirm = useConfirm()
+  const showPositionPrs = useShowPositionPrs()
   const showRestTime = useShowRestTime()
   const showTimeSinceLastSet = useShowTimeSinceLastSet()
   const step = isCardio ? 1 : defaultStep(unit)
@@ -112,6 +119,23 @@ export function SetLogger({
   const [weight, setWeight] = useState<number>(() => toDisplay(seed.weight))
   const [reps, setReps] = useState<number>(seed.reps)
   const [error, setError] = useState<string | null>(null)
+
+  const indexes = useStore((s) => s.indexes)
+  const predicted = useMemo(() => {
+    if (isCardio || isPlanned || !exerciseId || !weight || !reps || reps <= 0) return null
+    try {
+      const storedWeight = toStored(weight)
+      return predictPrFlags(
+        indexes,
+        exerciseId,
+        workoutExerciseId ?? 0,
+        storedWeight,
+        reps
+      )
+    } catch {
+      return null
+    }
+  }, [indexes, exerciseId, workoutExerciseId, weight, reps, isCardio, isPlanned, toStored])
 
   // Edit mode: Save updates this set instead of adding one.
   const [editingSetId, setEditingSetId] = useState<number | null>(null)
@@ -362,6 +386,13 @@ export function SetLogger({
             <p className="mt-4 text-sm text-destructive" role="alert">
               {error}
             </p>
+          )}
+
+          {predicted && !editing && (predicted.isPr || (predicted.isPosPr && showPositionPrs)) && (
+            <div className="mt-4 flex items-center justify-center gap-1.5 text-xs font-bold text-[#e0c050] [.light_&]:text-[#a16207]">
+              <Star className="size-3.5 fill-current" />
+              <span>{predicted.isPr ? "All-Time PR" : `Set ${predicted.position} PR`}</span>
+            </div>
           )}
 
           <div className="mt-6 grid grid-cols-2 gap-3">

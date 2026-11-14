@@ -21,29 +21,30 @@ To run the app locally, test it, or deploy it, see **[docs/development.md](docs/
 
 ## Engine architecture and performance
 
-On mobile, workout data lives in a Rust engine (SQLite on the device, called through an Expo module). It owns storage, queries, PRs, imports, exports, restore points and sync. The web app still runs on the TypeScript store; a WebAssembly build of the same engine exists but is switched off until browser migration is done.
+On mobile, workout data lives in a Rust engine (SQLite on the device, called through an Expo module). It owns storage, queries, PRs, imports, exports, restore points and sync.
 
 More detailed everyday-operation and PR timings, concentrated-history stress
 cases and worker-encoding results are in [docs/benchmarks.md](docs/benchmarks.md).
 
-### TypeScript vs. Rust engine
+### TypeScript vs. Rust Native (at 100,000 sets)
 
 Desktop medians at **100,000 sets**, measured on the development Apple Silicon
 Mac with the same verified synthetic snapshot (10 exercises, 10 sets per workout).
 These are desktop measurements; they exclude React rendering and the mobile bridge.
 
-| Operation | TypeScript, in memory | Rust, in memory | Rust native, including commit/encoding |
-| :--- | ---: | ---: | ---: |
-| Add set | 22.955 ms | 0.513 ms | 1.060 ms |
-| Edit set | 19.455 ms | 3.014 ms | 3.415 ms |
-| Delete set | 19.572 ms | 3.092 ms | 3.289 ms |
-| Predict PR | 0.968 ms | 0.435 ms | 0.294 ms |
-| Recompute all PRs | 157.882 ms | 33.685 ms | 34.792 ms |
-| Load workout day | 0.012 ms | 0.038 ms | 0.053 ms |
+| Operation | TypeScript (in memory) | Rust Native (with commit/encoding) | Speed Increase |
+| :--- | ---: | ---: | :--- |
+| Add set | 22.955 ms | 1.060 ms | 21.7× faster |
+| Delete set | 19.572 ms | 3.289 ms | 6.0× faster |
+| Edit set | 19.455 ms | 3.415 ms | 5.7× faster |
+| Recompute all PRs | 157.882 ms | 34.792 ms | 4.5× faster |
+| Predict PR | 0.968 ms | 0.294 ms | 3.3× faster |
+| Load workout day | 0.012 ms | 0.033 ms | Slower (adds ~0.02 ms JSON/DTO encoding across the bridge; improved ~38% with zero-copy views) |
 
 Rust native mutations include SQLite commit and receipt encoding. TypeScript's
 in-memory timings exclude its periodic snapshot save. Query timings include
-Rust DTO/JSON encoding, while TypeScript returns store objects. Opening persisted
+Rust DTO/JSON encoding (optimized with zero-copy borrowed views, reducing `loadWorkoutDay`
+from 0.053 ms to 0.033 ms), while TypeScript returns store objects. Opening persisted
 data with a warm OS file cache took **99.278 ms** for the TypeScript snapshot and
 **41.457 ms** for Rust SQLite, including indexes in both cases.
 
