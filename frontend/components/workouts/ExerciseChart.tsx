@@ -6,43 +6,57 @@ import { cn } from "@/lib/utils"
 import { useWeightUnit } from "@/components/settings/SettingsProvider"
 import { niceDate, shortDate } from "@lift/core/format"
 import {
-  METRIC_OPTIONS,
   SET_INDEX_OPTIONS,
-  chartPoints,
-  fmtMetric,
+  defaultGraphMetric,
+  graphDeltaText,
   graphEmptyMessage,
   graphHeaderLabel,
+  graphMetricFor,
+  graphMetricLabel,
+  graphMetricOptions,
+  graphPointDetail,
+  graphPoints,
+  graphValueParts,
   xLabelIndices,
   yAxisScale,
   type ChartPoint,
-  type Metric,
+  type GraphMetric,
 } from "@lift/core/exerciseStats"
+import type { WeightUnit } from "@lift/core/units"
 
 interface Props {
   history: ExerciseHistoryDay[]
+  /** Cardio plots time and level metrics instead of the weight ones. */
+  isCardio?: boolean
 }
 
 /** The Graph tab. Mirrors mobile's GraphPanel: the chart card, then the
  *  metric picker under it. */
-export function ExerciseChart({ history }: Props) {
+export function ExerciseChart({ history, isCardio = false }: Props) {
   const unit = useWeightUnit()
-  const [metric, setMetric] = useState<Metric>("per_set")
+  const [picked, setMetric] = useState<GraphMetric>(() => defaultGraphMetric(isCardio))
+  const metric = graphMetricFor(picked, isCardio)
   const [setIndex, setSetIndex] = useState<number>(1)
 
   const points = useMemo(
-    () => chartPoints(history, metric, setIndex, unit),
+    () => graphPoints(history, metric, setIndex, unit),
     [history, metric, setIndex, unit]
   )
 
-  const opt = METRIC_OPTIONS.find((m) => m.value === metric)!
+  const metricLabel = graphMetricLabel(metric)
   const headerLabel = graphHeaderLabel(metric, setIndex)
+  // The value and unit label for any number on the card: a weight in the
+  // user's unit, a cardio clock with no unit, or a level.
+  const show = (v: number | undefined) => graphValueParts(v, metric, unit)
+  // One unit per metric, so the empty value's unit labels every number.
+  const shownUnit = show(undefined).unit
 
   const metricPanel = (
     <div className="space-y-2">
       <div className="text-[10px] font-extrabold uppercase tracking-[0.15em] text-muted-foreground">
         Metric
       </div>
-      <Segmented options={METRIC_OPTIONS} value={metric} onChange={setMetric} />
+      <Segmented options={graphMetricOptions(isCardio)} value={metric} onChange={setMetric} />
       {metric === "per_set" && (
         <Segmented
           options={SET_INDEX_OPTIONS}
@@ -57,12 +71,12 @@ export function ExerciseChart({ history }: Props) {
     return (
       <div className="space-y-3">
         <div className="rounded-2xl border border-foreground/[.12] bg-background p-4">
-          <ChartHeader label={headerLabel} value="-" unit={unit} count={0} />
-          <LegendRow label={opt.label} right="-" />
+          <ChartHeader label={headerLabel} value="-" unit={shownUnit} count={0} />
+          <LegendRow label={metricLabel} right="-" />
           <div className="flex h-[220px] items-center justify-center rounded-xl border border-dashed border-foreground/10 px-4 text-center text-sm text-muted-foreground">
             {graphEmptyMessage(metric, setIndex)}
           </div>
-          <StatsRow peak="-" avg="-" latest="-" unit={unit} />
+          <StatsRow peak="-" avg="-" latest="-" unit={shownUnit} />
         </div>
         {metricPanel}
       </div>
@@ -81,8 +95,8 @@ export function ExerciseChart({ history }: Props) {
       <div className="rounded-2xl border border-foreground/[.12] bg-background p-4">
         <ChartHeader
           label={headerLabel}
-          value={fmtMetric(latest.value)}
-          unit={unit}
+          value={show(latest.value).value}
+          unit={shownUnit}
           count={points.length}
           delta={
             points.length > 1 ? (
@@ -96,25 +110,25 @@ export function ExerciseChart({ history }: Props) {
                       : "text-muted-foreground"
                 )}
               >
-                {delta > 0 ? "+" : ""}
-                {fmtMetric(delta)} since first
+                {graphDeltaText(delta, metric)} since first
               </span>
             ) : null
           }
         />
-        <LegendRow label={opt.label} right={niceDate(latest.date)} />
+        <LegendRow label={metricLabel} right={niceDate(latest.date)} />
         <LineChart
           key={`${metric}-${setIndex}`}
           points={points}
           unit={unit}
+          metric={metric}
           peak={peak}
-          ariaLabel={`${opt.label} over time`}
+          ariaLabel={`${metricLabel} over time`}
         />
         <StatsRow
-          peak={fmtMetric(peak)}
-          avg={fmtMetric(avg)}
-          latest={fmtMetric(latest.value)}
-          unit={unit}
+          peak={show(peak).value}
+          avg={show(avg).value}
+          latest={show(latest.value).value}
+          unit={shownUnit}
         />
       </div>
       {metricPanel}
@@ -145,7 +159,7 @@ function ChartHeader({
           <span className="font-mono text-2xl font-extrabold tabular-nums">
             {value}
           </span>
-          <span className="text-xs uppercase text-muted-foreground">{unit}</span>
+          {unit && <span className="text-xs uppercase text-muted-foreground">{unit}</span>}
           {delta}
         </div>
       </div>
@@ -216,7 +230,7 @@ function Stat({
         <span className="font-mono text-sm font-extrabold tabular-nums">
           {value}
         </span>
-        <span className="text-[9px] uppercase text-muted-foreground">{unit}</span>
+        {unit && <span className="text-[9px] uppercase text-muted-foreground">{unit}</span>}
       </div>
     </div>
   )
@@ -226,7 +240,9 @@ function Stat({
 const POINT_SPACING = 58
 const INITIAL = 18
 const END = 18
-const Y_AXIS_W = 42
+// The Y axis is 42px wide, enough for every weight tick; a cardio clock past
+// an hour ("1:15:00") widens it, about 6px a character at this size.
+const Y_AXIS_MIN_W = 42
 const CANVAS_H = 220
 const TOP_PAD = 12
 const BOT_PAD = 24
@@ -243,14 +259,19 @@ const BUBBLE_W = 110
 function LineChart({
   points,
   unit,
+  metric,
   peak,
   ariaLabel,
 }: {
   points: ChartPoint[]
-  unit: string
+  unit: WeightUnit
+  metric: GraphMetric
   peak: number
   ariaLabel: string
 }) {
+  const { ticks: yTickValues, yMin, yMax } = yAxisScale(points.map((p) => p.value))
+  const tickTexts = yTickValues.map((v) => graphValueParts(v, metric, unit).value)
+  const Y_AXIS_W = Math.max(Y_AXIS_MIN_W, ...tickTexts.map((t) => t.length * 6 + 8))
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const userScrollRef = useRef(false)
@@ -270,7 +291,7 @@ function LineChart({
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [Y_AXIS_W])
 
   const naturalW = INITIAL + Math.max(0, points.length - 1) * POINT_SPACING + END
   const contentW = Math.max(visibleW, naturalW)
@@ -283,8 +304,6 @@ function LineChart({
     el.scrollLeft = el.scrollWidth
     scrolledToEnd.current = true
   }, [visibleW])
-
-  const { ticks: yTickValues, yMin, yMax } = yAxisScale(points.map((p) => p.value))
 
   const xFor = (i: number) => {
     if (points.length === 1) return contentW / 2
@@ -306,6 +325,8 @@ function LineChart({
 
   const labelIndices = xLabelIndices(points.length)
   const active = activeIdx != null ? points[activeIdx] : null
+  const activeShown = graphValueParts(active?.value, metric, unit)
+  const activeDetail = active ? graphPointDetail(active, metric) : null
 
   function markUserScroll() {
     userScrollRef.current = true
@@ -348,7 +369,7 @@ function LineChart({
             textAnchor="end"
             fill="var(--muted-foreground)"
           >
-            {fmtMetric(v)}
+            {tickTexts[i]}
           </text>
         ))}
       </svg>
@@ -458,11 +479,13 @@ function LineChart({
               }}
             >
               <div className="text-xs font-extrabold">
-                {fmtMetric(active.value)} {unit}
+                {activeShown.unit
+                  ? `${activeShown.value} ${activeShown.unit}`
+                  : activeShown.value}
               </div>
-              {active.reps > 0 && (
+              {activeDetail != null && (
                 <div className="mt-0.5 text-[10px] text-muted-foreground">
-                  × {active.reps} reps
+                  {activeDetail}
                 </div>
               )}
             </div>

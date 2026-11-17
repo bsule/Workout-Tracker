@@ -49,6 +49,7 @@ import { useIsFocused } from "@react-navigation/native"
 import { Button } from "../components/Button"
 import { CategoryPill } from "../components/CategoryPill"
 import { SetList } from "../components/SetList"
+import { isCardioCategory } from "@lift/core/setLogger"
 import { StaticSafeAreaView } from "../components/StaticSafeAreaView"
 import { CollapseIn, FadeHighlight, SlideDownIn } from "../components/Fade"
 import { HoldPressable } from "../components/HoldPressable"
@@ -1152,7 +1153,7 @@ function ExerciseRow({
           </View>
         ) : (
           <View style={styles.exSetList}>
-            <SetList sets={we.sets} showNotes />
+            <SetList sets={we.sets} isCardio={isCardioCategory(we.exercise.category)} showNotes />
           </View>
         )}
       </View>

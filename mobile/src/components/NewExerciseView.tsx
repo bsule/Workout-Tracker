@@ -11,6 +11,7 @@ import {
 import { Ionicons } from "@expo/vector-icons"
 import type { Exercise } from "@lift/core"
 import { useWorkoutApi } from "@lift/engine-client/react"
+import { defaultKindForCategory } from "@lift/core/setLogger"
 import { Button } from "./Button"
 import { CategoryChips } from "./CategoryChips"
 import { Input } from "./Input"
@@ -43,7 +44,13 @@ export function NewExerciseView({
     setSubmitting(true)
     setError(null)
     try {
-      const ex = await api.createExercise({ name: name.trim(), category })
+      // Cardio is distance_time, like the built-in cardio exercises, so its
+      // minutes x level sets take no PR stars.
+      const ex = await api.createExercise({
+        name: name.trim(),
+        category,
+        kind: defaultKindForCategory(category),
+      })
       onCreated(ex)
     } catch (e: any) {
       setError(e?.message ?? "Failed to create exercise")

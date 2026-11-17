@@ -185,7 +185,7 @@ pub fn apply_indexed(
                             ]
                             .contains(k)
                         })
-                        .unwrap_or("weight_reps");
+                        .unwrap_or_else(|| crate::commands::default_kind_for_category(category));
                     apply_command_indexed(
                         &mut staged,
                         Command::CreateExercise {

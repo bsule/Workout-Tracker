@@ -12,7 +12,7 @@ import {
 } from "lucide-react"
 import type { ExerciseHistoryDay } from "@/types"
 import { cn } from "@/lib/utils"
-import { formatWeight } from "@/lib/units"
+import { recordRepsText, setValueText } from "@lift/core/setLogger"
 import { getDayNoteQ, getWorkoutByDateQ } from "@/lib/store"
 import { useWeightUnit } from "@/components/settings/SettingsProvider"
 import {
@@ -23,13 +23,16 @@ import {
 import { agoLabel, recordDate } from "@lift/core/format"
 import {
   REP_ROWS_COLLAPSED,
-  REP_SORTS,
   pickLastSession,
-  repRecordRows,
+  recordRows,
+  recordSortFor,
+  recordSorts,
+  recordsSectionTitle,
   setNumbersOf,
+  showAllRecordsLabel,
   weightRepSets,
+  type RecordSort,
   type RepRecordRow,
-  type RepSort,
 } from "@lift/core/exerciseStats"
 
 interface Props {
@@ -39,6 +42,8 @@ interface Props {
    *  on this page. Omit on the exercise page, where the newest session is
    *  the last one. */
   excludeDate?: string
+  /** Cardio stores minutes in `weight` and a level in `reps`, unconverted. */
+  isCardio?: boolean
 }
 
 /**
@@ -46,7 +51,7 @@ interface Props {
  * attached to that day, and your best set at every rep count you have
  * performed. Mirrors mobile's SummaryPanel.
  */
-export function ExerciseSummary({ history, excludeDate }: Props) {
+export function ExerciseSummary({ history, excludeDate, isCardio = false }: Props) {
   const unit = useWeightUnit()
 
   // pickLastSession expects newest first. getExerciseHistoryQ returns that
@@ -80,7 +85,9 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
 
   // "all" pools every position; otherwise restrict to one set number.
   const [scope, setScope] = useState<"all" | number>("all")
-  const [sort, setSort] = useState<RepSort>("weight")
+  const [pickedSort, setSort] = useState<RecordSort>(() => recordSortFor("weight", isCardio))
+  const sort = recordSortFor(pickedSort, isCardio)
+  const sorts = recordSorts(isCardio)
   const [showAllRows, setShowAllRows] = useState(false)
   // The date whose sets the record popup is showing, or null when closed.
   const [recordDay, setRecordDay] = useState<string | null>(null)
@@ -90,7 +97,7 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
     [wrSets, scope]
   )
 
-  const repRows = useMemo(() => repRecordRows(scoped, sort), [scoped, sort])
+  const repRows = useMemo(() => recordRows(scoped, sort, isCardio), [scoped, sort, isCardio])
 
   const shownRecordDay = useMemo(
     () => ordered.find((d) => d.date === recordDay) ?? null,
@@ -106,8 +113,7 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
     )
   }
 
-  const sortLabel =
-    REP_SORTS.find((s) => s.key === sort)?.label ?? REP_SORTS[0].label
+  const sortLabel = sorts.find((s) => s.key === sort)?.label ?? sorts[0].label
 
   return (
     <div className="space-y-3">
@@ -115,6 +121,7 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
       {lastDay ? (
         <DayBlock
           day={lastDay}
+          isCardio={isCardio}
           subtitle={agoLabel(lastDay.date)}
           notes={lastNotes}
           calendarHref={calendarHref(lastDay.date)}
@@ -127,7 +134,7 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
 
       {repRows.length > 0 && (
         <>
-          <SectionTitle className="pt-2">Rep records</SectionTitle>
+          <SectionTitle className="pt-2">{recordsSectionTitle(isCardio)}</SectionTitle>
 
           <div className="flex gap-2">
             <PickerChip
@@ -160,14 +167,14 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
               icon={ArrowUpDown}
               label={sortLabel}
               title="Sort by"
-              options={REP_SORTS.map((o) => ({
+              options={sorts.map((o) => ({
                 id: o.key,
                 title: o.label,
                 subtitle: o.hint,
                 selected: sort === o.key,
               }))}
               onSelect={(id) => {
-                setSort(id as RepSort)
+                setSort(id as RecordSort)
                 setShowAllRows(false)
               }}
             />
@@ -179,6 +186,7 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
                 key={row.reps}
                 row={row}
                 unit={unit}
+                isCardio={isCardio}
                 first={i === 0}
                 onOpen={() => setRecordDay(row.date)}
               />
@@ -199,6 +207,7 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
                     key={row.reps}
                     row={row}
                     unit={unit}
+                    isCardio={isCardio}
                     first={false}
                     onOpen={() => setRecordDay(row.date)}
                   />
@@ -214,7 +223,7 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
               >
                 {showAllRows
                   ? `Show top ${REP_ROWS_COLLAPSED}`
-                  : `Show all ${repRows.length} rep counts`}
+                  : showAllRecordsLabel(repRows.length, isCardio)}
                 <ChevronDown
                   className={cn(
                     "size-3.5 transition-transform",
@@ -227,6 +236,7 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
 
           <RecordDayDialog
             day={shownRecordDay}
+            isCardio={isCardio}
             onClose={() => setRecordDay(null)}
           />
         </>
@@ -238,14 +248,17 @@ export function ExerciseSummary({ history, excludeDate }: Props) {
 function RepRow({
   row,
   unit,
+  isCardio,
   first,
   onOpen,
 }: {
   row: RepRecordRow
   unit: "kg" | "lb"
+  isCardio: boolean
   first: boolean
   onOpen: () => void
 }) {
+  const value = setValueText({ weight: row.weightKg, reps: row.reps }, unit, isCardio)
   return (
     <button
       type="button"
@@ -261,11 +274,11 @@ function RepRow({
     >
       <div className="flex items-baseline gap-2">
         <span className="font-mono text-lg font-semibold tabular-nums text-foreground">
-          {formatWeight(row.weightKg, unit)}
+          {value.amount}
         </span>
-        <span className="text-[10px] text-muted-foreground">{unit}</span>
+        {value.unit && <span className="text-[10px] text-muted-foreground">{value.unit}</span>}
         <span className="font-mono text-sm font-medium tabular-nums text-muted-foreground">
-          × {row.reps} {row.reps === 1 ? "rep" : "reps"}
+          {recordRepsText(row.reps, isCardio)}
         </span>
         {row.isTopOneRm && (
           <span className="rounded-full bg-[oklch(0.78_0.18_80_/_0.16)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-[oklch(0.78_0.18_80)]">
@@ -397,9 +410,11 @@ function PickerChip({
  */
 function RecordDayDialog({
   day,
+  isCardio,
   onClose,
 }: {
   day: ExerciseHistoryDay | null
+  isCardio: boolean
   onClose: () => void
 }) {
   if (!day) return null
@@ -407,6 +422,7 @@ function RecordDayDialog({
     <Modal open={true} onClose={onClose} title="Record day" className="max-w-md p-0">
       <DayBlock
         day={day}
+        isCardio={isCardio}
         scrollSets
         calendarHref={calendarHref(day.date)}
         // Close as the link navigates: the popup must not sit over the

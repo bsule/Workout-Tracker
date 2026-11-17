@@ -7,6 +7,7 @@ import { Button } from "./Button"
 import { CategoryPill } from "./CategoryPill"
 import { NotePreview } from "./NotePreview"
 import { SetList } from "./SetList"
+import { isCardioCategory } from "@lift/core/setLogger"
 import { pressedStyle } from "../theme/pressable"
 import { line, theme, tint } from "../theme/theme"
 import { todayString } from "../dates"
@@ -96,7 +97,7 @@ function ExerciseRow({
       {we.sets.length === 0 ? (
         <Text style={styles.addFirst}>+ Add first set</Text>
       ) : (
-        <SetList sets={we.sets} showNotes />
+        <SetList sets={we.sets} isCardio={isCardioCategory(we.exercise.category)} showNotes />
       )}
     </Pressable>
   )

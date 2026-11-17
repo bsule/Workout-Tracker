@@ -14,6 +14,19 @@ pub fn seeds() -> Vec<ExerciseRow> {
     seed_catalog().to_vec()
 }
 
+/// The kind a new exercise gets when the caller names none. Cardio is
+/// distance_time, like the built-in cardio exercises and the TypeScript store
+/// (`defaultKindForCategory` in packages/core/src/setLogger.ts). Anything else
+/// is weight_reps. A cardio exercise stored as weight_reps would get PR stars
+/// from minutes and level.
+pub fn default_kind_for_category(category: &str) -> &'static str {
+    if category == "cardio" {
+        "distance_time"
+    } else {
+        "weight_reps"
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -257,11 +270,12 @@ fn apply(
             category,
             kind,
         } => {
+            let kind = kind.unwrap_or_else(|| default_kind_for_category(&category).into());
             let row = ExerciseRow {
                 id: id().max(seed_catalog().len() as u64 + 1),
                 name: name.trim().into(),
                 category,
-                kind: kind.unwrap_or_else(|| "weight_reps".into()),
+                kind,
                 is_custom: true,
                 is_deleted: None,
             };
@@ -588,6 +602,8 @@ fn apply(
             Value::Null
         }
         Command::RecomputePrs => {
+            // TEMPORARY: see cardio_fix.rs.
+            crate::cardio_fix::fix_custom_cardio_kinds(snap);
             prs::recompute(snap, None);
             look.mark_all_verified();
             return Ok(

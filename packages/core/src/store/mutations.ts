@@ -1,7 +1,9 @@
+import { fixCustomCardioKinds } from "./cardioFix" // TEMPORARY: see cardioFix.ts.
 import type { Category, ExerciseKind, UserSettings, WorkoutStatus } from "../types"
 import { applyMutation, getState } from "./store"
 import { nextId, nextIdAtLeast } from "./ids"
 import { recordPending } from "./persist"
+import { defaultKindForCategory } from "../setLogger"
 import type {
   ExerciseRow,
   GymRow,
@@ -60,7 +62,9 @@ export function createExercise(input: {
     id,
     name: input.name.trim(),
     category: input.category,
-    kind: input.kind ?? "weight_reps",
+    // Cardio defaults to distance_time like the built-in cardio exercises, so
+    // its minutes x level sets never take PR stars.
+    kind: input.kind ?? defaultKindForCategory(input.category),
     is_custom: true,
   }
   applyMutation((snap) => ({ ...snap, exercises: [...snap.exercises, row] }))
@@ -603,7 +607,8 @@ export function copyFromWorkout(
 export function recomputeAllPrs(): { recomputed: number } {
   let count = 0
   applyMutation((snap) => {
-    let next = snap
+    // TEMPORARY: see cardioFix.ts.
+    let next = fixCustomCardioKinds(snap)
     const exerciseIds = new Set(
       snap.workout_exercises.map((we) => we.exercise_id)
     )

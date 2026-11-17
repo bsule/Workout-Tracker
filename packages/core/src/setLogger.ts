@@ -2,15 +2,24 @@
 // SetLoggerScreen so the web logger behaves the same. No store access: the
 // screens pass in what they already hold.
 
-import type { Category, ExerciseHistoryDay, WorkoutSet } from "./types"
+import type { Category, ExerciseHistoryDay, ExerciseKind, WorkoutSet } from "./types"
 import { formatRest } from "./format"
-import { formatWeight, type WeightUnit } from "./units"
+import { formatWeight, fromKg, roundForDisplay, toKg, type WeightUnit } from "./units"
 import { lastWorkoutTopSet } from "./workouts"
 
 /** Cardio exercises store time in minutes in `weight` and a level in `reps`,
  *  with no kg/lb conversion. Decided by the category, not the kind. */
 export function isCardioCategory(category: Category | string | null | undefined): boolean {
   return category === "cardio"
+}
+
+/** The kind a new exercise gets when the caller names none. Cardio is
+ *  distance_time, like the built-in cardio exercises and the v2 migration, so
+ *  its minutes x level sets never take PR stars. Anything else is
+ *  weight_reps. The Rust engine has the same rule (default_kind_for_category
+ *  in crates/lift-domain/src/commands.rs). */
+export function defaultKindForCategory(category: Category | string): ExerciseKind {
+  return isCardioCategory(category) ? "distance_time" : "weight_reps"
 }
 
 /** The form's values when nothing seeds it: 0 x 8, or 20 min at Level 5. */
@@ -67,6 +76,36 @@ export function setFormError(weight: number, reps: number, isCardio: boolean): s
   return null
 }
 
+/** The number the weight field shows for a stored weight: minutes as stored
+ *  for cardio, else kg in the display unit rounded to one decimal. Null shows
+ *  as 0. */
+export function weightFieldValue(
+  stored: number | null | undefined,
+  unit: WeightUnit,
+  isCardio: boolean
+): number {
+  if (isCardio) return stored ?? 0
+  return roundForDisplay(fromKg(stored ?? 0, unit), unit)
+}
+
+/**
+ * The weight an edit saves, in storage units. `field` is what the weight field
+ * holds now, `stored` the set's saved weight. When the field still shows what
+ * `stored` loads as, this returns undefined: leave the weight out of the patch
+ * so the saved value stays exactly as it was. Converting the rounded display
+ * value back would turn 100 kg into 100.0175 kg for a lb user, which ranks as
+ * heavier and can move PR stars, and each edit would drift it further.
+ */
+export function editedWeight(
+  field: number,
+  stored: number | null | undefined,
+  unit: WeightUnit,
+  isCardio: boolean
+): number | undefined {
+  if (field === weightFieldValue(stored, unit, isCardio)) return undefined
+  return isCardio ? field : toKg(field, unit)
+}
+
 /**
  * The timestamp a set's rest is measured from while editing it: the newest
  * logged (not planned) set before it in this exercise, else `fallbackIso`
@@ -115,6 +154,25 @@ export function nextSetPosition(
     logged++
   }
   return logged + 1
+}
+
+/**
+ * Each row's 1-based set position, the number prs.ts gives it for position
+ * PRs: only logged (not planned) sets with both weight and reps count, in
+ * list order (the store keeps a workout_exercise's sets in the order prs.ts
+ * sorts them). 0 for a row that takes no position. A row that already carries
+ * a `position` keeps it: history rows are numbered per workout_exercise before
+ * two runs of the exercise on one date merge into one list.
+ */
+export function setPositions(
+  sets: readonly (Pick<WorkoutSet, "weight" | "reps" | "is_planned"> & { position?: number })[]
+): number[] {
+  let logged = 0
+  return sets.map((s) => {
+    if (typeof s.position === "number") return s.position
+    if (s.is_planned || s.weight == null || s.reps == null) return 0
+    return ++logged
+  })
 }
 
 /** A tapped set whose store mutation has not landed yet. `baseIds` are the
@@ -198,15 +256,97 @@ export function setPrBadge(
   return null
 }
 
-/** The planned-set popup's title: "135 lb × 5", or "20 min × Lvl 5". */
+/** The planned-set popup's title: "135 lb × 5", or "20:00 × Lvl 5". */
 export function plannedSetTitle(
   s: Pick<WorkoutSet, "weight" | "reps">,
   unit: WeightUnit,
   isCardio: boolean
 ): string {
   return isCardio
-    ? `${s.weight ?? "-"} min × Lvl ${s.reps ?? "-"}`
+    ? `${s.weight == null ? "-" : formatCardioTime(s.weight)} × Lvl ${s.reps ?? "-"}`
     : `${formatWeight(s.weight ?? undefined, unit)} ${unit} × ${s.reps ?? "-"}`
+}
+
+/** What a set row shows: the amount, its unit label and the reps column. */
+export interface SetValueText {
+  amount: string
+  unit: string
+  reps: string
+}
+
+const METERS_PER: Record<string, number> = { mi: 1609.344, km: 1000, ft: 0.3048, m: 1 }
+
+/** "25:00", or "1:02:03" past an hour. */
+export function formatClock(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const sec = String(total % 60).padStart(2, "0")
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`
+}
+
+/**
+ * A cardio time as a clock. Cardio stores minutes, decimals allowed, so 20
+ * shows as "20:00", 20.5 as "20:30" and 65 as "1:05:00". With `signed`, a
+ * change in time: "+5:00", "-5:00", or "0:00" for no change.
+ */
+export function formatCardioTime(minutes: number, signed = false): string {
+  if (!signed) return formatClock(minutes * 60)
+  const seconds = Math.round(minutes * 60)
+  const sign = seconds > 0 ? "+" : seconds < 0 ? "-" : ""
+  return sign + formatClock(Math.abs(seconds))
+}
+
+/**
+ * How a set row shows a set, the way the set logger does. Cardio (by
+ * category, see isCardioCategory) stores minutes in `weight` and a level in
+ * `reps` with no kg/lb conversion: "20:00" (no unit label) and "Lvl 5". Other sets show the
+ * weight in the user's unit and the reps. A set with no weight but a distance
+ * or time (an imported run, a plank) shows those instead of "-".
+ */
+export function setValueText(
+  s: Pick<WorkoutSet, "weight" | "reps"> &
+    Partial<Pick<WorkoutSet, "distance_m" | "distance_unit_display" | "time_seconds">>,
+  unit: WeightUnit,
+  isCardio: boolean
+): SetValueText {
+  const repsText = (r: number | null) =>
+    r == null ? "-" : isCardio ? `Lvl ${r}` : String(r)
+  if (s.weight == null) {
+    const time = s.time_seconds ?? null
+    const dist = s.distance_m ?? null
+    if (dist != null) {
+      const shown = s.distance_unit_display ?? ""
+      const distUnit = METERS_PER[shown] ? shown : "m"
+      return {
+        amount: String(Number((dist / METERS_PER[distUnit]).toFixed(2))),
+        unit: distUnit,
+        reps: time != null ? formatClock(time) : s.reps != null ? repsText(s.reps) : "",
+      }
+    }
+    if (time != null) {
+      return {
+        amount: formatClock(time),
+        unit: "",
+        reps: s.reps != null ? repsText(s.reps) : "",
+      }
+    }
+  }
+  if (isCardio) {
+    return { amount: s.weight == null ? "-" : formatCardioTime(s.weight), unit: "", reps: repsText(s.reps) }
+  }
+  return { amount: formatWeight(s.weight, unit), unit, reps: repsText(s.reps) }
+}
+
+/** A record row's reps: "× 5 reps", or "× Lvl 5" for cardio. */
+export function recordRepsText(reps: number, isCardio: boolean): string {
+  return isCardio ? `× Lvl ${reps}` : `× ${reps} ${reps === 1 ? "rep" : "reps"}`
+}
+
+/** The Last time card's records heading: the best weight per rep count, or
+ *  for cardio the longest time per level. */
+export function topRecordsLabel(isCardio: boolean): string {
+  return isCardio ? "Longest times" : "Top weights"
 }
 
 /** "Delete 1 set?" / "Delete 3 sets?" */
@@ -218,6 +358,44 @@ export function deleteSetsTitle(count: number): string {
  *  plus "." when decimals are allowed. */
 export function cleanNumericText(text: string, allowDecimal: boolean): string {
   return text.replace(allowDecimal ? /[^0-9.]/g : /[^0-9]/g, "")
+}
+
+/**
+ * What a numeric field takes from typed text: the cleaned text and the number
+ * it saves, or null to refuse the edit and keep the previous text. A second
+ * "." is refused, so the field never shows text ("1.2.3") that saves a
+ * different number than it reads. "" and "." save 0, "1." saves 1.
+ */
+export function acceptNumericText(
+  typed: string,
+  allowDecimal: boolean
+): { text: string; value: number } | null {
+  const text = cleanNumericText(typed, allowDecimal)
+  if (allowDecimal && text.indexOf(".") !== text.lastIndexOf(".")) return null
+  const value = text === "" || text === "." ? 0 : Number(text)
+  return Number.isFinite(value) ? { text, value } : null
+}
+
+/**
+ * What the cardio Time field takes from typed text, in minutes: "32", "32:18"
+ * or "1:05:00" (h:mm:ss, the way formatCardioTime shows a time past an hour).
+ * A typed "." or "," counts as ":": the field opens the number pad, whose
+ * decimal key is "." (or "," in some regions), so that key types the ":". A
+ * part after the first takes at most two digits, and a two-digit part past 59
+ * is refused, as is a fourth part. "" saves 0, "32:" saves 32, "32:7" saves 32:07.
+ */
+export function acceptClockText(typed: string): { text: string; value: number } | null {
+  const text = typed.replace(/[.,]/g, ":").replace(/[^0-9:]/g, "")
+  const parts = text.split(":")
+  if (parts.length > 3) return null
+  for (let i = 1; i < parts.length; i++) {
+    if (parts[i].length > 2) return null
+    if (parts[i].length === 2 && Number(parts[i]) > 59) return null
+  }
+  const n = parts.map((p) => (p === "" ? 0 : Number(p)))
+  const value =
+    parts.length === 3 ? n[0] * 60 + n[1] + n[2] / 60 : parts.length === 2 ? n[0] + n[1] / 60 : n[0]
+  return Number.isFinite(value) ? { text, value } : null
 }
 
 /** The most recent session before `currentDate` with a weight x reps set,
@@ -237,12 +415,29 @@ export function lastSessionBefore(
   return null
 }
 
-/** The Last time card's collapsed line: "135×5   135×5". */
+/** The Last time card's collapsed line: "135×5   135×5", or
+ *  "20:00×Lvl 5" for cardio. */
 export function lastSessionSummary(
   sets: readonly { weight: number; reps: number }[],
-  unit: WeightUnit
+  unit: WeightUnit,
+  isCardio = false
 ): string {
-  return sets.map((s) => `${formatWeight(s.weight, unit)}×${s.reps}`).join("   ")
+  return sets.map((s) => lastSessionChip(s, unit, isCardio)).join("   ")
+}
+
+/** One Last time chip's two sides, "135" and "5", or "20:00" and "Lvl 5". */
+export function lastSessionChipParts(
+  s: { weight: number; reps: number },
+  unit: WeightUnit,
+  isCardio: boolean
+): { amount: string; reps: string } {
+  const t = setValueText(s, unit, isCardio)
+  return { amount: t.amount, reps: t.reps }
+}
+
+function lastSessionChip(s: { weight: number; reps: number }, unit: WeightUnit, isCardio: boolean): string {
+  const p = lastSessionChipParts(s, unit, isCardio)
+  return `${p.amount}×${p.reps}`
 }
 
 /** Whether the Last time card is open. `manual` is the user's own choice

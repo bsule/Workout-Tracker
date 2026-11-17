@@ -2,10 +2,10 @@
 //! never clears the committed store. The host persists the result atomically.
 use crate::{
     invalid,
-    names::{normalize, ExerciseLookup},
-    CodecError,
+    names::{self, normalize, ExerciseLookup},
+    set_values_key, CodecError,
 };
-use lift_domain::{commands::Context, model::*, prs, units::weight_key};
+use lift_domain::{commands::Context, model::*, prs};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap, HashSet};
 fn text(v: &Value) -> String {
@@ -36,21 +36,11 @@ fn date_shape(s: &str) -> bool {
             }
         })
 }
-fn values(w: Option<f64>, r: Option<f64>, d: Option<f64>, t: Option<f64>) -> String {
-    let n = |v: Option<f64>| v.map(|v| v.to_string()).unwrap_or_else(|| "-".into());
-    format!(
-        "{}|{}|{}|{}",
-        n(w.map(|v| weight_key(Some(v)))),
-        n(r),
-        n(d),
-        n(t)
-    )
-}
 fn row_values(s: &SetRow) -> String {
-    values(s.weight, s.reps, s.distance_m, s.time_seconds)
+    set_values_key(s.weight, s.reps, s.distance_m, s.time_seconds)
 }
 fn file_values(s: &Value) -> String {
-    values(
+    set_values_key(
         s["weight_kg"].as_f64(),
         s["reps"].as_f64(),
         s["distance_m"].as_f64(),
@@ -59,6 +49,7 @@ fn file_values(s: &Value) -> String {
 }
 fn new_exercise(v: &Value, id: u64, name: String, force_custom: bool) -> ExerciseRow {
     let category = text(&v["category"]).trim().to_lowercase();
+    let default_kind = lift_domain::commands::default_kind_for_category(&category);
     ExerciseRow {
         id,
         name,
@@ -67,9 +58,54 @@ fn new_exercise(v: &Value, id: u64, name: String, force_custom: bool) -> Exercis
         } else {
             category
         },
-        kind: kind(&v["kind"]).unwrap_or("weight_reps").into(),
+        // A file that states no kind gets the same default as a new
+        // exercise: cardio is distance_time, so it takes no PR stars.
+        kind: kind(&v["kind"]).unwrap_or(default_kind).into(),
         is_custom: force_custom || v["is_custom"] != false,
         is_deleted: None,
+    }
+}
+/// Set orders on one exercise row. Planned and logged sets share the order
+/// space: the device's orders, the ones this import added, and the highest.
+struct Orders {
+    device: HashSet<i64>,
+    added: HashSet<i64>,
+    max: i64,
+}
+impl Orders {
+    fn new() -> Self {
+        Self {
+            device: HashSet::new(),
+            added: HashSet::new(),
+            max: -1,
+        }
+    }
+    fn add(&mut self, order: i64) {
+        self.added.insert(order);
+        self.max = self.max.max(order);
+    }
+}
+fn planned_set(s: &Value, id: u64, weid: u64, order: i64, now: &str) -> SetRow {
+    SetRow {
+        id,
+        workout_exercise_id: weid,
+        weight: s["weight_kg"].as_f64(),
+        reps: s["reps"].as_f64(),
+        distance_m: s["distance_m"].as_f64(),
+        distance_unit_display: text(&s["distance_unit_display"]),
+        time_seconds: s["time_seconds"].as_f64(),
+        is_planned: true,
+        is_pr: false,
+        was_pr: false,
+        is_position_pr: false,
+        was_position_pr: false,
+        note: text(&s["note"]),
+        order,
+        created_at: s["created_at"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(now)
+            .into(),
     }
 }
 pub fn import(
@@ -119,8 +155,20 @@ pub fn import(
     let mut counts: HashMap<u64, i64> = HashMap::new();
     let mut max_order: HashMap<u64, i64> = HashMap::new();
     let mut local: HashMap<u64, HashMap<String, usize>> = HashMap::new();
+    let mut orders: HashMap<u64, Orders> = HashMap::new();
+    let mut planned_local: HashMap<u64, HashMap<String, usize>> = HashMap::new();
     for s in &result.sets {
+        let o = orders
+            .entry(s.workout_exercise_id)
+            .or_insert_with(Orders::new);
+        o.device.insert(s.order);
+        o.max = o.max.max(s.order);
         if s.is_planned {
+            *planned_local
+                .entry(s.workout_exercise_id)
+                .or_default()
+                .entry(row_values(s))
+                .or_default() += 1;
             continue;
         }
         *counts.entry(s.workout_exercise_id).or_default() += 1;
@@ -173,16 +221,49 @@ pub fn import(
             }
         }
     }
-    for e in data["custom_exercises"].as_array().into_iter().flatten() {
-        if let Some(name) = e["name"].as_str() {
-            let name = normalize(name);
-            if !name.is_empty() && lookup.find(&name, kind(&e["kind"])).is_none() {
-                let row = new_exercise(e, ids.exercise(), name.clone(), true);
-                lookup.add(row.clone());
-                result.exercises.push(row);
-                created.insert(name);
-            }
+    // Live custom exercises first, so a deleted row never stands in for a
+    // live one of the same name.
+    let declared: Vec<_> = data["custom_exercises"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e["name"].as_str().map(|n| (e, normalize(n))))
+        .filter(|(_, n)| !n.is_empty())
+        .collect();
+    for (e, name) in &declared {
+        if e["is_deleted"] == true {
+            continue;
         }
+        if lookup.find(name, kind(&e["kind"])).is_none() {
+            let row = new_exercise(e, ids.exercise(), name.clone(), true);
+            lookup.add(row.clone());
+            result.exercises.push(row);
+            created.insert(name.clone());
+        }
+    }
+    // A deleted custom exercise stays deleted: restored as a deleted row (its
+    // sets stay hidden), or the device's own deleted row is reused. A live
+    // exercise with the name is left alone and nothing is added.
+    let mut device_deleted: HashMap<String, ExerciseRow> = HashMap::new();
+    for e in &result.exercises {
+        if e.is_deleted == Some(true) && e.is_custom {
+            device_deleted
+                .entry(names::key(&e.name))
+                .or_insert_with(|| e.clone());
+        }
+    }
+    for (e, name) in &declared {
+        if e["is_deleted"] != true || lookup.find(name, kind(&e["kind"])).is_some() {
+            continue;
+        }
+        if let Some(existing) = device_deleted.get(&names::key(name)) {
+            lookup.add(existing.clone());
+            continue;
+        }
+        let mut row = new_exercise(e, ids.exercise(), name.clone(), true);
+        row.is_deleted = Some(true);
+        lookup.add(row.clone());
+        result.exercises.push(row);
     }
     for (wi, w) in workouts.iter().enumerate() {
         let Some(date) = w["date"].as_str() else {
@@ -229,7 +310,13 @@ pub fn import(
             result.workouts.push(WorkoutRow {
                 id,
                 date: date.into(),
-                status: if crate::truthy(&w["finished_at"]) {
+                // The file's status when it states one; older files derive it.
+                status: if let Some(status) = w["status"]
+                    .as_str()
+                    .filter(|s| ["planned", "active", "done"].contains(s))
+                {
+                    status
+                } else if crate::truthy(&w["finished_at"]) {
                     "done"
                 } else if crate::truthy(&w["started_at"]) {
                     "active"
@@ -322,6 +409,7 @@ pub fn import(
                     .entry(weid)
                     .and_modify(|m| *m = (*m).max(order))
                     .or_insert(order);
+                orders.entry(weid).or_insert_with(Orders::new).add(order);
                 *counts.entry(weid).or_default() += 1;
                 result.sets.push(SetRow {
                     id: ids.next(),
@@ -345,6 +433,42 @@ pub fn import(
                         .into(),
                 });
                 imported += 1;
+            }
+            // Planned sets, after the logged ones (`planned_sets`, which an
+            // older importer ignores). The same session restores them by
+            // position and skips a position the device already fills; another
+            // session, or a set with no position, skips a planned set the
+            // device has with the same values and puts the rest after every
+            // set there.
+            for s in we["planned_sets"].as_array().into_iter().flatten() {
+                if !crate::truthy(s) {
+                    continue;
+                }
+                let o = orders.entry(weid).or_insert_with(Orders::new);
+                let position = s["order"].as_i64().filter(|_| same_session || !append);
+                let order = if let Some(order) = position {
+                    if o.device.contains(&order) {
+                        continue;
+                    }
+                    if o.added.contains(&order) {
+                        o.max + 1
+                    } else {
+                        order
+                    }
+                } else {
+                    let values = planned_local.entry(weid).or_default();
+                    if let Some(left) = values.get_mut(&file_values(s)) {
+                        if *left > 0 {
+                            *left -= 1;
+                            continue;
+                        }
+                    }
+                    o.max + 1
+                };
+                o.add(order);
+                result
+                    .sets
+                    .push(planned_set(s, ids.next(), weid, order, &ctx.now));
             }
         }
     }

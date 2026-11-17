@@ -1,7 +1,7 @@
 use crate::{
     invalid,
     names::{normalize, ExerciseLookup},
-    CodecError,
+    set_values_key, CodecError,
 };
 use lift_domain::{commands::Context, model::*, prs, units::KG_PER_LB};
 use serde_json::{json, Value};
@@ -59,10 +59,13 @@ pub fn import(
     let mut lookup = ExerciseLookup::new(if replace { &empty } else { &snap.exercises });
     let mut result = snap.clone();
     if replace {
+        // Day notes too, the same as the JSON importer: Replace means the
+        // file's data and nothing else.
         result.exercises.clear();
         result.workouts.clear();
         result.workout_exercises.clear();
         result.sets.clear();
+        result.day_notes.clear();
     }
     let mut ids = crate::Ids::new(snap, ctx);
     let mut dates: HashMap<_, _> = result
@@ -75,10 +78,29 @@ pub fn import(
         .iter()
         .map(|w| ((w.workout_id, w.exercise_id), w.id))
         .collect();
-    let mut counts: HashMap<u64, i64> = HashMap::new();
+    // Per exercise row: the highest order of any set (planned ones share the
+    // order space), so a new set goes after every set already there; and the
+    // device's logged sets by value. Importing the same file again adds
+    // nothing: a file set the device already has on that date and exercise
+    // is skipped, and each saved set matches one file set at most.
+    let mut max_order: HashMap<u64, i64> = HashMap::new();
+    let mut local: HashMap<u64, HashMap<String, usize>> = HashMap::new();
     for set in &result.sets {
+        max_order
+            .entry(set.workout_exercise_id)
+            .and_modify(|m| *m = (*m).max(set.order))
+            .or_insert(set.order);
         if !set.is_planned {
-            *counts.entry(set.workout_exercise_id).or_default() += 1;
+            *local
+                .entry(set.workout_exercise_id)
+                .or_default()
+                .entry(set_values_key(
+                    set.weight,
+                    set.reps,
+                    set.distance_m,
+                    set.time_seconds,
+                ))
+                .or_default() += 1;
         }
     }
     let mut siblings: HashMap<u64, i64> = HashMap::new();
@@ -161,6 +183,7 @@ pub fn import(
             e.clone()
         } else {
             let category = get("Category").trim().to_lowercase();
+            let default_kind = lift_domain::commands::default_kind_for_category(&category);
             let row = ExerciseRow {
                 id: ids.exercise(),
                 name: name.clone(),
@@ -169,7 +192,9 @@ pub fn import(
                 } else {
                     category
                 },
-                kind: stated.unwrap_or("weight_reps").into(),
+                // A FitNotes CSV has no Kind column, so this is usually the
+                // default: cardio is distance_time, like a new exercise.
+                kind: stated.unwrap_or(default_kind).into(),
                 is_custom: true,
                 is_deleted: None,
             };
@@ -212,7 +237,17 @@ pub fn import(
             pairs.insert((workout, exercise.id), id);
             id
         };
-        let order = counts.entry(we).or_default();
+        if let Some(left) = local
+            .get_mut(&we)
+            .and_then(|m| m.get_mut(&set_values_key(weight, reps, distance, seconds)))
+        {
+            if *left > 0 {
+                *left -= 1;
+                continue;
+            }
+        }
+        let order = max_order.get(&we).copied().unwrap_or(-1) + 1;
+        max_order.insert(we, order);
         result.sets.push(SetRow {
             id: ids.next(),
             workout_exercise_id: we,
@@ -231,10 +266,9 @@ pub fn import(
             is_position_pr: false,
             was_position_pr: false,
             note: get("Notes").trim().into(),
-            order: *order,
+            order,
             created_at: ctx.now.clone(),
         });
-        *order += 1;
         imported += 1;
     }
     if replace && rows > 0 && imported == 0 {

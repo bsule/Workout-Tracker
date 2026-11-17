@@ -233,3 +233,77 @@ fn repair_renumbers_duplicate_ids_and_drops_repeated_names_and_dates() {
     lift_domain::model::validate(&s).unwrap();
     assert!(!lift_domain::model::repair(&mut s));
 }
+
+#[test]
+fn new_cardio_exercises_default_to_distance_time_and_take_no_pr_stars() {
+    let mut s = Snapshot::empty("d".into(), "n".into());
+    let cardio = run(
+        &mut s,
+        Command::CreateExercise {
+            name: "Rower".into(),
+            category: "cardio".into(),
+            kind: None,
+        },
+    );
+    assert_eq!(cardio["kind"], "distance_time");
+    let chest = run(
+        &mut s,
+        Command::CreateExercise {
+            name: "Fly".into(),
+            category: "chest".into(),
+            kind: None,
+        },
+    );
+    assert_eq!(chest["kind"], "weight_reps");
+    let named = run(
+        &mut s,
+        Command::CreateExercise {
+            name: "Sled".into(),
+            category: "cardio".into(),
+            kind: Some("weight_reps".into()),
+        },
+    );
+    assert_eq!(named["kind"], "weight_reps");
+    // The built-in cardio exercises follow the same rule.
+    for e in lift_domain::commands::seed_catalog() {
+        assert_eq!(
+            e.kind,
+            lift_domain::commands::default_kind_for_category(&e.category),
+            "{}",
+            e.name
+        );
+    }
+
+    let w = run(
+        &mut s,
+        Command::CreateWorkout {
+            date: "2026-01-01".into(),
+        },
+    )["row"]["id"]
+        .as_u64()
+        .unwrap();
+    let ex = cardio["id"].as_u64().unwrap();
+    let we = run(
+        &mut s,
+        Command::AddExercise {
+            workout_id: w,
+            exercise_id: ex,
+        },
+    )["id"]
+        .as_u64()
+        .unwrap();
+    // Cardio stores minutes in weight and a level in reps.
+    for (minutes, level) in [(20.0, 5), (30.0, 6)] {
+        run(
+            &mut s,
+            Command::AddSet {
+                we_id: we,
+                input: json!({"weight": minutes, "reps": level}),
+            },
+        );
+    }
+    assert_eq!(s.sets.len(), 2);
+    for set in &s.sets {
+        assert!(!set.is_pr && !set.was_pr && !set.is_position_pr && !set.was_position_pr);
+    }
+}

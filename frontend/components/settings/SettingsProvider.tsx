@@ -93,12 +93,16 @@ export function useShowLastTime(): boolean {
   return readSettings(useSettings().settings).showLastTime
 }
 
-/** Whether the rest timer outside the app / in background is enabled. */
+/** Whether the phone app's rest timer outside the app (Live Activity or
+ *  notification) is on. Read on web only to show and sync the setting: the
+ *  browser has no timer outside the page. */
 export function useRestTimerEnabled(): boolean {
   return readSettings(useSettings().settings).restTimerEnabled
 }
 
-/** Seconds after the last set when that timer goes away. */
+/** Seconds after the last set when the phone's timer outside the app goes
+ *  away. The in-app "since last set" line ignores it on both clients and hides
+ *  after TICKER_HIDE_AFTER_S. */
 export function useRestTimerCutoffS(): number {
   return readSettings(useSettings().settings).restTimerCutoffS
 }

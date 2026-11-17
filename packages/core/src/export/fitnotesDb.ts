@@ -213,15 +213,31 @@ function populate(db: SqlJsDatabase, snap: Snapshot): void {
   const nowTs = (Date.now() - APPLE_EPOCH_MS) / 1000
   const indexer = new IndexGen()
 
-  const workouts = [...snap.workouts].sort((a, b) =>
-    a.date < b.date ? -1 : a.date > b.date ? 1 : a.id - b.id
+  // FitNotes keeps the day's comment on its workout row (ZWORKOUT.ZNOTES).
+  // A day with only a note (a workout with no exercises, or a day note on a
+  // date with no workout) still gets a workout row for it, with no
+  // exercises, so the note is not lost. A day with neither is skipped.
+  const workoutDates = new Set(snap.workouts.map((w) => w.date))
+  const noteOnlyDays = (snap.day_notes ?? [])
+    .filter((n) => n.text.trim() && !workoutDates.has(n.date))
+    .map((n) => ({ id: null as number | null, date: n.date, notes: "", started_at: null, finished_at: null }))
+  const days = [
+    ...snap.workouts.map((w) => ({ ...w, id: w.id as number | null })),
+    ...noteOnlyDays,
+  ].sort((a, b) =>
+    a.date < b.date
+      ? -1
+      : a.date > b.date
+        ? 1
+        : (a.id ?? Number.MAX_SAFE_INTEGER) - (b.id ?? Number.MAX_SAFE_INTEGER)
   )
 
-  for (const w of workouts) {
-    const wes = (wesByWorkout.get(w.id) ?? [])
+  for (const w of days) {
+    const wes = (w.id == null ? [] : (wesByWorkout.get(w.id) ?? []))
       .slice()
       .sort((a, b) => a.order - b.order || a.id - b.id)
-    if (wes.length === 0) continue
+    const comment = combinedNoteFor(snap, w)
+    if (wes.length === 0 && !comment) continue
 
     const woPk = nextPk("Workout")
     const [woHi, woLo] = uuidHalves()
@@ -243,7 +259,7 @@ function populate(db: SqlJsDatabase, snap: Snapshot): void {
         appleTs(w.started_at),
         null,
         appleTs(w.finished_at),
-        combinedNoteFor(snap, w) || null,
+        comment || null,
         null,
       ]
     )

@@ -22,6 +22,7 @@ import {
   formatCutoff,
   parseCutoff,
 } from "@lift/core/restTimer"
+import { TICKER_HIDE_AFTER_S } from "@lift/core/format"
 
 export default function RestTimerSettingsPage() {
   const { update } = useSettings()
@@ -71,7 +72,7 @@ export default function RestTimerSettingsPage() {
       <SettingsGroup>
         <SwitchRow
           label="Rest timer outside the app"
-          subtitle="Keep timer active when leaving the screen or tab"
+          subtitle="Phone app only"
           value={restTimerEnabled}
           onChange={(v) => void setEnabled(v)}
         />
@@ -84,10 +85,14 @@ export default function RestTimerSettingsPage() {
         )}
       </SettingsGroup>
       <SettingsFooter>
-        After each set, the time since that set counts your rest.
+        In the phone app, the time since each set shows on the Lock Screen and in
+        the Dynamic Island, or in a notification on Android.
         {restTimerEnabled
-          ? ` It automatically goes away after ${formatCutoff(restTimerCutoffS)}, when you are likely done.`
-          : ""}
+          ? ` It goes away after ${formatCutoff(restTimerCutoffS)}, when you are likely done.`
+          : ""}{" "}
+        These settings sync to your phone. They do not change the browser: here the
+        time since your last set shows under the set list and hides after{" "}
+        {TICKER_HIDE_AFTER_S / 60} minutes.
       </SettingsFooter>
 
       <PopupModal open={editorOpen} title="Hide timer after" onClose={() => setEditorOpen(false)}>

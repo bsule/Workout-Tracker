@@ -11,7 +11,7 @@
 import { nextId, nextIdAtLeast } from "../store/ids"
 import { FIRST_CUSTOM_ID } from "../store/seed"
 import { recomputeAllPrs } from "../store/mutations"
-import { flushNow, runBatched } from "../store/persist"
+import { runBatched } from "../store/persist"
 import type {
   ExerciseRow,
   SetRow,
@@ -23,6 +23,8 @@ import { applyMutation, getState } from "../store/store"
 import type { Category, ExerciseKind } from "../types"
 import { exerciseNameLookup, normalizeExerciseName } from "./exerciseNames"
 import { todayString } from "../dates"
+import { defaultKindForCategory } from "../setLogger"
+import { importSession, saveImported, setValueKey } from "./saved"
 
 export type ImportMode = "merge" | "replace"
 
@@ -99,10 +101,13 @@ export async function importFitnotesCsv(
   opts: { mode: ImportMode } = { mode: "merge" }
 ): Promise<ImportResult> {
   const mode = opts.mode
+  // Taken before anything is applied: a failed save then tells apart
+  // "applied but not saved yet" from "the store went away".
+  const sameStore = importSession()
   const rows = parseCsv(text)
   if (rows.length === 0) {
     if (mode === "replace") {
-      // Even an empty CSV is a valid replace target — wipe and persist.
+      // Even an empty CSV is a valid replace target: wipe and persist.
       await runBatched(async () => {
         applyMutation((s: Snapshot) => ({
           ...s,
@@ -110,9 +115,10 @@ export async function importFitnotesCsv(
           workouts: [],
           workout_exercises: [],
           sets: [],
+          day_notes: [],
         }))
       })
-      await flushNow()
+      return saveImported({ imported: 0, exercisesCreated: [], errors: [] }, sameStore)
     }
     return { imported: 0, exercisesCreated: [], errors: [] }
   }
@@ -144,18 +150,29 @@ export async function importFitnotesCsv(
   const newWorkouts: WorkoutRow[] = []
   const newWes: WorkoutExerciseRow[] = []
   const newSets: SetRow[] = []
-  const weSetCounts = new Map<number, number>()
-
-  // Seed weSetCounts from existing snapshot so we order correctly when
-  // appending sets to a workout-exercise that already has sets. Skipped in
-  // replace mode since the surviving sets list will be empty.
+  // Per exercise row: the highest set order so far, so a new set goes after
+  // every set already there (planned ones too, which share the order space).
+  // Replace mode starts empty since the surviving sets list will be empty.
+  const maxOrder = new Map<number, number>()
+  // The device's logged sets per exercise row, counted by value. Importing
+  // the same file again must add nothing: a file set the device already has
+  // on that date and exercise is skipped, and each saved set matches one
+  // file set at most.
+  const localValues = new Map<number, Map<string, number>>()
   if (mode === "merge") {
     for (const s of snap.sets) {
+      const weId = s.workout_exercise_id
+      maxOrder.set(weId, Math.max(maxOrder.get(weId) ?? -1, s.order))
       if (s.is_planned) continue
-      weSetCounts.set(
-        s.workout_exercise_id,
-        (weSetCounts.get(s.workout_exercise_id) ?? 0) + 1
-      )
+      let m = localValues.get(weId)
+      if (!m) localValues.set(weId, (m = new Map()))
+      const k = setValueKey({
+        weight_kg: s.weight,
+        reps: s.reps,
+        distance_m: s.distance_m,
+        time_seconds: s.time_seconds,
+      })
+      m.set(k, (m.get(k) ?? 0) + 1)
     }
   }
 
@@ -187,7 +204,6 @@ export async function importFitnotesCsv(
       const statedKind: ExerciseKind | undefined = Object.prototype.hasOwnProperty.call(KIND_MAP, kindRaw)
         ? KIND_MAP[kindRaw]
         : undefined
-      const kind: ExerciseKind = statedKind ?? "weight_reps"
 
       let weightKg: number | null = parseNum(row["Weight (kg)"])
       if (weightKg == null || weightKg <= 0) {
@@ -246,7 +262,9 @@ export async function importFitnotesCsv(
           id: nextIdAtLeast(FIRST_CUSTOM_ID),
           name: exName,
           category,
-          kind,
+          // A FitNotes CSV has no Kind column, so this is usually the
+          // default: cardio is distance_time, like a new exercise.
+          kind: statedKind ?? defaultKindForCategory(category),
           is_custom: true,
         }
         exerciseByName.add(exRow)
@@ -297,8 +315,23 @@ export async function importFitnotesCsv(
         newWes.push(we)
       }
 
-      const setOrder = weSetCounts.get(we.id) ?? 0
-      weSetCounts.set(we.id, setOrder + 1)
+      const local = localValues.get(we.id)
+      if (local) {
+        const k = setValueKey({
+          weight_kg: weightKg,
+          reps,
+          distance_m: distanceM,
+          time_seconds: timeSeconds,
+        })
+        const left = local.get(k) ?? 0
+        if (left > 0) {
+          local.set(k, left - 1)
+          continue
+        }
+      }
+
+      const setOrder = (maxOrder.get(we.id) ?? -1) + 1
+      maxOrder.set(we.id, setOrder)
       newSets.push({
         id: nextId(),
         workout_exercise_id: we.id,
@@ -331,7 +364,8 @@ export async function importFitnotesCsv(
   }
 
   // Apply everything in one mutation, with the per-op crash log paused so
-  // appendPending isn't called 9000 times.
+  // appendPending isn't called 9000 times. Replace clears day notes too, the
+  // same as the JSON importer: Replace means the file's data and nothing else.
   await runBatched(async () => {
     applyMutation((s: Snapshot) => {
       const base: Snapshot =
@@ -342,6 +376,7 @@ export async function importFitnotesCsv(
               workouts: [],
               workout_exercises: [],
               sets: [],
+              day_notes: [],
             }
           : s
       return {
@@ -362,13 +397,12 @@ export async function importFitnotesCsv(
     // weight_reps exercises actually do work.
     if (imported > 0) recomputeAllPrs()
   })
-  await flushNow()
 
-  return {
+  return saveImported({
     imported,
     exercisesCreated: [...exercisesCreated].sort(),
     errors,
-  }
+  }, sameStore)
 }
 
 // ---- helpers ------------------------------------------------------------

@@ -302,7 +302,7 @@ export function RootNavigator() {
             <Stack.Screen
               name="NewExercise"
               component={NewExerciseScreen}
-              options={{ title: "New exercise", presentation: "modal" }}
+              options={{ headerShown: false }}
             />
             <Stack.Screen
               name="GeneralSettings"

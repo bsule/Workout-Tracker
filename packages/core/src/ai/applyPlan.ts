@@ -2,6 +2,7 @@ import { listExercisesQ, localApi } from "../store"
 import { DEFAULT_CATEGORIES } from "../types"
 import type { Category, ExerciseKind } from "../types"
 import { toKg, type WeightUnit } from "../units"
+import { defaultKindForCategory } from "../setLogger"
 import type { AiPlanExercise, AiPlanResponse } from "./types"
 
 export interface ApplyResult {
@@ -54,7 +55,7 @@ async function resolveExerciseId(ex: AiPlanExercise): Promise<number> {
   if (matches.length > 0) return matches[0].id
 
   const category = pickCategory(ex.category)
-  const kind = pickKind(ex.kind)
+  const kind = pickKind(ex.kind, category)
   const created = await localApi.createExercise({
     name: ex.name,
     category,
@@ -68,9 +69,9 @@ function pickCategory(c?: Category): Category {
   return "chest"
 }
 
-function pickKind(k?: ExerciseKind): ExerciseKind {
+function pickKind(k: ExerciseKind | undefined, category: Category): ExerciseKind {
   if (k === "weight_reps" || k === "distance_time" || k === "bodyweight_reps" || k === "time_only") {
     return k
   }
-  return "weight_reps"
+  return defaultKindForCategory(category)
 }

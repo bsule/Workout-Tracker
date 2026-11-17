@@ -43,7 +43,8 @@ export function ExercisesScreen({ navigation }: any) {
   }
 
   function openCreate() {
-    navigation.navigate("NewExercise", {})
+    // Like the pickers: the search seeds the new exercise's name.
+    navigation.navigate("NewExercise", { initialName: search })
   }
 
   function editExercise(ex: Exercise) {
@@ -75,7 +76,7 @@ export function ExercisesScreen({ navigation }: any) {
         <Pressable
           onPress={openCreate}
           hitSlop={12}
-          style={({ pressed }) => [styles.headerSideBtn, pressedStyle(pressed)]}
+          style={styles.headerSideBtn}
         >
           <Ionicons name="add" size={28} color={theme.colors.foreground} />
         </Pressable>

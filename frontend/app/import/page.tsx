@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
+  ImportNotSavedError,
   importFitnotesCsv,
   importSnapshotJson,
   previewFitnotesCsv,
@@ -62,6 +63,8 @@ function ImportExport({ username }: { username: string }) {
   const [pending, setPending] = useState<PendingImport | null>(null)
   const [mode, setMode] = useState<ImportMode>("merge")
   const [result, setResult] = useState<ImportResult | null>(null)
+  // The import applied, but saving it failed (the store keeps retrying).
+  const [unsaved, setUnsaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function runExport(kind: "json" | "csv" | "fitnotesdb") {
@@ -90,6 +93,7 @@ function ImportExport({ username }: { username: string }) {
     setBusy("pick")
     setError(null)
     setResult(null)
+    setUnsaved(false)
     try {
       const text = await file.text()
       if (looksLikeJson(text)) {
@@ -142,6 +146,7 @@ function ImportExport({ username }: { username: string }) {
     }
     setBusy("import")
     setError(null)
+    setUnsaved(false)
     try {
       if (mode === "replace") await saveRecoveryCopy()
       const res =
@@ -151,7 +156,14 @@ function ImportExport({ username }: { username: string }) {
       setResult(res)
       setPending(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Import failed.")
+      if (e instanceof ImportNotSavedError) {
+        // The data is in the app already. Importing again would add it twice.
+        setResult(e.result)
+        setUnsaved(true)
+        setPending(null)
+      } else {
+        setError(e instanceof Error ? e.message : "Import failed.")
+      }
     } finally {
       setBusy(null)
     }
@@ -297,6 +309,13 @@ function ImportExport({ username }: { username: string }) {
           <p className="text-[15px] font-semibold">
             {result.imported.toLocaleString()} sets imported
           </p>
+          {unsaved && (
+            <p className="text-sm text-destructive">
+              The import is done, but saving it to this browser failed. Lift
+              will keep trying. Keep this tab open until it saves, and do not
+              import the file again.
+            </p>
+          )}
           {result.exercisesCreated.length > 0 && (
             <p className="text-xs leading-relaxed text-muted-foreground">
               Created {result.exercisesCreated.length} new custom exercise
@@ -314,7 +333,13 @@ function ImportExport({ username }: { username: string }) {
                 .join(" · ")}
             </p>
           )}
-          <Button size="lg" onClick={() => setResult(null)}>
+          <Button
+            size="lg"
+            onClick={() => {
+              setResult(null)
+              setUnsaved(false)
+            }}
+          >
             Done
           </Button>
         </SettingsCard>

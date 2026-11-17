@@ -5,6 +5,8 @@ pub mod lenient;
 pub mod model;
 pub mod prs;
 
+// TEMPORARY: see cardio_fix.rs.
+pub mod cardio_fix;
 pub mod commands;
 pub mod diff;
 pub mod gyms;

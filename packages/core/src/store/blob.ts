@@ -22,6 +22,14 @@ function gunzip(input: Uint8Array): Promise<Uint8Array> {
   return Promise.resolve(gunzipSync(input))
 }
 
+/** The portable encoder: JSON and gzip on the calling thread. Browsers use it
+ * only when the snapshot worker cannot run (see createSnapshotEncoder). */
+export async function encodeSnapshot(stamped: Snapshot): Promise<Uint8Array> {
+  const json = JSON.stringify(stamped)
+  const bytes = new TextEncoder().encode(json)
+  return gzip(bytes)
+}
+
 export async function serialize(snap: Snapshot): Promise<Uint8Array> {
   const stamped: Snapshot = {
     ...snap,
@@ -29,9 +37,7 @@ export async function serialize(snap: Snapshot): Promise<Uint8Array> {
     exported_at: new Date().toISOString(),
   }
   if (snapshotEncoder) return snapshotEncoder(stamped)
-  const json = JSON.stringify(stamped)
-  const bytes = new TextEncoder().encode(json)
-  return gzip(bytes)
+  return encodeSnapshot(stamped)
 }
 
 export interface ParseResult {

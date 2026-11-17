@@ -8,12 +8,15 @@ import {
   topRepRecordsByPosition,
   type TopRepRecord,
 } from "@/lib/store"
-import { formatWeight } from "@/lib/units"
 import { agoLabel, recordDate } from "@lift/core/format"
 import {
   lastSessionBefore,
+  lastSessionChipParts,
   lastSessionSummary,
   lastTimeCardOpen,
+  recordRepsText,
+  topRecordsLabel,
+  setValueText,
 } from "@lift/core/setLogger"
 import { cn } from "@/lib/utils"
 import type { ExerciseHistoryDay } from "@/types"
@@ -26,6 +29,8 @@ interface Props {
   nextPosition: number
   /** Set positions only mean something for weight x reps exercises. */
   isWeightReps?: boolean
+  /** Cardio stores minutes in `weight` and a level in `reps`, unconverted. */
+  isCardio?: boolean
   unit: "kg" | "lb"
   /** Opens the Summary tab, which carries the full record table. */
   onShowMore?: () => void
@@ -50,6 +55,7 @@ export function LastTimePanel({
   currentDate,
   nextPosition,
   isWeightReps = true,
+  isCardio = false,
   unit,
   onShowMore,
 }: Props) {
@@ -82,7 +88,7 @@ export function LastTimePanel({
   if (!last && top.length === 0) return null
 
   const posRecords = (byPosition.get(nextPosition) ?? []).slice(0, POSITION_ROWS)
-  const collapsedLine = last ? lastSessionSummary(last.sets, unit) : ""
+  const collapsedLine = last ? lastSessionSummary(last.sets, unit, isCardio) : ""
 
   return (
     <div className="rounded-2xl border border-foreground/10 bg-card/60 shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset]">
@@ -94,7 +100,7 @@ export function LastTimePanel({
           className="group flex min-w-0 flex-1 items-center gap-2 text-left"
         >
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
-            {positionMode ? "Top weights" : "Last time"}
+            {positionMode ? topRecordsLabel(isCardio) : "Last time"}
           </span>
           <span className="ml-auto truncate text-xs">
             {positionMode ? (
@@ -129,22 +135,27 @@ export function LastTimePanel({
                 No record yet for set {nextPosition}.
               </p>
             ) : (
-              posRecords.map((r) => <TopWeightRow key={r.reps} r={r} unit={unit} />)
+              posRecords.map((r) => (
+                <TopWeightRow key={r.reps} r={r} unit={unit} isCardio={isCardio} />
+              ))
             )
           ) : (
             <>
               {last ? (
                 <div className="flex flex-wrap gap-1.5">
-                  {last.sets.map((s) => (
-                    <span
-                      key={s.id}
-                      className="inline-flex items-center rounded-full border border-foreground/10 bg-card px-2 py-1 text-xs font-bold tabular-nums text-foreground"
-                    >
-                      {formatWeight(s.weight, unit)}
-                      <span className="mx-1 font-normal text-muted-foreground">×</span>
-                      {s.reps}
-                    </span>
-                  ))}
+                  {last.sets.map((s) => {
+                    const chip = lastSessionChipParts(s, unit, isCardio)
+                    return (
+                      <span
+                        key={s.id}
+                        className="inline-flex items-center rounded-full border border-foreground/10 bg-card px-2 py-1 text-xs font-bold tabular-nums text-foreground"
+                      >
+                        {chip.amount}
+                        <span className="mx-1 font-normal text-muted-foreground">×</span>
+                        {chip.reps}
+                      </span>
+                    )
+                  })}
                 </div>
               ) : (
                 <p className="text-xs italic text-muted-foreground">
@@ -154,10 +165,10 @@ export function LastTimePanel({
               {top.length > 0 && (
                 <>
                   <div className="border-t border-foreground/5 pt-2 text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                    Top weights
+                    {topRecordsLabel(isCardio)}
                   </div>
                   {top.map((r) => (
-                    <TopWeightRow key={r.reps} r={r} unit={unit} />
+                    <TopWeightRow key={r.reps} r={r} unit={unit} isCardio={isCardio} />
                   ))}
                 </>
               )}
@@ -188,15 +199,26 @@ export function LastTimePanel({
 }
 
 /** One "top weight for N reps" line: weight, rep count, and the date. */
-function TopWeightRow({ r, unit }: { r: TopRepRecord; unit: "kg" | "lb" }) {
+function TopWeightRow({
+  r,
+  unit,
+  isCardio,
+}: {
+  r: TopRepRecord
+  unit: "kg" | "lb"
+  isCardio: boolean
+}) {
+  const value = setValueText({ weight: r.weightKg, reps: r.reps }, unit, isCardio)
   return (
     <div className="flex items-baseline gap-2 text-xs">
       <span className="text-sm font-extrabold tabular-nums text-foreground">
-        {formatWeight(r.weightKg, unit)}
-        <span className="ml-1 text-[10px] font-semibold text-muted-foreground">{unit}</span>
+        {value.amount}
+        {value.unit && (
+          <span className="ml-1 text-[10px] font-semibold text-muted-foreground">{value.unit}</span>
+        )}
       </span>
       <span className="font-semibold text-muted-foreground">
-        × {r.reps} {r.reps === 1 ? "rep" : "reps"}
+        {recordRepsText(r.reps, isCardio)}
       </span>
       <span className="ml-auto text-muted-foreground">{recordDate(r.date)}</span>
     </div>

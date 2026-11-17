@@ -38,6 +38,10 @@ let flushInFlight: Promise<void> | null = null
 // one that serialized before it began sees the generation move and skips.
 let replaceGeneration = 0
 let replaceInFlight = 0
+// Set by unload(), cleared by configure(). A detached tab must write nothing
+// more: after a failed final save the editor lock is released anyway, and a
+// retry from this tab would land on top of the next owner's data.
+let detached = false
 const flushListeners = new Set<() => void>()
 
 export function addFlushListener(fn: () => void): () => void {
@@ -74,6 +78,7 @@ export function configure(subPath: string) {
     flushTimer = null
   }
   const switching = storageKey !== null
+  detached = false
   storageSession++
   storage = storageFactory(subPath)
   storageKey = subPath
@@ -92,19 +97,36 @@ export async function unload(): Promise<void> {
     clearTimeout(flushTimer)
     flushTimer = null
   }
+  const s = storage
+  let failure: unknown = null
   if (getState().hydrated) {
-    await flushNow()
-    // The save we joined may have started before the latest edits.
-    if (getState().local_dirty_since != null) await flushNow()
+    try {
+      await flushNow()
+      // The save we joined may have started before the latest edits.
+      if (getState().local_dirty_since != null) await flushNow()
+    } catch (e) {
+      failure = e
+    }
   }
+  // Detach even when the save failed. The caller releases the editor lock
+  // next, so the retry the failed save scheduled must not run. Every edit is
+  // still in the crash log (appended per op), and the next owner replays it.
+  // Bulk import rows are the exception (runBatched skips the log): an import
+  // whose save already failed has reported it, and one still running here has
+  // its own save refused (see performFlush), so it reports failure too.
   if (flushTimer) {
     clearTimeout(flushTimer)
     flushTimer = null
   }
+  detached = true
   storage = null
   storageKey = null
   hydratePromise = null
   markUnhydrated()
+  // Let crash-log appends already queued in the adapter land before the lock
+  // is released. readPending() waits behind queued writes in every adapter.
+  if (s) await s.readPending().catch(() => {})
+  if (failure) throw failure
 }
 
 function ensureStorage(): BlobStorage {
@@ -183,14 +205,24 @@ export async function hydrate(): Promise<void> {
       recomputeAllPrs()
     }
 
+    // The data is loaded from here on, so a failed save must not fail the
+    // load: the edits are still in the crash log, and the failed flush has
+    // already scheduled its retry with backoff.
+    const consolidate = async () => {
+      try {
+        await flushNow()
+      } catch (e) {
+        console.error("Loaded the store, but could not save it yet; will retry", e)
+      }
+    }
     if (pending.length > 0 || migrated || fellBack || repaired) {
       // Persist replayed state and clear the log. After a fallback, write the
       // loaded copy back as current at once: until then the damaged file is
       // what the next launch would try first.
-      await flushNow()
+      await consolidate()
     } else {
       // Always make sure we have a snapshot on disk for next launch.
-      if (!foundBytes) await flushNow()
+      if (!foundBytes) await consolidate()
     }
 
   })()
@@ -199,6 +231,7 @@ export async function hydrate(): Promise<void> {
 
 export function recordPending(op: unknown) {
   if (!storageFactory) return // not configured (e.g. SSR)
+  if (detached) return // unloaded: this tab no longer owns any store
   if (pendingRecordingPaused > 0) {
     // Bulk operation in flight — caller is responsible for flushNow() at the
     // end. Skipping the per-op append avoids O(n²) reads for large imports.
@@ -254,9 +287,17 @@ export function flushNow(): Promise<void> {
 
 async function performFlush(): Promise<void> {
   if (replaceInFlight > 0) return
-  const s = ensureStorage()
+  if (detached) {
+    // Edits made after unload (a bulk import still running) are saved nowhere.
+    // Say so, so the import reports failure instead of success.
+    if (getState().local_dirty_since != null) {
+      throw new Error("The store was closed before these changes could be saved.")
+    }
+    return
+  }
   const { snapshot, hydrated } = getState()
   if (!hydrated) return
+  const s = ensureStorage()
   const generation = replaceGeneration
   try {
     // Keep draining while edits arrive during I/O. Awaiters (especially bulk
@@ -272,7 +313,8 @@ async function performFlush(): Promise<void> {
       `Failed to flush snapshot (attempt ${consecutiveFlushFailures}, retrying in ${delay}ms)`,
       e
     )
-    scheduleFlush(delay)
+    // No retry for a store that was switched away or unloaded meanwhile.
+    if (s === storage && !detached) scheduleFlush(delay)
     throw e
   }
 }
@@ -330,6 +372,7 @@ export function snapshotStats(snap: Snapshot): SnapshotStats {
  * listeners — this isn't a local change.
  */
 export async function replaceSnapshotFromBytes(bytes: Uint8Array): Promise<void> {
+  if (detached) throw new Error("The account changed during snapshot replacement.")
   const s = ensureStorage()
   const checkAccount = () => {
     if (s !== storage) throw new Error("The account changed during snapshot replacement.")

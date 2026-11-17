@@ -4,6 +4,7 @@ import { useState } from "react"
 import type { Exercise } from "@/types"
 import { Button } from "@/components/ui/button"
 import { localApi as api } from "@/lib/store"
+import { defaultKindForCategory } from "@lift/core/setLogger"
 import { CategoryChips } from "./CategoryChips"
 
 export const fieldLabelClass =
@@ -36,7 +37,13 @@ export function NewExerciseForm({
     setSubmitting(true)
     setError(null)
     try {
-      const ex = await api.createExercise({ name: name.trim(), category })
+      // Named here, not left to the store's default, so a cardio exercise is
+      // distance_time on every engine build and takes no PR stars.
+      const ex = await api.createExercise({
+        name: name.trim(),
+        category,
+        kind: defaultKindForCategory(category),
+      })
       onCreated(ex)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create exercise")

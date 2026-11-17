@@ -265,6 +265,23 @@ impl Ids {
         self.next
     }
 }
+/// `setValueKey` in `import/saved.ts`: what makes two sets the same set when
+/// a file is merged in (weight by `weight_key`, reps, distance and time).
+pub(crate) fn set_values_key(
+    w: Option<f64>,
+    r: Option<f64>,
+    d: Option<f64>,
+    t: Option<f64>,
+) -> String {
+    let n = |v: Option<f64>| v.map(|v| v.to_string()).unwrap_or_else(|| "-".into());
+    format!(
+        "{}|{}|{}|{}",
+        n(w.map(|v| lift_domain::units::weight_key(Some(v)))),
+        n(r),
+        n(d),
+        n(t)
+    )
+}
 /// JavaScript `Number(v)` for the values a JSON file can hold.
 pub(crate) fn js_number(v: &Value) -> f64 {
     match v {

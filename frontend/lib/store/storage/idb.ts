@@ -21,23 +21,44 @@ function open(): Promise<IDBDatabase> {
   })
 }
 
+/**
+ * Runs one request in its own transaction and resolves when the transaction
+ * commits, not when the request succeeds: a put can succeed and then abort at
+ * commit (over quota), and a caller that already saw success would clear the
+ * crash log for data that never reached disk.
+ */
 function tx<T>(
   mode: IDBTransactionMode,
-  fn: (store: IDBObjectStore) => IDBRequest<T> | Promise<T>
+  fn: (store: IDBObjectStore) => IDBRequest<T>
 ): Promise<T> {
   return open().then(
     (db) =>
       new Promise<T>((resolve, reject) => {
-        const t = db.transaction(STORE, mode)
-        const store = t.objectStore(STORE)
-        const result = fn(store)
-        if (result instanceof IDBRequest) {
-          result.onsuccess = () => resolve(result.result)
-          result.onerror = () => reject(result.error)
-        } else {
-          result.then(resolve, reject)
+        let t: IDBTransaction
+        let request: IDBRequest<T>
+        try {
+          t = db.transaction(STORE, mode)
+          request = fn(t.objectStore(STORE))
+        } catch (e) {
+          db.close()
+          reject(e)
+          return
         }
-        t.onerror = () => reject(t.error)
+        let failed = false
+        const fail = () => {
+          if (failed) return
+          failed = true
+          db.close()
+          let error: unknown = null
+          try { error = request.error ?? t.error } catch { error = t.error }
+          reject(error ?? new DOMException("The save did not complete.", "AbortError"))
+        }
+        t.oncomplete = () => {
+          db.close()
+          resolve(request.result)
+        }
+        t.onabort = fail
+        t.onerror = fail
       })
   )
 }

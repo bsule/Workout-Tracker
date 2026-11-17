@@ -213,8 +213,8 @@ describe("setPrBadge", () => {
 describe("labels", () => {
   it("titles the planned-set popup", () => {
     expect(plannedSetTitle({ weight: 100, reps: 5 }, "kg", false)).toBe("100 kg × 5")
-    expect(plannedSetTitle({ weight: 20, reps: 5 }, "kg", true)).toBe("20 min × Lvl 5")
-    expect(plannedSetTitle({ weight: 20, reps: null }, "kg", true)).toBe("20 min × Lvl -")
+    expect(plannedSetTitle({ weight: 20, reps: 5 }, "kg", true)).toBe("20:00 × Lvl 5")
+    expect(plannedSetTitle({ weight: 20, reps: null }, "kg", true)).toBe("20:00 × Lvl -")
   })
 
   it("titles the multi-delete confirm", () => {

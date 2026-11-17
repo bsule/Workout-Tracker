@@ -8,7 +8,7 @@ import type { ExerciseHistoryDay } from "@/types"
 import { cn } from "@/lib/utils"
 import { PrIcon } from "@/components/workouts/PrIcon"
 import { NotePreview } from "@/components/workouts/NotePreview"
-import { formatWeight } from "@/lib/units"
+import { setPositions, setValueText } from "@lift/core/setLogger"
 import { todayString } from "@lift/core/dates"
 import { niceDate } from "@lift/core/format"
 import { pastDays } from "@lift/core/exerciseStats"
@@ -22,6 +22,8 @@ interface Props {
   /** The date being logged. Days after it are not shown: a workout dated in
    *  the future can carry logged sets. Defaults to today. */
   currentDate?: string
+  /** Cardio stores minutes in `weight` and a level in `reps`, unconverted. */
+  isCardio?: boolean
 }
 
 /** Where a day card's calendar icon goes: the calendar with that date picked. */
@@ -29,7 +31,7 @@ export function calendarHref(date: string): string {
   return `/calendar?date=${date}`
 }
 
-export function ExerciseHistory({ history, currentDate }: Props) {
+export function ExerciseHistory({ history, currentDate, isCardio = false }: Props) {
   const past = useMemo(() => {
     const cutoff = currentDate ?? todayString()
     // Newest first. getExerciseHistoryQ already returns that order; sort
@@ -49,7 +51,12 @@ export function ExerciseHistory({ history, currentDate }: Props) {
     <div className="space-y-3">
       <SectionTitle>Past sessions</SectionTitle>
       {past.map((day) => (
-        <DayBlock key={day.date} day={day} calendarHref={calendarHref(day.date)} />
+        <DayBlock
+          key={day.date}
+          day={day}
+          isCardio={isCardio}
+          calendarHref={calendarHref(day.date)}
+        />
       ))}
     </div>
   )
@@ -105,6 +112,7 @@ export function DayBlock({
   calendarHref,
   onCalendarClick,
   scrollSets = false,
+  isCardio = false,
 }: {
   day: ExerciseHistoryDay
   /** Replaces the plain exercise note under the date with a labelled list.
@@ -118,6 +126,8 @@ export function DayBlock({
   onCalendarClick?: () => void
   /** Cap the set list's height and scroll it (the record popup). */
   scrollSets?: boolean
+  /** Cardio stores minutes in `weight` and a level in `reps`, unconverted. */
+  isCardio?: boolean
 }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-foreground/10 bg-background">
@@ -141,19 +151,29 @@ export function DayBlock({
         </div>
       )}
       <div className={cn(scrollSets && "max-h-[60vh] overflow-y-auto")}>
-        <SetRows sets={day.sets} />
+        <SetRows sets={day.sets} isCardio={isCardio} />
       </div>
     </div>
   )
 }
 
 /** Mobile's SetList with `showNotes`: PR badge, set number, weight, reps. */
-function SetRows({ sets }: { sets: ExerciseHistoryDay["sets"] }) {
+function SetRows({
+  sets,
+  isCardio,
+}: {
+  sets: ExerciseHistoryDay["sets"]
+  isCardio: boolean
+}) {
   const unit = useWeightUnit()
   const showPositionPrs = useShowPositionPrs()
+  // History rows carry their own position, counted per workout_exercise.
+  const positions = setPositions(sets)
   return (
     <ul className="divide-y divide-foreground/10">
-      {sets.map((s, i) => (
+      {sets.map((s, i) => {
+        const value = setValueText(s, unit, isCardio)
+        return (
         <li key={s.id} className="px-3 py-2 text-sm">
           <div className="flex items-center gap-3">
             <span className="w-9 shrink-0">
@@ -164,7 +184,7 @@ function SetRows({ sets }: { sets: ExerciseHistoryDay["sets"] }) {
                   isPr={s.is_position_pr}
                   wasPr={s.was_position_pr}
                   variant="position"
-                  position={i + 1}
+                  position={positions[i]}
                 />
               ) : null}
             </span>
@@ -172,13 +192,15 @@ function SetRows({ sets }: { sets: ExerciseHistoryDay["sets"] }) {
               {i + 1}
             </span>
             <span className="flex-1 text-center font-mono text-base font-bold tabular-nums">
-              {formatWeight(s.weight, unit)}
-              <span className="ml-1 text-xs font-normal text-muted-foreground">
-                {unit}
-              </span>
+              {value.amount}
+              {value.unit && (
+                <span className="ml-1 text-xs font-normal text-muted-foreground">
+                  {value.unit}
+                </span>
+              )}
             </span>
-            <span className="w-12 text-right font-mono text-base font-bold tabular-nums">
-              {s.reps ?? "-"}
+            <span className="w-12 whitespace-nowrap text-right font-mono text-base font-bold tabular-nums">
+              {value.reps}
             </span>
           </div>
           {s.note && (
@@ -188,7 +210,8 @@ function SetRows({ sets }: { sets: ExerciseHistoryDay["sets"] }) {
             </div>
           )}
         </li>
-      ))}
+        )
+      })}
     </ul>
   )
 }

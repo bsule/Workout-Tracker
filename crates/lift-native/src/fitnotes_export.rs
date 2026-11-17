@@ -3,7 +3,7 @@
 use lift_domain::{commands::seeds, model::Snapshot, prs::timestamp_checked, units::weight_key};
 use rusqlite::{params_from_iter, types::Value, Connection};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{Cursor, Read, Write},
 };
 fn err(e: impl std::fmt::Display) -> String {
@@ -142,20 +142,50 @@ fn populate(db: &Connection, s: &Snapshot, now: &str) -> Result<(), String> {
             by_we.entry(set.workout_exercise_id).or_default().push(set);
         }
     }
-    let mut workouts: Vec<_> = s.workouts.iter().collect();
-    workouts.sort_by_key(|w| (&w.date, w.id));
+    // FitNotes keeps the day's comment on its workout row (ZWORKOUT.ZNOTES).
+    // A day with only a note (a workout with no exercises, or a day note on
+    // a date with no workout) still gets a workout row, with no exercises, so
+    // the note is not lost. A day with neither is skipped.
+    struct Day<'a> {
+        date: &'a str,
+        id: Option<u64>,
+        notes: &'a str,
+        started_at: Option<&'a str>,
+        finished_at: Option<&'a str>,
+    }
+    let workout_dates: HashSet<&str> = s.workouts.iter().map(|w| w.date.as_str()).collect();
+    let mut days: Vec<Day> = s
+        .workouts
+        .iter()
+        .map(|w| Day {
+            date: &w.date,
+            id: Some(w.id),
+            notes: &w.notes,
+            started_at: w.started_at.as_deref(),
+            finished_at: w.finished_at.as_deref(),
+        })
+        .chain(
+            s.day_notes
+                .iter()
+                .filter(|n| !n.text.trim().is_empty() && !workout_dates.contains(n.date.as_str()))
+                .map(|n| Day {
+                    date: &n.date,
+                    id: None,
+                    notes: "",
+                    started_at: None,
+                    finished_at: None,
+                }),
+        )
+        .collect();
+    days.sort_by_key(|d| (d.date, d.id.unwrap_or(u64::MAX)));
     let mut we_index = -(1_i64 << 62);
     let step = 1_i64 << 30;
     let now = apple(now).ok_or("Invalid export time")?;
-    for w in workouts {
-        let mut wes = by_workout.get(&w.id).cloned().unwrap_or_default();
+    for w in days {
+        let mut wes =
+            w.id.and_then(|id| by_workout.get(&id).cloned())
+                .unwrap_or_default();
         wes.sort_by_key(|we| (we.order, we.id));
-        if wes.is_empty() {
-            continue;
-        }
-        let wo = next(&mut counters, "Workout");
-        let (hi, lo) = uuid();
-        let date = midnight(&w.date);
         let day = s
             .day_notes
             .iter()
@@ -170,7 +200,13 @@ fn populate(db: &Connection, s: &Snapshot, now: &str) -> Result<(), String> {
         } else {
             session.into()
         };
-        insert(db,"ZWORKOUT","Z_PK,Z_ENT,Z_OPT,ZHKUPDATECOUNTER,ZHKWORKOUTACTIVITYTYPERAW,ZUUID1,ZUUID2,ZIMPORTEDDATE,ZDATE,ZSTARTTIME,ZSTARTEDWATCHWORKOUTATTIMESTAMP,ZSTOPTIME,ZNOTES,ZHKUUID",vec![int(wo),int(23),int(1),int(0),int(-1),int(hi),int(lo),Value::Null,optional(date),optional(w.started_at.as_deref().and_then(apple)),Value::Null,optional(w.finished_at.as_deref().and_then(apple)),note(&combined),Value::Null])?;
+        if wes.is_empty() && combined.is_empty() {
+            continue;
+        }
+        let wo = next(&mut counters, "Workout");
+        let (hi, lo) = uuid();
+        let date = midnight(w.date);
+        insert(db,"ZWORKOUT","Z_PK,Z_ENT,Z_OPT,ZHKUPDATECOUNTER,ZHKWORKOUTACTIVITYTYPERAW,ZUUID1,ZUUID2,ZIMPORTEDDATE,ZDATE,ZSTARTTIME,ZSTARTEDWATCHWORKOUTATTIMESTAMP,ZSTOPTIME,ZNOTES,ZHKUUID",vec![int(wo),int(23),int(1),int(0),int(-1),int(hi),int(lo),Value::Null,optional(date),optional(w.started_at.and_then(apple)),Value::Null,optional(w.finished_at.and_then(apple)),note(&combined),Value::Null])?;
         for we in wes {
             let Some(ex) = exercises.get(&we.exercise_id) else {
                 continue;
@@ -266,6 +302,59 @@ mod tests {
         assert_eq!(nulls, 1);
         // Date.UTC rolls the day over.
         assert_eq!(midnight("2024-02-30"), midnight("2024-03-01"));
+    }
+    #[test]
+    fn note_only_days_keep_their_comment() {
+        let f: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/engine-parity/fitnotes-export.json"
+        ))
+        .unwrap();
+        let mut snapshot: Snapshot = serde_json::from_value(f["snapshot"].clone()).unwrap();
+        let mut empty = snapshot.workouts[0].clone();
+        empty.id = 900_000;
+        empty.date = "2020-01-03".into();
+        empty.notes = "rest day".into();
+        snapshot.workouts.push(empty.clone());
+        let mut blank = empty.clone();
+        blank.id = 900_001;
+        blank.date = "2020-01-04".into();
+        blank.notes = String::new();
+        snapshot.workouts.push(blank);
+        for (date, text) in [("2020-01-02", "sick"), ("2020-01-03", "knee")] {
+            snapshot.day_notes.push(lift_domain::model::DayNoteRow {
+                date: date.into(),
+                text: text.into(),
+            });
+        }
+        let skeleton = include_bytes!("../../../mobile/assets/fitnotes_skeleton.fitnotesdb");
+        let bytes = build(&snapshot, skeleton, f["now"].as_str().unwrap()).unwrap();
+        let (_file, db) = open_zip(&bytes);
+        let mut stmt = db
+            .prepare(
+                "SELECT w.ZDATE, w.ZNOTES, count(we.Z_PK) FROM ZWORKOUT w \
+                 LEFT JOIN ZWORKOUTEXERCISE we ON we.ZWORKOUT = w.Z_PK \
+                 WHERE w.ZDATE < ? GROUP BY w.Z_PK ORDER BY w.Z_PK",
+            )
+            .unwrap();
+        let rows: Vec<(f64, Option<String>, i64)> = stmt
+            .query_map([midnight("2020-01-10").unwrap()], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        // 2020-01-04 has an empty workout and no note: nothing to keep.
+        assert_eq!(
+            rows,
+            vec![
+                (midnight("2020-01-02").unwrap(), Some("sick".into()), 0),
+                (
+                    midnight("2020-01-03").unwrap(),
+                    Some("knee\nrest day".into()),
+                    0
+                ),
+            ]
+        );
     }
     #[test]
     fn matches_existing_export_and_preserves_core_data_blobs() {

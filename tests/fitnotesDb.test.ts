@@ -21,8 +21,16 @@ async function exportAndOpen(snap: ReturnType<typeof blankSnapshot>) {
     db.exec(
       "SELECT e.ZNAME FROM ZWORKOUTEXERCISE we JOIN ZEXERCISE e ON e.Z_PK = we.ZEXERCISE ORDER BY we.ZINDEX"
     )[0]?.values.flat() ?? []
-  return { count, names }
+  const workouts = () =>
+    db.exec("SELECT ZDATE, ZNOTES FROM ZWORKOUT ORDER BY Z_PK")[0]?.values ?? []
+  const exercisesPerWorkout = () =>
+    db.exec(
+      "SELECT w.ZNOTES, count(we.Z_PK) FROM ZWORKOUT w LEFT JOIN ZWORKOUTEXERCISE we ON we.ZWORKOUT = w.Z_PK GROUP BY w.Z_PK ORDER BY w.Z_PK"
+    )[0]?.values ?? []
+  return { count, names, workouts, exercisesPerWorkout }
 }
+
+const appleMidnight = (date: string) => (Date.parse(`${date}T00:00:00Z`) - Date.UTC(2001, 0, 1)) / 1000
 
 describe("buildFitnotesDb", () => {
   it("exports sets logged on a built-in exercise", async () => {
@@ -50,5 +58,35 @@ describe("buildFitnotesDb", () => {
     const out = await exportAndOpen(snap)
     expect(out.count("ZWORKOUTSET")).toBe(2)
     expect(out.names()).toEqual(["Back Squat", "Zercher Squat"])
+  })
+
+  it("keeps note-only days: a workout with no exercises, and a day note with no workout", async () => {
+    const bench = SEED_EXERCISES.find((e) => e.name === "Bench Press")!
+    const snap = blankSnapshot()
+    snap.workouts = [
+      workout(1, "2026-10-01"),
+      { ...workout(2, "2026-10-03"), notes: "rest day, stretched" },
+      workout(3, "2026-10-04"),
+    ]
+    snap.workout_exercises = [we(10, 1, bench.id)]
+    snap.sets = [set(100, 10, { weight: 80, reps: 8 })]
+    snap.day_notes = [
+      { date: "2026-10-02", text: "sick" },
+      { date: "2026-10-03", text: "knee sore" },
+    ]
+
+    const out = await exportAndOpen(snap)
+    // 2026-10-04 has an empty workout and no note: nothing to keep.
+    expect(out.workouts()).toEqual([
+      [appleMidnight("2026-10-01"), null],
+      [appleMidnight("2026-10-02"), "sick"],
+      [appleMidnight("2026-10-03"), "knee sore\nrest day, stretched"],
+    ])
+    expect(out.exercisesPerWorkout()).toEqual([
+      [null, 1],
+      ["sick", 0],
+      ["knee sore\nrest day, stretched", 0],
+    ])
+    expect(out.count("ZWORKOUTSET")).toBe(1)
   })
 })

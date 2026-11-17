@@ -8,6 +8,7 @@ import { CategoryPill } from "@/components/day/CategoryPill"
 import { SetList } from "@/components/day/SetList"
 import { HOLD_DELAY, useHoldPress } from "@/components/day/useHoldPress"
 import { loggerHref } from "@/lib/loggerHref"
+import { isCardioCategory } from "@lift/core/setLogger"
 import { cn } from "@/lib/utils"
 
 /**
@@ -122,7 +123,7 @@ export function ExerciseCard({
         </div>
       ) : (
         <div className="border-t border-foreground/20">
-          <SetList sets={we.sets} showNotes />
+          <SetList sets={we.sets} isCardio={isCardioCategory(we.exercise.category)} showNotes />
         </div>
       )}
     </div>

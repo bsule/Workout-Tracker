@@ -8,7 +8,7 @@
 import { nextId, nextIdAtLeast } from "../store/ids"
 import { FIRST_CUSTOM_ID } from "../store/seed"
 import { recomputeAllPrs } from "../store/mutations"
-import { flushNow, runBatched } from "../store/persist"
+import { runBatched } from "../store/persist"
 import type {
   DayNoteRow,
   ExerciseRow,
@@ -19,11 +19,14 @@ import type {
   WorkoutRow,
 } from "../store/schema"
 import { applyMutation, getState } from "../store/store"
-import type { Category, ExerciseKind } from "../types"
+import type { Category, ExerciseKind, WorkoutStatus } from "../types"
 import { DEFAULT_CATEGORIES } from "../types"
-import { weightKey } from "../units"
+import { defaultKindForCategory } from "../setLogger"
 import { exerciseNameLookup, normalizeExerciseName } from "./exerciseNames"
 import type { ImportMode, ImportResult } from "./fitnotesCsv"
+import { importSession, saveImported, setValueKey } from "./saved"
+
+const VALID_STATUSES: WorkoutStatus[] = ["planned", "active", "done"]
 
 const VALID_KINDS: ExerciseKind[] = [
   "weight_reps",
@@ -69,11 +72,17 @@ interface RawJsonWorkoutExercise {
   note?: string
   exercise: RawJsonExerciseRef
   sets?: RawJsonSet[]
+  /** Planned (not yet logged) sets. Kept apart from `sets` so an older
+   *  importer, which ignores this field, never logs them. Absent in older
+   *  exports. */
+  planned_sets?: RawJsonSet[]
 }
 
 interface RawJsonWorkout {
   id?: number
   date: string
+  /** Absent in older exports, which derive it from finished_at/started_at. */
+  status?: string
   started_at?: string | null
   finished_at?: string | null
   gym?: string | null
@@ -86,7 +95,14 @@ interface RawJsonPayload {
   exported_at?: string
   weight_unit?: string
   user?: { username?: string }
-  custom_exercises?: Array<{ name: string; category?: string; kind?: string }>
+  custom_exercises?: Array<{
+    name: string
+    category?: string
+    kind?: string
+    /** A custom exercise the user deleted. Absent in older exports, which
+     *  listed deleted rows as live ones. */
+    is_deleted?: boolean
+  }>
   saved_gyms?: string[]
   day_notes?: Array<{ date?: string; text?: string; notes?: string }>
   workouts?: RawJsonWorkout[]
@@ -173,9 +189,11 @@ function normalizeCategory(raw: string | undefined): Category {
   return c as Category
 }
 
-function normalizeKind(raw: string | undefined): ExerciseKind {
+/** The file's kind, or when it states none the same default a new exercise
+ *  gets: cardio is distance_time, so it takes no PR stars. */
+function normalizeKind(raw: string | undefined, category: string): ExerciseKind {
   const k = (raw || "").trim()
-  return (VALID_KINDS as string[]).includes(k) ? (k as ExerciseKind) : "weight_reps"
+  return (VALID_KINDS as string[]).includes(k) ? (k as ExerciseKind) : defaultKindForCategory(category)
 }
 
 /** The kind a file states, or undefined when it states none (or garbage). */
@@ -193,11 +211,21 @@ export async function importSnapshotJson(
   opts: { mode: ImportMode } = { mode: "merge" }
 ): Promise<ImportResult> {
   const mode = opts.mode
+  // Taken before anything is applied: a failed save then tells apart
+  // "applied but not saved yet" from "the store went away".
+  const sameStore = importSession()
   const data = tryParse(text)
   const errors: { row: number; message: string }[] = []
   const exercisesCreated = new Set<string>()
 
   if (!data || !Array.isArray(data.workouts)) {
+    const result = {
+      imported: 0,
+      exercisesCreated: [],
+      errors: data
+        ? errors
+        : [{ row: 0, message: "File is not a valid JSON snapshot." }],
+    }
     if (mode === "replace") {
       await runBatched(async () => {
         applyMutation((s: Snapshot) => ({
@@ -209,15 +237,9 @@ export async function importSnapshotJson(
           day_notes: [],
         }))
       })
-      await flushNow()
+      return saveImported(result, sameStore)
     }
-    return {
-      imported: 0,
-      exercisesCreated: [],
-      errors: data
-        ? errors
-        : [{ row: 0, message: "File is not a valid JSON snapshot." }],
-    }
+    return result
   }
 
   const snap = getState().snapshot
@@ -315,27 +337,90 @@ export async function importSnapshotJson(
     newGyms.push(row)
   }
 
-  // Custom exercises declared at the top level — make sure they exist before
+  // Custom exercises declared at the top level: make sure they exist before
   // we walk the workouts, so workouts referencing the same name reuse the
-  // resolved row instead of inferring `is_custom`.
-  for (const ce of data.custom_exercises ?? []) {
-    if (!ce || typeof ce.name !== "string") continue
+  // resolved row instead of inferring `is_custom`. Live ones go first, so a
+  // deleted row never stands in for a live one of the same name.
+  const declared = (data.custom_exercises ?? []).filter(
+    (ce) => !!ce && typeof ce.name === "string"
+  )
+  for (const ce of declared) {
+    if (ce.is_deleted === true) continue
     const name = normalizeExerciseName(ce.name)
     if (!name) continue
     if (exerciseByName.find(name, statedKind(ce.kind))) continue
-    const cat = normalizeCategory(ce.category)
-    const ex: ExerciseRow = {
-      id: nextIdAtLeast(FIRST_CUSTOM_ID),
-      name,
-      category: (DEFAULT_CATEGORIES as string[]).includes(cat)
-        ? (cat as Category)
-        : cat,
-      kind: normalizeKind(ce.kind),
-      is_custom: true,
-    }
+    const ex = newExerciseRow(ce, name, true)
     exerciseByName.add(ex)
     newExercises.push(ex)
     exercisesCreated.add(name)
+  }
+  // A custom exercise the user deleted stays deleted: it is restored as a
+  // deleted row (so sets the file logged on it stay hidden, as they were)
+  // instead of coming back as a live one. A live exercise with that name, on
+  // the device or in the file, is left alone and nothing is added.
+  const deviceDeleted = new Map<string, ExerciseRow>()
+  if (mode === "merge") {
+    for (const e of snap.exercises) {
+      if (e.is_deleted && e.is_custom) {
+        const k = normalizeExerciseName(e.name).toLowerCase()
+        if (!deviceDeleted.has(k)) deviceDeleted.set(k, e)
+      }
+    }
+  }
+  for (const ce of declared) {
+    if (ce.is_deleted !== true) continue
+    const name = normalizeExerciseName(ce.name)
+    if (!name) continue
+    if (exerciseByName.find(name, statedKind(ce.kind))) continue
+    const existing = deviceDeleted.get(name.toLowerCase())
+    if (existing) {
+      exerciseByName.add(existing)
+      continue
+    }
+    const ex = { ...newExerciseRow(ce, name, true), is_deleted: true }
+    exerciseByName.add(ex)
+    newExercises.push(ex)
+  }
+
+  // Planned sets share the order space with logged ones. Per exercise row:
+  // the device's orders and the highest order of any set (planned or
+  // logged, device or file), and the device's planned sets by value.
+  const allOrders = new Map<number, { device: Set<number>; added: Set<number>; max: number }>()
+  function ordersOf(weId: number) {
+    let o = allOrders.get(weId)
+    if (!o) {
+      o = { device: new Set(), added: new Set(), max: -1 }
+      if (mode === "merge") {
+        for (const s of snap.sets) {
+          if (s.workout_exercise_id !== weId) continue
+          o.device.add(s.order)
+          o.max = Math.max(o.max, s.order)
+        }
+      }
+      allOrders.set(weId, o)
+    }
+    return o
+  }
+  const plannedValues = new Map<number, Map<string, number>>()
+  function localPlannedValues(weId: number): Map<string, number> {
+    let m = plannedValues.get(weId)
+    if (!m) {
+      m = new Map()
+      if (mode === "merge") {
+        for (const s of snap.sets) {
+          if (s.workout_exercise_id !== weId || !s.is_planned) continue
+          const k = setValueKey({
+            weight_kg: s.weight,
+            reps: s.reps,
+            distance_m: s.distance_m,
+            time_seconds: s.time_seconds,
+          })
+          m.set(k, (m.get(k) ?? 0) + 1)
+        }
+      }
+      plannedValues.set(weId, m)
+    }
+    return m
   }
 
   // Per exercise row: the highest set order so far, whether a file entry
@@ -410,12 +495,16 @@ export async function importSnapshotJson(
       }
     }
     if (!workout) {
-      const status =
-        w.finished_at
-          ? "done"
-          : w.started_at
-            ? "active"
-            : "done"
+      // The file's status when it states one (a planned workout must stay
+      // planned); older exports have none, so derive it as before.
+      const status: WorkoutStatus =
+        typeof w.status === "string" && (VALID_STATUSES as string[]).includes(w.status)
+          ? (w.status as WorkoutStatus)
+          : w.finished_at
+            ? "done"
+            : w.started_at
+              ? "active"
+              : "done"
       workout = {
         id: nextId(),
         date: w.date,
@@ -445,16 +534,10 @@ export async function importSnapshotJson(
 
       let exRow = exerciseByName.find(exName, statedKind(we.exercise.kind))
       if (!exRow) {
-        const cat = normalizeCategory(we.exercise.category)
-        exRow = {
-          id: nextId(),
-          name: exName,
-          category: (DEFAULT_CATEGORIES as string[]).includes(cat)
-            ? (cat as Category)
-            : cat,
-          kind: normalizeKind(we.exercise.kind),
-          is_custom: we.exercise.is_custom !== false,
-        }
+        // Floored above the built-in catalog like every other exercise this
+        // import makes: in a fresh account the counter starts at 1, and a row
+        // with a built-in's id reads as an edit of that built-in.
+        exRow = newExerciseRow(we.exercise, exName, we.exercise.is_custom !== false)
         exerciseByName.add(exRow)
         newExercises.push(exRow)
         exercisesCreated.add(exName)
@@ -511,6 +594,9 @@ export async function importSnapshotJson(
           existingSetKeys.add(`${weRow.id}:${order}`)
         }
         maxOrder.set(weRow.id, Math.max(maxOrder.get(weRow.id) ?? -1, order))
+        const orders = ordersOf(weRow.id)
+        orders.added.add(order)
+        orders.max = Math.max(orders.max, order)
 
         weSetCounts.set(weRow.id, (weSetCounts.get(weRow.id) ?? 0) + 1)
         newSets.push({
@@ -535,6 +621,56 @@ export async function importSnapshotJson(
               : nowIso(),
         })
         imported++
+      }
+
+      // Planned sets, after the logged ones. The same session restores them
+      // by position: a position the device already fills (the set may have
+      // been logged since the export) is skipped. Anything joining the row
+      // from another session, or a set with no position, skips a planned set
+      // the device already has with the same values, and the rest go after
+      // every set there.
+      const planned = Array.isArray(we.planned_sets) ? we.planned_sets : []
+      for (const s of planned) {
+        if (!s) continue
+        const orders = ordersOf(weRow.id)
+        let order: number
+        if ((sameSession || !appendAfter) && typeof s.order === "number") {
+          order = s.order
+          if (orders.device.has(order)) continue
+          if (orders.added.has(order)) order = orders.max + 1
+        } else {
+          const values = localPlannedValues(weRow.id)
+          const key = setValueKey(s)
+          const left = values.get(key) ?? 0
+          if (left > 0) {
+            values.set(key, left - 1)
+            continue
+          }
+          order = orders.max + 1
+        }
+        orders.added.add(order)
+        orders.max = Math.max(orders.max, order)
+        newSets.push({
+          id: nextId(),
+          workout_exercise_id: weRow.id,
+          weight: typeof s.weight_kg === "number" ? s.weight_kg : null,
+          reps: typeof s.reps === "number" ? s.reps : null,
+          distance_m: typeof s.distance_m === "number" ? s.distance_m : null,
+          distance_unit_display: (s.distance_unit_display ?? "").toString(),
+          time_seconds:
+            typeof s.time_seconds === "number" ? s.time_seconds : null,
+          is_planned: true,
+          is_pr: false,
+          was_pr: false,
+          is_position_pr: false,
+          was_position_pr: false,
+          note: (s.note ?? "").toString(),
+          order,
+          created_at:
+            typeof s.created_at === "string" && s.created_at
+              ? s.created_at
+              : nowIso(),
+        })
       }
     }
   }
@@ -576,25 +712,29 @@ export async function importSnapshotJson(
     })
     if (imported > 0 || newExercises.length > 0) recomputeAllPrs()
   })
-  await flushNow()
 
-  return {
+  return saveImported({
     imported,
     exercisesCreated: [...exercisesCreated].sort(),
     errors,
-  }
+  }, sameStore)
 }
 
-/** What makes two sets the same set when a file is merged in: weight (by
- *  weightKey, so float noise from another device matches), reps, distance and
- *  time. */
-function setValueKey(s: {
-  weight_kg?: number | null
-  reps?: number | null
-  distance_m?: number | null
-  time_seconds?: number | null
-}): string {
-  const w = typeof s.weight_kg === "number" ? String(weightKey(s.weight_kg)) : "-"
-  const n = (v: number | null | undefined) => (typeof v === "number" ? String(v) : "-")
-  return `${w}|${n(s.reps)}|${n(s.distance_m)}|${n(s.time_seconds)}`
+/** A new exercise row from a file entry, its id floored above the built-in
+ *  catalog. */
+function newExerciseRow(
+  raw: { category?: string; kind?: string },
+  name: string,
+  isCustom: boolean
+): ExerciseRow {
+  const cat = normalizeCategory(raw.category)
+  return {
+    id: nextIdAtLeast(FIRST_CUSTOM_ID),
+    name,
+    category: (DEFAULT_CATEGORIES as string[]).includes(cat)
+      ? (cat as Category)
+      : cat,
+    kind: normalizeKind(raw.kind, cat),
+    is_custom: isCustom,
+  }
 }

@@ -106,6 +106,8 @@ export async function forcePush(): Promise<void> {
     throw new Error("sync transport not configured (not signed in?)")
   }
   const session = operation()
+  // Adopting the cloud etag before the push is the point here: the user chose
+  // to overwrite the cloud copy, and the push needs its etag to be accepted.
   await _internalPullBytes()
   session.check()
   await pushNow(getState().snapshot)
@@ -120,11 +122,22 @@ export async function forcePush(): Promise<void> {
 export async function pullAndReplace(): Promise<boolean> {
   if (!isSyncConfigured()) return false
   const session = operation()
-  const result = await _internalPullBytes()
+  const t = session.transport
+  // Download without adopting the cloud etag. If the replace below fails (a
+  // newer app's copy, a full disk), the device must keep its old etag, or the
+  // next Sync now would push stale local data over the newer cloud copy.
+  const result = t instanceof CloudflareTransport
+    ? await t.previewSnapshot()
+    : await _internalPullBytes()
   session.check()
-  if (!result) return false
+  if (!result) {
+    // The cloud is empty: nothing is replaced, and the next push is a first one.
+    if (t instanceof CloudflareTransport) t.setEtag(null)
+    return false
+  }
   await replaceSnapshotFromBytes(result.bytes)
   session.check()
+  if (t instanceof CloudflareTransport) t.setEtag(result.etag)
   markSynced()
   return true
 }

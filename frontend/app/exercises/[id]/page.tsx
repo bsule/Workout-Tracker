@@ -26,6 +26,7 @@ import { pendingLoggerHref } from "@/lib/loggerHref"
 import { cn } from "@/lib/utils"
 import { todayString } from "@lift/core/dates"
 import { formatRelative } from "@lift/core/format"
+import { isCardioCategory } from "@lift/core/setLogger"
 import type { Category, Exercise, ExerciseHistoryDay } from "@/types"
 
 type Tab = "chart" | "summary" | "history" | "settings"
@@ -128,21 +129,21 @@ export default function ExerciseDetailPage({
             (history === null ? (
               <LoadingBlock />
             ) : (
-              <ExerciseChart history={history} />
+              <ExerciseChart history={history} isCardio={isCardioCategory(exercise.category)} />
             ))}
 
           {tab === "summary" &&
             (history === null ? (
               <LoadingBlock />
             ) : (
-              <ExerciseSummary history={allHistory} />
+              <ExerciseSummary history={allHistory} isCardio={isCardioCategory(exercise.category)} />
             ))}
 
           {tab === "history" &&
             (history === null ? (
               <LoadingBlock />
             ) : (
-              <ExerciseHistory history={allHistory} currentDate={today} />
+              <ExerciseHistory history={allHistory} currentDate={today} isCardio={isCardioCategory(exercise.category)} />
             ))}
 
           {tab === "settings" && (

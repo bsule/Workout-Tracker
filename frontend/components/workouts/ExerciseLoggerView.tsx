@@ -172,6 +172,7 @@ export function ExerciseLoggerView({
                 currentDate={workoutDate}
                 nextPosition={nextPosition}
                 isWeightReps={exercise.kind === "weight_reps"}
+                isCardio={isCardio}
                 unit={unit}
                 onShowMore={() => setTab("summary")}
               />
@@ -180,11 +181,11 @@ export function ExerciseLoggerView({
         />
       </div>
 
-      {tab === "chart" && <ExerciseChart history={history} />}
+      {tab === "chart" && <ExerciseChart history={history} isCardio={isCardio} />}
 
-      {tab === "summary" && <ExerciseSummary history={history} excludeDate={workoutDate} />}
+      {tab === "summary" && <ExerciseSummary history={history} excludeDate={workoutDate} isCardio={isCardio} />}
 
-      {tab === "history" && <ExerciseHistory history={history} currentDate={workoutDate} />}
+      {tab === "history" && <ExerciseHistory history={history} currentDate={workoutDate} isCardio={isCardio} />}
 
       {tab === "settings" && (
         <ExerciseSettingsPanel exercise={exercise} onDeleted={onExerciseDeleted} />

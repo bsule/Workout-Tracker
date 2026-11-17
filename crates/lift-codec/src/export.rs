@@ -12,11 +12,17 @@ pub fn user_json(s: &Snapshot, username: &str, now: &str) -> Value {
     for we in &s.workout_exercises {
         wes.entry(we.workout_id).or_default().push(we);
     }
+    // Planned sets go in `planned_sets`, never `sets`: an older importer
+    // ignores the new field, so it cannot log them by mistake.
     let mut sets: HashMap<_, Vec<_>> = HashMap::new();
+    let mut planned: HashMap<_, Vec<_>> = HashMap::new();
     for set in &s.sets {
-        if !set.is_planned {
-            sets.entry(set.workout_exercise_id).or_default().push(set);
-        }
+        let by_we = if set.is_planned {
+            &mut planned
+        } else {
+            &mut sets
+        };
+        by_we.entry(set.workout_exercise_id).or_default().push(set);
     }
     let custom_ids: std::collections::HashSet<u64> = s.exercises.iter().map(|e| e.id).collect();
     let mut workouts: Vec<_> = s.workouts.iter().collect();
@@ -27,15 +33,27 @@ pub fn user_json(s: &Snapshot, username: &str, now: &str) -> Value {
             let ex=exercises.get(&we.exercise_id);let fallback=format!("#{}",we.exercise_id);
             let mut rows=sets.get(&we.id).cloned().unwrap_or_default();rows.sort_by_key(|s|(s.order,s.id));
             let rows:Vec<_>=rows.into_iter().map(|s|json!({"weight_kg":s.weight,"reps":s.reps,"distance_m":s.distance_m,"distance_unit_display":s.distance_unit_display,"time_seconds":s.time_seconds,"is_pr":s.is_pr,"was_pr":s.was_pr,"note":s.note,"order":s.order,"created_at":s.created_at})).collect();
-            json!({"order":we.order,"note":we.note,"exercise":{"name":ex.map(|e|e.name.as_str()).unwrap_or(&fallback),"category":ex.map(|e|e.category.as_str()).unwrap_or(""),"kind":ex.map(|e|e.kind.as_str()).unwrap_or("weight_reps"),"is_custom":custom_ids.contains(&we.exercise_id)},"sets":rows})
+            let mut entry=json!({"order":we.order,"note":we.note,"exercise":{"name":ex.map(|e|e.name.as_str()).unwrap_or(&fallback),"category":ex.map(|e|e.category.as_str()).unwrap_or(""),"kind":ex.map(|e|e.kind.as_str()).unwrap_or("weight_reps"),"is_custom":custom_ids.contains(&we.exercise_id)},"sets":rows});
+            let mut plans=planned.get(&we.id).cloned().unwrap_or_default();plans.sort_by_key(|s|(s.order,s.id));
+            if !plans.is_empty(){
+                entry["planned_sets"]=plans.into_iter().map(|s|json!({"weight_kg":s.weight,"reps":s.reps,"distance_m":s.distance_m,"distance_unit_display":s.distance_unit_display,"time_seconds":s.time_seconds,"note":s.note,"order":s.order,"created_at":s.created_at})).collect();
+            }
+            entry
         }).collect();
-        json!({"id":w.id,"date":w.date,"started_at":w.started_at,"finished_at":w.finished_at,"gym":w.gym,"notes":w.notes,"exercises":rows})
+        json!({"id":w.id,"date":w.date,"status":w.status,"started_at":w.started_at,"finished_at":w.finished_at,"gym":w.gym,"notes":w.notes,"exercises":rows})
     }).collect();
     let mut custom: Vec<_> = s.exercises.iter().filter(|e| e.is_custom).collect();
     custom.sort_by_key(|e| &e.name);
     let custom: Vec<_> = custom
         .into_iter()
-        .map(|e| json!({"name":e.name,"category":e.category,"kind":e.kind}))
+        .map(|e| {
+            let mut row = json!({"name":e.name,"category":e.category,"kind":e.kind});
+            // Kept deleted on import; an older importer ignores the flag.
+            if e.is_deleted == Some(true) {
+                row["is_deleted"] = json!(true);
+            }
+            row
+        })
         .collect();
     let mut gyms: Vec<_> = s.gyms.iter().map(|g| &g.name).collect();
     gyms.sort();

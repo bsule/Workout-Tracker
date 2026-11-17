@@ -175,3 +175,129 @@ fn a_blob_without_its_tables_is_rejected_rather_than_read_as_empty() {
     let s: Snapshot = serde_json::from_value(v).unwrap();
     assert!(s.day_notes.is_empty());
 }
+
+#[test]
+fn csv_merge_reimport_adds_nothing_and_new_sets_go_after_existing_ones() {
+    let csv = "Date,Exercise,Category,Weight (kg),Weight (lbs),Reps,Kind\n\
+        2026-01-01,Zercher Squat,Legs,100,,5,wr\n\
+        2026-01-01,Zercher Squat,Legs,100,,5,wr\n\
+        2026-01-01,Spoto Press,Chest,,135,8,wr\n";
+    let mut s = Snapshot::empty("d".into(), "n".into());
+    let first = lift_codec::fitnotes::import(&mut s, csv, false, &mut ctx(100)).unwrap();
+    assert_eq!(first["imported"], 3);
+    let before = s.clone();
+    let second = lift_codec::fitnotes::import(&mut s, csv, false, &mut ctx(1000)).unwrap();
+    assert_eq!(second["imported"], 0);
+    assert_eq!(s.sets.len(), before.sets.len());
+    // One more 100 x 5 than the device has: only the extra one is added,
+    // after the sets already there.
+    let more = format!("{csv}2026-01-01,Zercher Squat,Legs,100,,5,wr\n");
+    let third = lift_codec::fitnotes::import(&mut s, &more, false, &mut ctx(2000)).unwrap();
+    assert_eq!(third["imported"], 1);
+    let squat_we = s
+        .sets
+        .iter()
+        .find(|x| x.id >= 2000)
+        .unwrap()
+        .workout_exercise_id;
+    let mut orders: Vec<_> = s
+        .sets
+        .iter()
+        .filter(|x| x.workout_exercise_id == squat_we)
+        .map(|x| x.order)
+        .collect();
+    orders.sort();
+    assert_eq!(orders, vec![0, 1, 2]);
+}
+
+#[test]
+fn csv_replace_clears_day_notes() {
+    let mut s = Snapshot::empty("d".into(), "n".into());
+    s.day_notes.push(lift_domain::model::DayNoteRow {
+        date: "2025-12-01".into(),
+        text: "old".into(),
+    });
+    let csv = "Date,Exercise,Category,Weight (kg),Reps\n2026-01-01,Bench Press,Chest,100,5\n";
+    lift_codec::fitnotes::import(&mut s, csv, false, &mut ctx(100)).unwrap();
+    assert_eq!(s.day_notes.len(), 1, "merge keeps them");
+    lift_codec::fitnotes::import(&mut s, csv, true, &mut ctx(200)).unwrap();
+    assert!(s.day_notes.is_empty());
+}
+
+#[test]
+fn json_backup_round_trips_planned_work_and_deleted_exercises() {
+    let mut s = Snapshot::empty("d".into(), "n".into());
+    let file = json!({"version":2,"custom_exercises":[{"name":"Gone","category":"back","kind":"weight_reps","is_deleted":true}],"workouts":[
+        {"date":"2026-01-01","status":"planned","exercises":[
+            {"exercise":{"name":"Bench Press","kind":"weight_reps"},"sets":[],"planned_sets":[{"weight_kg":80,"reps":5,"order":0}]},
+            {"exercise":{"name":"Gone","kind":"weight_reps"},"sets":[{"weight_kg":20,"reps":10,"order":0}]}
+        ]}
+    ]});
+    let result =
+        lift_codec::user_import::import(&mut s, &file.to_string(), true, &mut ctx(100)).unwrap();
+    assert_eq!(result["imported"], 1);
+    assert_eq!(result["exercisesCreated"], json!([]));
+    assert_eq!(s.workouts[0].status, "planned");
+    let gone = s.exercises.iter().find(|e| e.name == "Gone").unwrap();
+    assert_eq!(gone.is_deleted, Some(true));
+    let planned: Vec<_> = s.sets.iter().filter(|x| x.is_planned).collect();
+    assert_eq!(planned.len(), 1);
+    assert!(!planned[0].is_pr);
+
+    let out = lift_codec::export::user_json(&s, "u", "2026-01-02T00:00:00.000Z");
+    assert_eq!(out["version"], 2);
+    let w = &out["workouts"][0];
+    assert_eq!(w["status"], "planned");
+    let bench = w["exercises"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["exercise"]["name"] == "Bench Press")
+        .unwrap();
+    // Never in `sets`, which an older importer would log.
+    assert_eq!(bench["sets"], json!([]));
+    assert_eq!(bench["planned_sets"][0]["weight_kg"].as_f64(), Some(80.0));
+    assert_eq!(out["custom_exercises"][0]["is_deleted"], true);
+
+    // Importing the export again adds nothing.
+    let before = s.clone();
+    lift_codec::user_import::import(&mut s, &out.to_string(), false, &mut ctx(1000)).unwrap();
+    assert_eq!(s, before);
+
+    // A live exercise with the deleted one's name stays live.
+    let mut live = Snapshot::empty("d".into(), "n".into());
+    lift_codec::user_import::import(
+        &mut live,
+        &json!({"version":2,"custom_exercises":[{"name":"Gone"}],"workouts":[]}).to_string(),
+        false,
+        &mut ctx(100),
+    )
+    .unwrap();
+    lift_codec::user_import::import(&mut live, &out.to_string(), false, &mut ctx(1000)).unwrap();
+    let gones: Vec<_> = live.exercises.iter().filter(|e| e.name == "Gone").collect();
+    assert_eq!(gones.len(), 1);
+    assert_ne!(gones[0].is_deleted, Some(true));
+}
+
+#[test]
+fn imported_exercises_with_no_stated_kind_take_the_category_default() {
+    let mut s = Snapshot::empty("d".into(), "n".into());
+    let csv = "Date,Exercise,Category,Weight (kg),Reps\n2026-01-01,Hill Climber Intervals,Cardio,20,5\n2026-01-01,Zercher Squat,Legs,100,5\n";
+    lift_codec::fitnotes::import(&mut s, csv, false, &mut ctx(1)).unwrap();
+    let kind = |s: &Snapshot, n: &str| {
+        s.exercises
+            .iter()
+            .find(|e| e.name == n)
+            .unwrap()
+            .kind
+            .clone()
+    };
+    assert_eq!(kind(&s, "Hill Climber Intervals"), "distance_time");
+    assert_eq!(kind(&s, "Zercher Squat"), "weight_reps");
+
+    let mut s = Snapshot::empty("d".into(), "n".into());
+    let file = json!({"version":2,"workouts":[],"custom_exercises":[{"name":"Rower","category":"cardio"},{"name":"Sled Push","category":"legs"}]});
+    lift_codec::user_import::import(&mut s, &file.to_string(), false, &mut ctx(1)).unwrap();
+    assert_eq!(kind(&s, "Rower"), "distance_time");
+    assert_eq!(kind(&s, "Sled Push"), "weight_reps");
+}

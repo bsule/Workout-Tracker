@@ -5,9 +5,12 @@ const PENDING_NAME = "pending.log"
 
 export function isOpfsAvailable(): boolean {
   if (typeof navigator === "undefined") return false
+  // Every write goes through createWritable(). A browser with OPFS but without
+  // it would read fine and save nothing, so it gets IndexedDB instead.
   return Boolean(
     typeof navigator.storage?.getDirectory === "function" &&
-      typeof FileSystemFileHandle !== "undefined"
+      typeof FileSystemFileHandle !== "undefined" &&
+      typeof FileSystemFileHandle.prototype?.createWritable === "function"
   )
 }
 

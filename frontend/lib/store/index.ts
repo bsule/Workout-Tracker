@@ -73,7 +73,7 @@ export const localApi: typeof coreStore.localApi = {
 
   patchExercise(id, patch) {
     const api = getActiveEngineApi()
-    return api ? (api.patchExercise(id, patch) as any) : coreStore.localApi.patchExercise(id, patch)
+    return api ? (api.patchExercise(id, patch) as ReturnType<typeof coreStore.localApi.patchExercise>) : coreStore.localApi.patchExercise(id, patch)
   },
 
   deleteExercise(id) {

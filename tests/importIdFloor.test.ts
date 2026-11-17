@@ -18,6 +18,31 @@ function customIds() {
   return currentSnapshot().exercises.filter((e) => e.is_custom).map((e) => e.id)
 }
 
+// First in the file on purpose: no earlier case has floored the counter yet.
+it("floors an exercise a JSON workout introduces above the seed catalog", async () => {
+  const text = JSON.stringify({
+    version: 2,
+    custom_exercises: [],
+    workouts: [
+      {
+        date: "2026-01-01",
+        exercises: [
+          { exercise: { name: "Landmine Press", category: "shoulders", kind: "weight_reps" }, sets: [{ weight_kg: 40, reps: 8 }] },
+        ],
+      },
+    ],
+  })
+  await importSnapshotJson(text, { mode: "merge" })
+  const snap = currentSnapshot()
+  const row = snap.exercises.find((e) => e.name === "Landmine Press")!
+  expect(row.id).toBeGreaterThanOrEqual(FIRST_CUSTOM_ID)
+  expect(SEED_EXERCISES.some((e) => e.id === row.id)).toBe(false)
+  // Every built-in is still listed under its own name, and the set points at
+  // the new row.
+  const we = snap.workout_exercises[0]
+  expect(we.exercise_id).toBe(row.id)
+})
+
 it("floors new exercises from a FitNotes CSV above the seed catalog", async () => {
   await importFitnotesCsv(
     [HEADER, "2026-01-01,Zercher Squat,Legs,100,,5,,,,,wr", "2026-01-01,Spoto Press,Chest,80,,5,,,,,wr"].join("\n")

@@ -8,7 +8,7 @@ pub fn normalize(name: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
-fn key(name: &str) -> String {
+pub(crate) fn key(name: &str) -> String {
     normalize(name).to_lowercase()
 }
 pub struct ExerciseLookup {

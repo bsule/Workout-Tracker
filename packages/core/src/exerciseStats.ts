@@ -6,6 +6,7 @@ import type { ExerciseHistoryDay, HistorySet } from "./types"
 import { fromKg, roundForDisplay, weightKey, type WeightUnit } from "./units"
 import { estimateOneRm } from "./store/materialize"
 import { todayString } from "./dates"
+import { formatCardioTime } from "./setLogger"
 
 // ---------------------------------------------------------------------------
 // Graph
@@ -99,8 +100,170 @@ function setIndexLabel(setIndex: number): string {
   return SET_INDEX_OPTIONS.find((s) => s.value === setIndex)!.label
 }
 
+// ---- cardio graph --------------------------------------------------------
+//
+// Cardio (by category, see isCardioCategory) stores minutes in `weight` and a
+// level in `reps`, unconverted, so the weight metrics and the kg/lb unit mean
+// nothing for it. It plots these instead.
+
+export type CardioMetric = "total_time" | "longest" | "top_level"
+
+/** Any metric the Graph tab can plot: a weight one or a cardio one. */
+export type GraphMetric = Metric | CardioMetric
+
+export const CARDIO_METRIC_OPTIONS: {
+  value: CardioMetric
+  label: string
+}[] = [
+  { value: "total_time", label: "Total time" },
+  { value: "longest", label: "Longest" },
+  { value: "top_level", label: "Top level" },
+]
+
+export function isCardioMetric(metric: GraphMetric): metric is CardioMetric {
+  return metric === "total_time" || metric === "longest" || metric === "top_level"
+}
+
+/** The metric picker's options for the exercise. */
+export function graphMetricOptions(isCardio: boolean): { value: GraphMetric; label: string }[] {
+  return isCardio ? CARDIO_METRIC_OPTIONS : METRIC_OPTIONS
+}
+
+/** The metric the Graph tab opens on: Per Set, or Total time for cardio. */
+export function defaultGraphMetric(isCardio: boolean): GraphMetric {
+  return isCardio ? "total_time" : "per_set"
+}
+
+/** `metric` when it fits the exercise, else the exercise's default. Covers a
+ *  picker state left over from before the exercise's category changed. */
+export function graphMetricFor(metric: GraphMetric, isCardio: boolean): GraphMetric {
+  return isCardioMetric(metric) === isCardio ? metric : defaultGraphMetric(isCardio)
+}
+
+/** A cardio set's time in minutes: the stored `weight`, or for an imported
+ *  set with no weight its `time_seconds`. Null when it has neither. */
+function cardioMinutes(s: HistorySet): number | null {
+  if (s.weight != null) return s.weight
+  if (s.time_seconds != null) return s.time_seconds / 60
+  return null
+}
+
+/**
+ * One cardio day's value for `metric`: total minutes, the longest set's
+ * minutes (with its level in `reps`), or the highest level. A day with
+ * nothing for the metric yields 0.
+ */
+export function cardioDayValue(
+  day: ExerciseHistoryDay,
+  metric: CardioMetric
+): { value: number; reps: number } {
+  switch (metric) {
+    case "total_time": {
+      let total = 0
+      for (const s of day.sets) total += cardioMinutes(s) ?? 0
+      return { value: total, reps: 0 }
+    }
+    case "longest": {
+      let best: { value: number; reps: number } = { value: 0, reps: 0 }
+      for (const s of day.sets) {
+        const m = cardioMinutes(s)
+        if (m == null) continue
+        const level = s.reps ?? 0
+        if (m > best.value || (m === best.value && level > best.reps)) {
+          best = { value: m, reps: level }
+        }
+      }
+      return best
+    }
+    case "top_level": {
+      let top = 0
+      for (const s of day.sets) if (s.reps != null && s.reps > top) top = s.reps
+      return { value: top, reps: 0 }
+    }
+  }
+}
+
+/** The cardio graph's points, oldest first. Times are minutes rounded to the
+ *  second; levels are as stored. Days with no value are dropped. */
+export function cardioChartPoints(
+  days: ExerciseHistoryDay[],
+  metric: CardioMetric
+): ChartPoint[] {
+  return days
+    .map((d) => {
+      const dv = cardioDayValue(d, metric)
+      const value = metric === "top_level" ? dv.value : Math.round(dv.value * 60) / 60
+      return { date: d.date, value, reps: dv.reps }
+    })
+    .filter((p) => p.value > 0)
+    .sort(
+      (a, b) =>
+        new Date(a.date + "T00:00:00").getTime() -
+        new Date(b.date + "T00:00:00").getTime()
+    )
+}
+
+/** The graph's points for any metric: chartPoints for a weight metric,
+ *  cardioChartPoints for a cardio one. */
+export function graphPoints(
+  days: ExerciseHistoryDay[],
+  metric: GraphMetric,
+  setIndex: number,
+  unit: WeightUnit
+): ChartPoint[] {
+  return isCardioMetric(metric)
+    ? cardioChartPoints(days, metric)
+    : chartPoints(days, metric, setIndex, unit)
+}
+
+/** The metric's name in the legend: "Per Set", "Total time", ... */
+export function graphMetricLabel(metric: GraphMetric): string {
+  return isCardioMetric(metric)
+    ? CARDIO_METRIC_OPTIONS.find((m) => m.value === metric)!.label
+    : METRIC_OPTIONS.find((m) => m.value === metric)!.label
+}
+
+/**
+ * How a graph number shows: the value and the unit label beside it. Weight
+ * metrics give fmtMetric and the weight unit; cardio times give a clock with
+ * no unit ("20:30"); a level gives the plain number labeled "level". Missing
+ * values show as "-". Axis ticks use `value` alone.
+ */
+export function graphValueParts(
+  value: number | undefined,
+  metric: GraphMetric,
+  unit: WeightUnit
+): { value: string; unit: string } {
+  if (metric === "top_level") return { value: fmtMetric(value), unit: "level" }
+  if (isCardioMetric(metric)) {
+    return {
+      value: value == null || !Number.isFinite(value) ? "-" : formatCardioTime(value),
+      unit: "",
+    }
+  }
+  return { value: fmtMetric(value), unit }
+}
+
+/** The "since first" change, signed: "+5", "-2.5", or "+5:00" for a time. */
+export function graphDeltaText(delta: number, metric: GraphMetric): string {
+  if (isCardioMetric(metric) && metric !== "top_level") return formatCardioTime(delta, true)
+  return `${delta > 0 ? "+" : ""}${fmtMetric(delta)}`
+}
+
+/** The point bubble's second line: "× 5 reps", "× Lvl 5" for the longest
+ *  cardio set, or null when the point has nothing to add. */
+export function graphPointDetail(point: ChartPoint, metric: GraphMetric): string | null {
+  if (point.reps <= 0) return null
+  if (metric === "longest") return `× Lvl ${point.reps}`
+  if (isCardioMetric(metric)) return null
+  return `× ${point.reps} reps`
+}
+
 /** The chart card's eyebrow: "Heaviest set", "1st set", "1RM", ... */
-export function graphHeaderLabel(metric: Metric, setIndex: number): string {
+export function graphHeaderLabel(metric: GraphMetric, setIndex: number): string {
+  if (isCardioMetric(metric)) {
+    return metric === "longest" ? "Longest set" : graphMetricLabel(metric)
+  }
   const opt = METRIC_OPTIONS.find((m) => m.value === metric)!
   return metric === "heaviest"
     ? "Heaviest set"
@@ -110,7 +273,10 @@ export function graphHeaderLabel(metric: Metric, setIndex: number): string {
 }
 
 /** What the empty chart card says when the metric has no points. */
-export function graphEmptyMessage(metric: Metric, setIndex: number): string {
+export function graphEmptyMessage(metric: GraphMetric, setIndex: number): string {
+  if (isCardioMetric(metric)) {
+    return metric === "top_level" ? "No levels logged yet." : "No time logged yet."
+  }
   const opt = METRIC_OPTIONS.find((m) => m.value === metric)!
   return metric === "per_set"
     ? `No ${setIndexLabel(setIndex)} sets logged yet.`
@@ -345,6 +511,113 @@ export function repRecordRows(scoped: WrSet[], sort: RepSort): RepRecordRow[] {
     share: maxMetric > 0 ? metric(r) / maxMetric : 0,
     isTopOneRm: i === topIdx,
   }))
+}
+
+// ---- cardio records ------------------------------------------------------
+//
+// Cardio's `WrSet`s carry minutes in `weightKg` and the level in `reps` (see
+// weightRepSets), so the Summary tab's records become one row per level.
+
+export type CardioSort = "longest" | "level" | "recent"
+export const CARDIO_SORTS: { key: CardioSort; label: string; hint: string }[] = [
+  { key: "longest", label: "Longest", hint: "Longest time first" },
+  { key: "level", label: "Level", hint: "Highest level first" },
+  { key: "recent", label: "Recent", hint: "Newest record first" },
+]
+
+/** Any record sort: a weight one or a cardio one. */
+export type RecordSort = RepSort | CardioSort
+
+/** The record sorts for the exercise. */
+export function recordSorts(isCardio: boolean): { key: RecordSort; label: string; hint: string }[] {
+  return isCardio ? CARDIO_SORTS : REP_SORTS
+}
+
+/** `sort` when it fits the exercise, else its first sort (Heaviest, or
+ *  Longest for cardio). */
+export function recordSortFor(sort: RecordSort, isCardio: boolean): RecordSort {
+  return recordSorts(isCardio).some((o) => o.key === sort) ? sort : recordSorts(isCardio)[0].key
+}
+
+/** The Summary tab's records heading. */
+export function recordsSectionTitle(isCardio: boolean): string {
+  return isCardio ? "Level records" : "Rep records"
+}
+
+/** The records table's expand toggle: "Show all 6 rep counts" or, for
+ *  cardio, "Show all 6 levels". */
+export function showAllRecordsLabel(count: number, isCardio: boolean): string {
+  return isCardio ? `Show all ${count} levels` : `Show all ${count} rep counts`
+}
+
+/**
+ * Cardio's records: one row per level performed in `scoped`, the longest time
+ * at that level, the day it happened and how many times the level was used.
+ * Rows share RepRecordRow's shape so one table renders both: `reps` is the
+ * level, `weightKg` the minutes, `oneRmKg` is 0 (cardio has no 1RM), and
+ * `isTopOneRm` marks the single longest time (ties go to the higher level).
+ */
+export function cardioRecordRows(scoped: WrSet[], sort: CardioSort): RepRecordRow[] {
+  // Times compare in whole seconds, so 20.5 typed and 20.50001 imported tie.
+  const secs = (minutes: number) => Math.round(minutes * 60)
+  const best = new Map<number, { minutes: number; date: string; count: number }>()
+  for (const s of scoped) {
+    const cur = best.get(s.reps)
+    if (!cur) {
+      best.set(s.reps, { minutes: s.weightKg, date: s.date, count: 1 })
+      continue
+    }
+    cur.count += 1
+    if (secs(s.weightKg) > secs(cur.minutes)) {
+      cur.minutes = s.weightKg
+      cur.date = s.date
+    }
+  }
+  const rows = [...best.entries()].map(([level, v]) => ({
+    reps: level,
+    weightKg: v.minutes,
+    date: v.date,
+    count: v.count,
+    oneRmKg: 0,
+  }))
+
+  // What the bar measures: the level for the Level sort, else the time.
+  const metric = (r: (typeof rows)[number]) => (sort === "level" ? r.reps : secs(r.weightKg))
+
+  rows.sort((a, b) => {
+    if (sort === "recent") {
+      if (a.date !== b.date) return a.date < b.date ? 1 : -1
+      return secs(b.weightKg) - secs(a.weightKg) || b.reps - a.reps
+    }
+    if (sort === "level") return b.reps - a.reps
+    return secs(b.weightKg) - secs(a.weightKg) || b.reps - a.reps
+  })
+
+  const maxMetric = rows.reduce((m, r) => (metric(r) > m ? metric(r) : m), 0)
+
+  let topIdx = -1
+  for (let i = 0; i < rows.length; i++) {
+    if (topIdx < 0) {
+      topIdx = i
+      continue
+    }
+    const t = rows[topIdx]
+    const d = secs(rows[i].weightKg) - secs(t.weightKg)
+    if (d > 0 || (d === 0 && rows[i].reps > t.reps)) topIdx = i
+  }
+
+  return rows.map((r, i) => ({
+    ...r,
+    share: maxMetric > 0 ? metric(r) / maxMetric : 0,
+    isTopOneRm: i === topIdx,
+  }))
+}
+
+/** The record rows for the exercise: repRecordRows, or cardioRecordRows for
+ *  cardio. A sort that does not fit the exercise falls back to its first. */
+export function recordRows(scoped: WrSet[], sort: RecordSort, isCardio: boolean): RepRecordRow[] {
+  const s = recordSortFor(sort, isCardio)
+  return isCardio ? cardioRecordRows(scoped, s as CardioSort) : repRecordRows(scoped, s as RepSort)
 }
 
 // ---- history equality (was mobile/src/store/sameHistory.ts) -------------

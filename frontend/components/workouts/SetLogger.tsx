@@ -28,7 +28,7 @@ import {
 } from "@/lib/store"
 import { predictPrFlags } from "@lift/core/store/prs"
 import { cn } from "@/lib/utils"
-import { defaultStep, formatWeight, fromKg, roundForDisplay, toKg } from "@/lib/units"
+import { defaultStep, formatWeight, toKg } from "@/lib/units"
 import {
   useShowPositionPrs,
   useShowRestTime,
@@ -37,17 +37,23 @@ import {
 } from "@/components/settings/SettingsProvider"
 import { lastSetAnchorMs, tickerAnchor } from "@lift/core/restTimer"
 import {
-  cleanNumericText,
+  acceptClockText,
+  acceptNumericText,
   createdAtForRest,
   deleteSetsTitle,
+  editedWeight,
   nextSetPosition,
+  formatCardioTime,
   plannedSetTitle,
   restAnchorForEdit,
   restSecondsFrom,
   seedSetForm,
   setFormError,
+  setPositions,
   setPrBadge,
   setRestLabels,
+  setValueText,
+  weightFieldValue,
 } from "@lift/core/setLogger"
 import { resetTimer, stopTimer, useTimerMark } from "@/lib/restTimerMark"
 import type { ExerciseHistoryDay, WorkoutSet } from "@/types"
@@ -107,8 +113,7 @@ export function SetLogger({
   const showTimeSinceLastSet = useShowTimeSinceLastSet()
   const step = isCardio ? 1 : defaultStep(unit)
 
-  const toDisplay = (stored: number) =>
-    isCardio ? stored : roundForDisplay(fromKg(stored, unit), unit)
+  const toDisplay = (stored: number) => weightFieldValue(stored, unit, isCardio)
   const toStored = (v: number) => (isCardio ? v : toKg(v, unit))
 
   // Seeded once at mount, like mobile: next target, last set, the previous
@@ -180,7 +185,7 @@ export function SetLogger({
   function startEdit(s: WorkoutSet) {
     setEditingSetId(s.id)
     setFrozenPosition(nextPosition)
-    setWeight(isCardio ? s.weight ?? 0 : roundForDisplay(fromKg(s.weight ?? 0, unit), unit))
+    setWeight(weightFieldValue(s.weight, unit, isCardio))
     setReps(s.reps ?? 0)
     const anchor = restAnchorForEdit(sets, s.id, prevWorkoutLastSetIso)
     setRestAnchorIso(anchor)
@@ -213,13 +218,17 @@ export function SetLogger({
         const newCreatedAt =
           restChanged && restAnchorIso ? createdAtForRest(restAnchorIso, restSec) : null
         cancelEdit()
+        // An untouched weight field keeps the stored weight as it is, rather
+        // than the rounded display value converted back.
+        const edited = editedWeight(weight, editingSet.weight, unit, isCardio)
+        const weightPatch = edited === undefined ? {} : { weight: edited }
         if (editingSet.is_planned) {
           // "Not hit": logs the target with the values the user did.
-          logPlannedSet(editingSet.id, { weight: w, reps: r, created_at: nowIso })
+          logPlannedSet(editingSet.id, { ...weightPatch, reps: r, created_at: nowIso })
         } else {
           api
             .updateSet(editingSet.id, {
-              weight: w,
+              ...weightPatch,
               reps: r,
               ...(newCreatedAt ? { created_at: newCreatedAt } : {}),
             })
@@ -295,7 +304,7 @@ export function SetLogger({
 
   async function deleteOne(s: WorkoutSet) {
     const what = isCardio
-      ? `${s.weight ?? "-"} min at Level ${s.reps ?? "-"}`
+      ? `${s.weight == null ? "-" : formatCardioTime(s.weight)} at Level ${s.reps ?? "-"}`
       : `${formatWeight(s.weight, unit)} ${unit} × ${s.reps ?? 0} reps`
     const ok = await confirm({
       title: "Delete this set?",
@@ -318,7 +327,9 @@ export function SetLogger({
     api.updateSet(noteSet.id, { note: noteDraft.trim() }).catch(() => {})
   }
 
-  const restShown = editing && showRestTime && restAnchorIso != null
+  // "Not hit" on a target logs it now, so it has no rest to edit.
+  const restShown =
+    editing && !editingSet?.is_planned && showRestTime && restAnchorIso != null
   const selectedCount = selected.length
 
   return (
@@ -357,12 +368,13 @@ export function SetLogger({
                   ? editing ? "Time (editing)" : "Time"
                   : editing ? "Weight (editing)" : "Weight"
               }
-              unit={isCardio ? "min" : unit}
+              unit={isCardio ? "min:sec" : unit}
               value={weight}
-              step={step}
+              step={isCardio ? 1 : step}
               min={0}
               onChange={setWeight}
               allowDecimal
+              clock={isCardio}
             />
             <NumericField
               label={isCardio ? "Level" : "Reps"}
@@ -492,6 +504,7 @@ function NumericField({
   min,
   onChange,
   allowDecimal = false,
+  clock = false,
 }: {
   label: string
   unit?: string
@@ -500,13 +513,17 @@ function NumericField({
   min: number
   onChange: (v: number) => void
   allowDecimal?: boolean
+  /** Cardio time: shows and takes minutes as a clock ("32:00", "32:18"). */
+  clock?: boolean
 }) {
-  const [text, setText] = useState(String(value))
+  const accept = (t: string) => (clock ? acceptClockText(t) : acceptNumericText(t, allowDecimal))
+  const show = (v: number) => (clock ? formatCardioTime(v) : String(v))
+  const [text, setText] = useState(() => show(value))
   const [syncedValue, setSyncedValue] = useState(value)
   if (value !== syncedValue) {
     setSyncedValue(value)
-    const parsed = Number(text)
-    if (!Number.isFinite(parsed) || parsed !== value) setText(String(value))
+    const parsed = accept(text)?.value
+    if (parsed !== value) setText(show(value))
   }
 
   return (
@@ -536,10 +553,12 @@ function NumericField({
           aria-label={label}
           value={text}
           onChange={(e) => {
-            const cleaned = cleanNumericText(e.target.value, allowDecimal)
-            setText(cleaned)
-            const n = Number(cleaned)
-            if (Number.isFinite(n)) onChange(n)
+            // Text that is not a number ("1.2.3") is refused, so what the
+            // field shows is always what Save stores.
+            const next = accept(e.target.value)
+            if (!next) return
+            setText(next.text)
+            onChange(next.value)
           }}
           onFocus={(e) => e.target.select()}
           className="h-12 w-full min-w-0 flex-1 rounded-xl border border-foreground/10 bg-foreground/[.03] px-3 text-center font-mono text-3xl font-semibold tabular-nums tracking-tight focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
@@ -587,24 +606,22 @@ function SetList({
 }) {
   const showRestTime = useShowRestTime()
   const selectionMode = selectedIds.length > 0
-
-  if (!sets.length) {
-    return (
-      <div>
-        <div className="rounded-2xl border border-dashed border-foreground/10 bg-foreground/[.01] p-10 text-center text-sm text-muted-foreground">
-          No sets logged yet. Log your first set above.
-        </div>
-        {ticker}
-      </div>
-    )
-  }
+  const empty = sets.length === 0
 
   const restLabels = setRestLabels(sets, prevWorkoutLastSetIso)
+  const positions = setPositions(sets)
 
+  // One tree for both states, with the ticker in the same slot, so deleting
+  // the last set keeps it mounted and it collapses instead of vanishing.
   // No overflow clip on the card: the ticker's menu drops below it. The rows
   // box rounds its own corners instead.
   return (
-    <div className="rounded-2xl border border-foreground/10 bg-card/40">
+    <div className={cn(!empty && "rounded-2xl border border-foreground/10 bg-card/40")}>
+      {empty ? (
+        <div className="rounded-2xl border border-dashed border-foreground/10 bg-foreground/[.01] p-10 text-center text-sm text-muted-foreground">
+          No sets logged yet. Log your first set above.
+        </div>
+      ) : (
       <div
         className={cn(
           "divide-y divide-foreground/5 overflow-hidden rounded-t-2xl",
@@ -615,6 +632,7 @@ function SetList({
           <SetRow
             key={s.id}
             index={i + 1}
+            position={positions[i]}
             set={s}
             isCardio={isCardio}
             restLabel={showRestTime && !s.is_planned ? restLabels[i] : null}
@@ -629,6 +647,7 @@ function SetList({
           />
         ))}
       </div>
+      )}
       {ticker}
     </div>
   )
@@ -636,6 +655,7 @@ function SetList({
 
 function SetRow({
   index,
+  position,
   set: s,
   isCardio,
   restLabel,
@@ -649,6 +669,8 @@ function SetRow({
   onDelete,
 }: {
   index: number
+  /** The set position prs.ts counts (setPositions), for the "Set N PR" badge. */
+  position: number
   set: WorkoutSet
   isCardio: boolean
   restLabel: string | null
@@ -665,6 +687,7 @@ function SetRow({
   const showPositionPrs = useShowPositionPrs()
   const planned = !!s.is_planned
   const badge = setPrBadge(s, showPositionPrs)
+  const value = setValueText(s, unit, isCardio)
 
   // Hold to select, with mouse or touch. The click that ends a hold is
   // swallowed so it doesn't toggle the row straight back.
@@ -749,7 +772,7 @@ function SetRow({
               isPr={!badge.historical}
               wasPr={badge.historical}
               variant={badge.kind}
-              position={index}
+              position={position}
             />
           )}
         </span>
@@ -774,10 +797,15 @@ function SetRow({
             planned && "italic text-muted-foreground"
           )}
         >
-          {isCardio ? s.weight ?? "-" : formatWeight(s.weight, unit)}{" "}
-          <span className="text-[11px] font-normal not-italic text-muted-foreground">
-            {isCardio ? "min" : unit}
-          </span>
+          {value.amount}
+          {value.unit && (
+            <>
+              {" "}
+              <span className="text-[11px] font-normal not-italic text-muted-foreground">
+                {value.unit}
+              </span>
+            </>
+          )}
         </span>
         <span
           className={cn(
@@ -785,7 +813,7 @@ function SetRow({
             planned && "italic text-muted-foreground"
           )}
         >
-          {isCardio ? `Lvl ${s.reps ?? "-"}` : s.reps ?? "-"}
+          {value.reps}
         </span>
         {planned ? (
           <span className="text-[11px] font-semibold italic text-muted-foreground">planned</span>

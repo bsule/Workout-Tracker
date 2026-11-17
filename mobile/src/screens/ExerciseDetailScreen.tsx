@@ -21,6 +21,7 @@ import {
   SummaryPanel,
 } from "./SetLoggerScreen"
 import { todayString } from "../dates"
+import { isCardioCategory } from "@lift/core/setLogger"
 import { formatRelative } from "@lift/core/format"
 import { SubTabBar, type SubTab as LoggerSubTab } from "../components/SubTabBar"
 
@@ -82,6 +83,7 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
     })
   }
 
+  const isCardio = isCardioCategory(exercise.category)
   const totalWorkouts = history.length
   const lastDate = history[0]?.date ?? null
 
@@ -109,6 +111,7 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
         <PastHistoryList
           days={history}
           currentDate={todayString()}
+          isCardio={isCardio}
           onPressDate={openCalendarAtDate}
           style={{ flex: 1 }}
           contentContainerStyle={{
@@ -124,12 +127,13 @@ export function ExerciseDetailScreen({ navigation, route }: any) {
             paddingBottom: theme.spacing[6],
           }}
         >
-          {tab === "graph" && <GraphPanel days={history} unit={unit} />}
+          {tab === "graph" && <GraphPanel days={history} unit={unit} isCardio={isCardio} />}
           {tab === "summary" && (
             <SummaryPanel
               days={history}
               unit={unit}
               onPressDate={openCalendarAtDate}
+              isCardio={isCardio}
             />
           )}
           {tab === "settings" && <SettingsPanel navigation={navigation} />}

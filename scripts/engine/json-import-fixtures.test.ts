@@ -20,7 +20,14 @@ test('generate JSON import and repeated merge oracles',async()=>{
     ]}
     const traces=[]
     let next_id=100001
-    for(const [mode,payload]of [['replace',data],['merge',data],['merge',{...data,version:1,day_notes:[]}]] as const){
+    // Planned work, workout status and deleted custom exercises, merged twice:
+    // the second merge must add nothing.
+    const plans={version:2,custom_exercises:[{name:'Gone Lift',category:'back',kind:'weight_reps',is_deleted:true},{name:'Custom lift',category:'chest',kind:'weight_reps',is_deleted:true}],workouts:[
+      {date:'2025-02-01',status:'planned',gym:'Home',exercises:[{exercise:{name:'Gone Lift',category:'back',kind:'weight_reps'},order:0,sets:[set(40,10,0)],planned_sets:[{weight_kg:45,reps:10,order:1,note:'easy'},{weight_kg:50,reps:8,order:1}]}]},
+      {date:'2025-01-01',gym:'Other',exercises:[{exercise:{name:'Bench Press',category:'chest',kind:'weight_reps'},sets:[],planned_sets:[{weight_kg:70,reps:5,order:0},{weight_kg:75,reps:5}]}]},
+      {date:'2025-03-01',status:'bogus',started_at:'2025-03-01T10:00:00.000Z',exercises:[{exercise:{name:'Custom lift',category:'chest',kind:'weight_reps'},sets:[],planned_sets:[{weight_kg:90,reps:3}]}]},
+    ]}
+    for(const [mode,payload]of [['replace',data],['merge',data],['merge',{...data,version:1,day_notes:[]}],['merge',plans],['merge',plans]] as const){
       const before=structuredClone(getState().snapshot)
       const result=await importSnapshotJson(JSON.stringify(payload),{mode})
       const expected=structuredClone(getState().snapshot)

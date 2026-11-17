@@ -51,6 +51,8 @@ export async function pushNow(snapshot: Snapshot): Promise<{ etag: string }> {
   return result
 }
 
+/** Unused by the apps. Adopts the cloud etag on a CloudflareTransport before
+ * the caller has applied anything; see _internalPullBytes. */
 export async function pullNow(): Promise<{ snapshot: Snapshot; etag: string } | null> {
   const operation = captureSyncSession()
   const result = await operation.transport.pullSnapshot()
@@ -62,9 +64,11 @@ export async function pullNow(): Promise<{ snapshot: Snapshot; etag: string } | 
 }
 
 /**
- * Internal: returns the raw remote bytes + etag without parsing. Used by
- * autoSync.pullAndReplace so the bytes can be handed straight to
- * replaceSnapshotFromBytes (which parses once) instead of double-parsing.
+ * Internal: returns the raw remote bytes + etag without parsing. A
+ * CloudflareTransport adopts the cloud etag on this pull, so only call it when
+ * that is wanted (forcePush, which overwrites the cloud next). To take the
+ * cloud copy, download with previewSnapshot() and adopt the etag only after
+ * the replace succeeds (see autoSync.pullAndReplace / applyRemoteBytes).
  */
 export async function _internalPullBytes(): Promise<{ bytes: Uint8Array; etag: string } | null> {
   const operation = captureSyncSession()

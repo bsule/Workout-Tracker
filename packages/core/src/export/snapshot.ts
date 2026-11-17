@@ -137,12 +137,15 @@ export function buildJson(snap: Snapshot, username = ""): string {
     arr.push(we)
     wesByWorkout.set(we.workout_id, arr)
   }
+  // Planned sets go in their own `planned_sets` field, never in `sets`: an
+  // older importer ignores the new field, so it cannot log them by mistake.
   const setsByWe = new Map<number, typeof snap.sets>()
+  const plannedByWe = new Map<number, typeof snap.sets>()
   for (const s of snap.sets) {
-    if (s.is_planned) continue
-    const arr = setsByWe.get(s.workout_exercise_id) ?? []
+    const byWe = s.is_planned ? plannedByWe : setsByWe
+    const arr = byWe.get(s.workout_exercise_id) ?? []
     arr.push(s)
-    setsByWe.set(s.workout_exercise_id, arr)
+    byWe.set(s.workout_exercise_id, arr)
   }
 
   const workouts = [...snap.workouts]
@@ -150,6 +153,8 @@ export function buildJson(snap: Snapshot, username = ""): string {
     .map((w) => ({
       id: w.id,
       date: w.date,
+      // Older files have none; the importer then derives it from the times.
+      status: w.status,
       started_at: w.started_at,
       finished_at: w.finished_at,
       gym: w.gym,
@@ -159,6 +164,19 @@ export function buildJson(snap: Snapshot, username = ""): string {
         .sort((a, b) => a.order - b.order || a.id - b.id)
         .map((we) => {
           const ex = exMap.get(we.exercise_id)
+          const planned = (plannedByWe.get(we.id) ?? [])
+            .slice()
+            .sort((a, b) => a.order - b.order || a.id - b.id)
+            .map((s) => ({
+              weight_kg: s.weight,
+              reps: s.reps,
+              distance_m: s.distance_m,
+              distance_unit_display: s.distance_unit_display,
+              time_seconds: s.time_seconds,
+              note: s.note,
+              order: s.order,
+              created_at: s.created_at,
+            }))
           return {
             order: we.order,
             note: we.note ?? "",
@@ -183,13 +201,21 @@ export function buildJson(snap: Snapshot, username = ""): string {
                 order: s.order,
                 created_at: s.created_at,
               })),
+            ...(planned.length ? { planned_sets: planned } : {}),
           }
         }),
     }))
 
+  // A deleted custom exercise carries is_deleted so the importer keeps it
+  // deleted. An older importer ignores the flag and restores it as before.
   const customExercises = snap.exercises
     .filter((e) => e.is_custom)
-    .map((e) => ({ name: e.name, category: e.category, kind: e.kind }))
+    .map((e) => ({
+      name: e.name,
+      category: e.category,
+      kind: e.kind,
+      ...(e.is_deleted ? { is_deleted: true } : {}),
+    }))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
 
   const savedGyms = snap.gyms.map((g) => g.name).sort()
@@ -201,7 +227,10 @@ export function buildJson(snap: Snapshot, username = ""): string {
 
   const payload = {
     // v2: `workouts[].notes` is the per-session note only. In v1 it carried
-    // the day note, so the importer reads it differently per version.
+    // the day note, so the importer reads it differently per version. Later
+    // additions are optional fields an older v2 importer ignores
+    // (`workouts[].status`, `exercises[].planned_sets`,
+    // `custom_exercises[].is_deleted`), so they need no version bump.
     version: 2,
     exported_at: new Date().toISOString(),
     weight_unit: "kg",

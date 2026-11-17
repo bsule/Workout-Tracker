@@ -7,7 +7,7 @@ import {
   useShowPositionPrs,
   useWeightUnit,
 } from "@/components/settings/SettingsProvider"
-import { formatWeight } from "@/lib/units"
+import { setPositions, setValueText } from "@lift/core/setLogger"
 import { cn } from "@/lib/utils"
 
 /**
@@ -18,16 +18,22 @@ import { cn } from "@/lib/utils"
  */
 export function SetList({
   sets,
+  isCardio = false,
   showNotes = false,
 }: {
   sets: WorkoutSet[]
+  /** Cardio stores minutes in `weight` and a level in `reps`, unconverted. */
+  isCardio?: boolean
   showNotes?: boolean
 }) {
   const unit = useWeightUnit()
   const showPositionPrs = useShowPositionPrs()
+  const positions = setPositions(sets)
   return (
     <ul>
-      {sets.map((s, i) => (
+      {sets.map((s, i) => {
+        const value = setValueText(s, unit, isCardio)
+        return (
         <li
           key={s.id}
           className={cn(
@@ -49,7 +55,7 @@ export function SetList({
                   isPr={s.is_position_pr}
                   wasPr={s.was_position_pr}
                   variant="position"
-                  position={i + 1}
+                  position={positions[i]}
                 />
               ) : null}
             </span>
@@ -62,18 +68,23 @@ export function SetList({
                 s.is_planned && "italic text-muted-foreground"
               )}
             >
-              {formatWeight(s.weight, unit)}{" "}
-              <span className="text-xs font-normal not-italic text-muted-foreground">
-                {unit}
-              </span>
+              {value.amount}
+              {value.unit && (
+                <>
+                  {" "}
+                  <span className="text-xs font-normal not-italic text-muted-foreground">
+                    {value.unit}
+                  </span>
+                </>
+              )}
             </span>
             <span
               className={cn(
-                "w-[50px] shrink-0 text-right text-base font-bold tabular-nums",
+                "min-w-[50px] shrink-0 whitespace-nowrap text-right text-base font-bold tabular-nums",
                 s.is_planned && "italic text-muted-foreground"
               )}
             >
-              {s.reps ?? "-"}
+              {value.reps}
             </span>
           </div>
           {showNotes && !s.is_planned && !!s.note && (
@@ -85,7 +96,8 @@ export function SetList({
             </div>
           )}
         </li>
-      ))}
+        )
+      })}
     </ul>
   )
 }
