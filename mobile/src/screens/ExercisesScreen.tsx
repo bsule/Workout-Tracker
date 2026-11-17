@@ -3,6 +3,7 @@ import {
   Alert,
   Animated,
   FlatList,
+  Keyboard,
   Pressable,
   StyleSheet,
   Text,
@@ -70,47 +71,55 @@ export function ExercisesScreen({ navigation }: any) {
 
   return (
     <StaticSafeAreaView>
-      <View style={styles.header}>
-        <View style={{ width: 32 }} />
-        <Text style={styles.title}>Exercises</Text>
-        <Pressable
-          onPress={openCreate}
-          hitSlop={12}
-          style={styles.headerSideBtn}
-        >
-          <Ionicons name="add" size={28} color={theme.colors.foreground} />
-        </Pressable>
-      </View>
+      {/* Like the exercise picker: a tap outside the search field, its
+       *  buttons and the rows (the title bar, around the search) closes the
+       *  keyboard. Not an accessibility element itself, so VoiceOver still
+       *  reaches each control. */}
+      <Pressable style={{ flex: 1 }} onPress={() => Keyboard.dismiss()} accessible={false}>
+        <View style={styles.header}>
+          <View style={{ width: 32 }} />
+          <Text style={styles.title}>Exercises</Text>
+          <Pressable
+            onPress={openCreate}
+            hitSlop={12}
+            style={styles.headerSideBtn}
+          >
+            <Ionicons name="add" size={28} color={theme.colors.foreground} />
+          </Pressable>
+        </View>
 
-      <View style={styles.searchWrap}>
-        <Ionicons name="search" size={18} color={theme.colors.muted} />
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          placeholder="Exercise Name"
-          placeholderTextColor={theme.colors.muted}
-          style={styles.search}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-      </View>
-
-      <FlatList
-        style={styles.list}
-        data={exercises}
-        keyExtractor={(e) => String(e.id)}
-        contentContainerStyle={{ paddingBottom: 100 }}
-        renderItem={({ item }) => (
-          <ExerciseRow
-            ex={item}
-            openSwipeableRef={openSwipeableRef}
-            onPress={() => openDetail(item)}
-            onEdit={() => editExercise(item)}
-            onDelete={() => deleteExercise(item)}
+        <View style={styles.searchWrap}>
+          <Ionicons name="search" size={18} color={theme.colors.muted} />
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Exercise Name"
+            placeholderTextColor={theme.colors.muted}
+            style={styles.search}
+            autoCapitalize="none"
+            autoCorrect={false}
           />
-        )}
-        ItemSeparatorComponent={() => <View style={styles.sep} />}
-      />
+        </View>
+
+        <FlatList
+          style={styles.list}
+          data={exercises}
+          keyExtractor={(e) => String(e.id)}
+          contentContainerStyle={{ paddingBottom: 100 }}
+          renderItem={({ item }) => (
+            <ExerciseRow
+              ex={item}
+              openSwipeableRef={openSwipeableRef}
+              onPress={() => openDetail(item)}
+              onEdit={() => editExercise(item)}
+              onDelete={() => deleteExercise(item)}
+            />
+          )}
+          ItemSeparatorComponent={() => <View style={styles.sep} />}
+          // A row tap with the keyboard up opens the row, as in the picker.
+          keyboardShouldPersistTaps="handled"
+        />
+      </Pressable>
     </StaticSafeAreaView>
   )
 }

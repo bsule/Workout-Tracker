@@ -602,8 +602,6 @@ fn apply(
             Value::Null
         }
         Command::RecomputePrs => {
-            // TEMPORARY: see cardio_fix.rs.
-            crate::cardio_fix::fix_custom_cardio_kinds(snap);
             prs::recompute(snap, None);
             look.mark_all_verified();
             return Ok(

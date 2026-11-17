@@ -1,4 +1,3 @@
-import { fixCustomCardioKinds } from "./cardioFix" // TEMPORARY: see cardioFix.ts.
 import type { Category, ExerciseKind, UserSettings, WorkoutStatus } from "../types"
 import { applyMutation, getState } from "./store"
 import { nextId, nextIdAtLeast } from "./ids"
@@ -607,8 +606,7 @@ export function copyFromWorkout(
 export function recomputeAllPrs(): { recomputed: number } {
   let count = 0
   applyMutation((snap) => {
-    // TEMPORARY: see cardioFix.ts.
-    let next = fixCustomCardioKinds(snap)
+    let next = snap
     const exerciseIds = new Set(
       snap.workout_exercises.map((we) => we.exercise_id)
     )
