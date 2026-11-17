@@ -1,5 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from "react-native"
-import { theme } from "../theme/theme"
+import { isLight, theme, tint } from "../theme/theme"
 import { useCategoryStyles } from "../categories/CategoryStylesProvider"
 
 /**
@@ -26,10 +26,20 @@ export function CategoryChips({
           <Pressable
             key={cat}
             onPress={() => onSelect(cat)}
+            accessibilityRole="button"
+            accessibilityLabel={labels[cat] ?? cat}
+            accessibilityState={{ selected: active }}
             style={[styles.chip, active && styles.chipActive]}
           >
             <View style={[styles.chipDot, { backgroundColor: dot }]} />
-            <Text style={styles.chipText}>{labels[cat] ?? cat}</Text>
+            <Text
+              style={styles.chipText}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}
+            >
+              {labels[cat] ?? cat}
+            </Text>
           </Pressable>
         )
       })}
@@ -50,20 +60,26 @@ const styles = StyleSheet.create({
   chip: {
     flexBasis: "23%",
     flexGrow: 1,
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 8,
+    gap: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 10,
+    minHeight: 44,
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.card,
     borderWidth: 1,
-    borderColor: "transparent",
+    borderColor: isLight() ? theme.colors.borderStrong : "transparent",
   },
-  chipActive: { backgroundColor: theme.colors.cardElevated, borderColor: theme.colors.foreground },
-  chipDot: { width: 8, height: 8, borderRadius: 4 },
+  chipActive: {
+    backgroundColor: isLight() ? tint(0.1) : theme.colors.cardElevated,
+    borderColor: theme.colors.foreground,
+  },
+  chipDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
   chipText: {
+    flexShrink: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: "500",

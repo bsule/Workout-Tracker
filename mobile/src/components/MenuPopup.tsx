@@ -173,12 +173,14 @@ export function MenuButton({
   actions,
   onSelect,
   title,
+  accessibilityLabel,
   style,
   children,
 }: {
   actions: MenuAction[]
   onSelect: (id: string) => void
   title?: string
+  accessibilityLabel?: string
   style?: StyleProp<ViewStyle>
   children: ReactNode
 }) {
@@ -187,6 +189,8 @@ export function MenuButton({
   const open = useRef(false)
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? title}
       onPress={() => {
         if (open.current) return
         open.current = true

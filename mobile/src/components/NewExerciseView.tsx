@@ -20,13 +20,21 @@ import { theme } from "../theme/theme"
 export function NewExerciseView({
   onBack,
   onCreated,
+  initialName = "",
+  initialCategory,
 }: {
+  initialName?: string
+  initialCategory?: string | null
   onBack: () => void
   onCreated: (ex: Exercise) => void
 }) {
   const api = useWorkoutApi()
-  const [name, setName] = useState("")
-  const [category, setCategory] = useState<string>("chest")
+  const [name, setName] = useState(() =>
+    initialName.trim().replace(/(^|\s)(\S)/gu, (_, space: string, first: string) =>
+      space + first.toUpperCase()
+    )
+  )
+  const [category, setCategory] = useState<string>(initialCategory ?? "chest")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -73,7 +81,7 @@ export function NewExerciseView({
 
         <View style={{ gap: 6 }}>
           <Text style={styles.fieldLabel}>Category</Text>
-          <CategoryChips selected={category} onSelect={setCategory} padded />
+          <CategoryChips selected={category} onSelect={setCategory} />
         </View>
 
         {error && <Text style={styles.error}>{error}</Text>}

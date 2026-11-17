@@ -13,6 +13,7 @@
 // stored mode.
 
 import AsyncStorage from "@react-native-async-storage/async-storage"
+import { Appearance } from "react-native"
 import { darkColors, lightColors } from "./themeColors"
 import { theme } from "./theme"
 
@@ -43,6 +44,8 @@ export function currentMode(): ThemeMode {
 // the navigator behind a hydration gate).
 export function init(mode: ThemeMode): void {
   _currentMode = mode
+  // Native navigation buttons and alerts must match the saved app palette.
+  Appearance.setColorScheme(mode)
   const next = mode === "light" ? lightColors : darkColors
   // Object.assign keeps the same `theme.colors` reference so any module
   // that has already captured it (theme.ts itself) still sees the new

@@ -71,6 +71,8 @@ This starts Metro. The app uses its own native code (the rest timer module and t
 
 **`expo prebuild` side effect:** running it locally rewrites the `ios` and `android` scripts in `mobile/package.json`. Revert that change. The generated `mobile/ios/` and `mobile/android/` folders are gitignored.
 
+**iOS simulator updates:** a release build loads its embedded JavaScript bundle; starting Metro or relaunching that build does not update its code. For live development, install a development build with `cd mobile && npx expo run:ios`, then use `npm run start:devclient -- --ios` from `mobile/`. Native module changes require rebuilding the app. Keep the installed app's data when updating it; uninstalling removes its local workout data.
+
 ## Tests and checks
 
 ```bash

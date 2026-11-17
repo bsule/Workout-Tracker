@@ -4,7 +4,7 @@
 import { Children, Fragment, isValidElement, type ComponentProps, type ReactNode } from "react"
 import { Pressable, StyleSheet, Switch, Text, View } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
-import { theme } from "../theme/theme"
+import { isLight, theme, tint } from "../theme/theme"
 import { pressedStyle } from "../theme/pressable"
 
 const ICON_SIZE = 32
@@ -221,8 +221,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing[2],
     paddingVertical: 6,
     borderRadius: theme.radius.md - 2,
+    borderWidth: 1,
+    borderColor: "transparent",
   },
-  segmentActive: { backgroundColor: theme.colors.cardElevated },
+  segmentActive: {
+    backgroundColor: isLight() ? theme.colors.card : theme.colors.cardElevated,
+    borderColor: isLight() ? tint(0.12) : "transparent",
+  },
   segmentText: {
     color: theme.colors.muted,
     fontSize: theme.fontSize.sm,

@@ -3510,7 +3510,6 @@ export const SummaryPanel = memo(function SummaryPanel({
 
           <View style={styles.repPrPickerRow}>
             <PickerTrigger
-              icon="layers-outline"
               label={scope === "all" ? "All sets" : `Set ${scope}`}
               title="Show set"
               actions={[
@@ -3536,7 +3535,6 @@ export const SummaryPanel = memo(function SummaryPanel({
               }}
             />
             <PickerTrigger
-              icon="swap-vertical-outline"
               label={sortLabel}
               title="Sort by"
               actions={REP_SORTS.map((o) => ({
@@ -3748,25 +3746,31 @@ function CollapsibleNote({ label, text }: { label: string; text: string }) {
  * styling to keep in sync.
  */
 function PickerTrigger({
-  icon,
   label,
   title,
   actions,
   onSelect,
 }: {
-  icon: keyof typeof Ionicons.glyphMap
   label: string
   title: string
   actions: MenuAction[]
   onSelect: (id: string) => void
 }) {
   return (
-    <MenuButton title={title} actions={actions} onSelect={onSelect}>
+    <MenuButton
+      title={title}
+      actions={actions}
+      onSelect={onSelect}
+      style={styles.repPrPickerButton}
+      accessibilityLabel={`${title}: ${label}`}
+    >
       <View style={styles.setPickerTrigger}>
-        <Ionicons name={icon} size={13} color={theme.colors.muted} />
-        <Text style={styles.setPickerTriggerText} numberOfLines={1}>
-          {label}
-        </Text>
+        <View style={styles.setPickerCopy}>
+          <Text style={styles.setPickerCaption}>{title}</Text>
+          <Text style={styles.setPickerTriggerText} numberOfLines={1}>
+            {label}
+          </Text>
+        </View>
         <Ionicons name="chevron-down" size={14} color={theme.colors.muted} />
       </View>
     </MenuButton>
@@ -5300,6 +5304,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: theme.spacing[2],
   },
+  repPrPickerButton: {
+    flex: 1,
+    minWidth: 0,
+  },
   repPrTable: {
     backgroundColor: theme.colors.card,
     borderRadius: theme.radius.lg,
@@ -5392,7 +5400,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   setPickerTrigger: {
-    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
@@ -5402,9 +5409,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.card,
+    minHeight: 52,
+  },
+  setPickerCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  setPickerCaption: {
+    color: theme.colors.muted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: "500",
   },
   setPickerTriggerText: {
-    flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: "700",

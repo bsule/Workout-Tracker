@@ -1,8 +1,9 @@
 # Engine migration tools
 
-Mobile uses the Rust engine through its Expo module; web still uses the shared
-TypeScript store. This directory holds parity fixtures, native/Wasm builds and
-performance diagnostics for [the migration plan](../../docs/rust-migration.md).
+Mobile uses the Rust engine through its Expo module; web supports the Rust engine
+via WebAssembly in a Web Worker (with fallback to the shared TypeScript store).
+This directory holds parity fixtures, native/Wasm builds and performance diagnostics
+for [the migration plan](../../docs/rust-migration.md).
 
 - `npm test`: existing behavior baseline.
 - `npm run engine:baseline`: synthetic desktop timings; writes raw samples to

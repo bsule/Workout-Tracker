@@ -38,6 +38,10 @@ const EMPTY_EXERCISES: Exercise[] = []
 
 export function ExercisePickerScreen({ route, navigation }: any) {
   const [mode, setMode] = useState<Mode>("pick")
+  const [newExerciseDefaults, setNewExerciseDefaults] = useState<{
+    name: string
+    category: string | null
+  }>({ name: "", category: null })
   const activeDate = useActiveDate()
   const [selectionReady, setSelectionReady] = useState(false)
   const leaving = useRef(false)
@@ -106,11 +110,16 @@ export function ExercisePickerScreen({ route, navigation }: any) {
           <PickView
             onClose={close}
             onPick={gotoLogger}
-            onCreateNew={() => setMode("new")}
+            onCreateNew={(name, category) => {
+              setNewExerciseDefaults({ name, category })
+              setMode("new")
+            }}
             selectionReady={selectionReady}
           />
         ) : (
           <NewExerciseView
+            initialName={newExerciseDefaults.name}
+            initialCategory={newExerciseDefaults.category}
             onBack={() => setMode("pick")}
             onCreated={(ex) => gotoLogger(ex)}
           />
@@ -128,7 +137,7 @@ function PickView({
 }: {
   onClose: () => void
   onPick: (ex: Exercise, touchStartedAt?: number) => void
-  onCreateNew: () => void
+  onCreateNew: (name: string, category: string | null) => void
   selectionReady: boolean
 }) {
   const [search, setSearch] = useState("")
@@ -152,7 +161,7 @@ function PickView({
           <Ionicons name="close" size={28} color={theme.colors.foreground} />
         </Pressable>
         <Text style={styles.title}>Choose Exercise</Text>
-        <Pressable onPress={onCreateNew} hitSlop={12} style={styles.headerSideBtn}>
+        <Pressable onPress={() => onCreateNew(search, category)} hitSlop={12} style={styles.headerSideBtn}>
           <Ionicons name="add" size={28} color={theme.colors.foreground} />
         </Pressable>
       </View>

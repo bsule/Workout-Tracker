@@ -44,6 +44,10 @@ export function ExercisePickerSheet({
   initialSelectedIds,
 }: Props) {
   const [view, setView] = useState<ViewMode>("pick")
+  const [newExerciseDefaults, setNewExerciseDefaults] = useState<{
+    name: string
+    category: string | null
+  }>({ name: "", category: null })
 
   // Reset to the pick mode each time the sheet opens — never resume mid-form.
   useEffect(() => {
@@ -68,13 +72,18 @@ export function ExercisePickerSheet({
           <PickView
             onClose={onClose}
             onPick={onPick}
-            onCreateNew={() => setView("new")}
+            onCreateNew={(name, category) => {
+              setNewExerciseDefaults({ name, category })
+              setView("new")
+            }}
             mode={mode}
             onPickMany={onPickMany}
             initialSelectedIds={initialSelectedIds}
           />
         ) : (
           <NewExerciseView
+            initialName={newExerciseDefaults.name}
+            initialCategory={newExerciseDefaults.category}
             onBack={() => setView("pick")}
             onCreated={(ex) => onPick(ex)}
           />
@@ -96,7 +105,7 @@ function PickView({
 }: {
   onClose: () => void
   onPick: (ex: Exercise) => void
-  onCreateNew: () => void
+  onCreateNew: (name: string, category: string | null) => void
   mode: "single" | "multi"
   onPickMany?: (exs: Exercise[]) => void
   initialSelectedIds?: number[]
@@ -160,7 +169,7 @@ function PickView({
             <Text style={styles.doneText}>Done</Text>
           </Pressable>
         ) : (
-          <Pressable onPress={onCreateNew} hitSlop={12} style={styles.headerSideBtn}>
+          <Pressable onPress={() => onCreateNew(search, category)} hitSlop={12} style={styles.headerSideBtn}>
             <Ionicons name="add" size={28} color={theme.colors.foreground} />
           </Pressable>
         )}
