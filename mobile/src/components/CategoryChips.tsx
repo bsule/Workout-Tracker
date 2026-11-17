@@ -29,6 +29,7 @@ export function CategoryChips({
             accessibilityRole="button"
             accessibilityLabel={labels[cat] ?? cat}
             accessibilityState={{ selected: active }}
+            hitSlop={{ top: 4, bottom: 4 }}
             style={[styles.chip, active && styles.chipActive]}
           >
             <View style={[styles.chipDot, { backgroundColor: dot }]} />
@@ -66,8 +67,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 4,
     paddingHorizontal: 4,
-    paddingVertical: 10,
-    minHeight: 44,
+    paddingVertical: 8,
+    minHeight: 40,
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.card,
     borderWidth: 1,

@@ -19,47 +19,29 @@ The app isn't in the App Store or Play Store. You build it yourself with one com
 
 To run the app locally, test it, or deploy it, see **[docs/development.md](docs/development.md)**.
 
-## Engine architecture and performance
+## Rust engine
 
-On mobile, workout data lives in a Rust engine (SQLite on the device, called through an Expo module). It owns storage, queries, PRs, imports, exports, restore points and sync.
+### How Lift uses Rust
 
-More detailed everyday-operation and PR timings, concentrated-history stress
-cases and worker-encoding results are in [docs/benchmarks.md](docs/benchmarks.md).
+On mobile, a Rust engine owns all workout data. It keeps your data in a SQLite database, a single file in the app's private storage on the phone, and it handles saving, queries, PRs, imports, exports, restore points and sync. Each edit is saved to the database as you make it. The React Native screens only show data and send commands to the engine.
 
-### TypeScript vs. Rust Native (at 100,000 sets)
+The web app can run the same engine, compiled to WebAssembly in a background worker, when `NEXT_PUBLIC_LIFT_WEB_ENGINE=1` is set. Otherwise it uses the TypeScript store. Both read and write the same snapshot format, so sync, backups and the Cloudflare Worker work the same either way.
 
-Desktop medians at **100,000 sets**, measured on the development Apple Silicon
-Mac with the same verified synthetic snapshot (10 exercises, 10 sets per workout).
-These are desktop measurements; they exclude React rendering and the mobile bridge.
+### Moving from TypeScript to Rust
 
-| Operation | TypeScript (in memory) | Rust Native (with commit/encoding) | Speed Increase |
+Lift started with all of its data logic in TypeScript (`@lift/core`), shared by the phone and web apps. Your whole history was held in memory as one object, and about every 30 seconds the app compressed all of it and saved it as one file. This slowed down as histories grew: each change to a set rebuilt indexes and rescanned PR history, and on the phone the compression ran on the same thread that draws the screen.
+
+The mobile app now uses the Rust engine instead. The first time an updated app opens, the engine moves the old TypeScript save files into its database, so no history is lost.
+
+Desktop medians at **100,000 sets** on an Apple Silicon Mac, using the same synthetic history (10 exercises, 10 sets per workout). They exclude React rendering and the mobile bridge.
+
+| Operation | TypeScript (in memory) | Rust (with SQLite commit) | Speed increase |
 | :--- | ---: | ---: | :--- |
 | Add set | 22.955 ms | 1.060 ms | 21.7× faster |
 | Delete set | 19.572 ms | 3.289 ms | 6.0× faster |
 | Edit set | 19.455 ms | 3.415 ms | 5.7× faster |
 | Recompute all PRs | 157.882 ms | 34.792 ms | 4.5× faster |
 | Predict PR | 0.968 ms | 0.294 ms | 3.3× faster |
-| Load workout day | 0.012 ms | 0.033 ms | Slower (adds ~0.02 ms JSON/DTO encoding across the bridge; improved ~38% with zero-copy views) |
+| Load workout day | 0.012 ms | 0.033 ms | Slower (adds ~0.02 ms to encode the result for the app) |
 
-Rust native mutations include SQLite commit and receipt encoding. TypeScript's
-in-memory timings exclude its periodic snapshot save. Query timings include
-Rust DTO/JSON encoding (optimized with zero-copy borrowed views, reducing `loadWorkoutDay`
-from 0.053 ms to 0.033 ms), while TypeScript returns store objects. Opening persisted
-data with a warm OS file cache took **99.278 ms** for the TypeScript snapshot and
-**41.457 ms** for Rust SQLite, including indexes in both cases.
-
-### Deletion optimization
-
-| Total sets | Previous Rust, durable | Optimized Rust, durable | Speedup |
-| :--- | ---: | ---: | ---: |
-| 100,000 | 24.492 ms | 3.289 ms | 7.4× |
-| 250,000 | 67.842 ms | 9.649 ms | 7.0× |
-
-These delete the most recently appended logged set. Additional benchmarks cover
-middle deletions, record promotion and planned sets; regression tests check PR
-flags, indexes, SQLite reopen behavior and survivor ordering. See
-[the complete results and reproduction commands](docs/benchmarks.md).
-
-Worker encoding reduced the measured 100,000-set main-thread stall from
-**374.64 ms to 38.45 ms**, with longer total encoding time. This diagnostic runs
-the browser worker source in a Node worker thread; browser and phone timings vary.
+The Rust times include saving to disk; the TypeScript times leave out its 30-second save. Opening saved data took **99 ms** for the TypeScript store and **41 ms** for Rust SQLite. Full results and reproduction commands are in [docs/benchmarks.md](docs/benchmarks.md).

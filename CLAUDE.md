@@ -142,7 +142,7 @@ On web, the Rust Wasm engine can be enabled via `NEXT_PUBLIC_LIFT_WEB_ENGINE=1`.
 
 ### Mobile workout picker
 
-Both mobile pickers pass the current search and category into `NewExerciseView` when + opens the form. The name is trimmed and each whitespace-separated word’s first character is capitalized once on mount; edits remain free-form. With no category filter, the form defaults to Chest. Shared `CategoryChips` keeps four aligned columns with single-line labels, slight font shrinking for long names, and 44-point minimum tap height. The new-exercise form uses the full content width.
+Both mobile pickers pass the current search and category into `NewExerciseView` when + opens the form. The name is trimmed and each whitespace-separated word’s first character is capitalized once on mount; edits remain free-form. With no category filter, the form defaults to Chest. Shared `CategoryChips` keeps four aligned columns with single-line labels, slight font shrinking for long names, and 40-point minimum visual height with 4-point vertical hit slop. The new-exercise form uses the full content width.
 
 The mobile Summary panel shows captioned “Show set” and “Sort by” controls above Rep records. Their `MenuButton` wrappers split the row equally so current values remain visible.
 
